@@ -58,6 +58,7 @@ export function defaultSettings(): Settings {
     founderBackground: "",
     coFounders: [],
     webSearch: true,
+    askClarifying: true,
   };
 }
 

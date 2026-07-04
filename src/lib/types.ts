@@ -104,6 +104,8 @@ export interface Settings {
   coFounders: CoFounder[];
   /** Let the model ground its analysis with live web searches. */
   webSearch: boolean;
+  /** Ask AI clarifying questions before adding an idea (more accurate scoring). */
+  askClarifying: boolean;
 }
 
 export interface AppState {

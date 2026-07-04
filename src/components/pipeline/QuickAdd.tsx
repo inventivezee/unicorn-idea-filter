@@ -12,7 +12,7 @@ type Stage = "draft" | "clarify";
 type AddMode = "analyze" | "add";
 
 export function QuickAdd() {
-  const { state, addIdea } = useStore();
+  const { state, addIdea, updateSettings } = useStore();
   const router = useRouter();
 
   const [stage, setStage] = useState<Stage>("draft");
@@ -36,6 +36,11 @@ export function QuickAdd() {
     const text = draft.trim();
     if (!text || loadingMode) return;
     if (chosenMode === "analyze" && !hasBackground) return;
+    // Toggle off → skip the clarifying step and add straight away.
+    if (!settings.askClarifying) {
+      finishAdd(chosenMode, text);
+      return;
+    }
     setError(null);
     setMode(chosenMode);
     setLoadingMode(chosenMode);
@@ -209,8 +214,9 @@ export function QuickAdd() {
         New idea
       </label>
       <p className="mt-0.5 text-xs text-zinc-500">
-        Just describe it — the AI asks a few clarifying questions, then names
-        it and fills in the metadata. Everything stays editable.
+        Just describe it — the AI{" "}
+        {settings.askClarifying ? "asks a few clarifying questions, then " : ""}
+        names it and fills in the metadata. Everything stays editable.
       </p>
       <textarea
         id="quick-add"
@@ -260,6 +266,29 @@ export function QuickAdd() {
             or add a blank idea to fill in manually
           </button>
         )}
+        <label
+          className="ml-auto flex cursor-pointer items-center gap-2 text-xs text-zinc-600"
+          title="When on, the AI asks a few clarifying questions before adding — usually sharpens naming and scoring."
+        >
+          <span>Ask clarifying questions</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={settings.askClarifying}
+            onClick={() =>
+              updateSettings({ askClarifying: !settings.askClarifying })
+            }
+            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+              settings.askClarifying ? "bg-teal-600" : "bg-zinc-300"
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                settings.askClarifying ? "translate-x-4" : "translate-x-0.5"
+              }`}
+            />
+          </button>
+        </label>
       </div>
       <p className="mt-2 text-xs text-zinc-400">
         Add only skips the scoring: the AI just names and describes the idea.

@@ -99,6 +99,7 @@ export function normalizeState(data: unknown): AppState {
         ];
       }),
     webSearch: s.webSearch !== false,
+    askClarifying: s.askClarifying !== false,
   };
   for (const id of CRITERION_IDS) {
     const w = s.weights?.[id];

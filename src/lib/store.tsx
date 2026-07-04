@@ -149,6 +149,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               provider: s.provider,
               models: s.models,
               webSearch: s.webSearch,
+              askClarifying: s.askClarifying,
               weights: s.weights,
               trials: s.trials,
             },
