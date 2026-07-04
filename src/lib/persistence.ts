@@ -1,7 +1,7 @@
 import { DEFAULT_WEIGHTS, CRITERIA_BY_ID } from "./criteria";
 import { defaultSettings, emptyGates, emptyScores, generateId, newIdea } from "./defaults";
 import { adjustedScore, decision, gateStatus, killerFlags, rawScore } from "./engine";
-import { CRITERION_IDS, GATE_IDS } from "./types";
+import { CRITERION_IDS, GATE_IDS, normalizeClarifications } from "./types";
 import type {
   AIAnalysis,
   AppState,
@@ -135,6 +135,8 @@ export function normalizeState(data: unknown): AppState {
       if (v === "Y" || v === "N") gates[id] = v;
     }
     if (i.isExample === true) idea.isExample = true;
+    const clarifications = normalizeClarifications(i.clarifications);
+    if (clarifications.length) idea.clarifications = clarifications;
     if (typeof i.topRiskOverride1 === "string") {
       idea.topRiskOverride1 = i.topRiskOverride1;
     }

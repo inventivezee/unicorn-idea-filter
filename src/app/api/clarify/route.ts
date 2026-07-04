@@ -21,7 +21,7 @@ import {
   requestTelemetry,
   resolveCaller,
 } from "@/lib/supabase/server";
-import type { ClarifyResponse } from "@/lib/types";
+import type { ClarifyQuestion, ClarifyResponse } from "@/lib/types";
 
 // Question generation runs at low effort, but reasoning models still think.
 export const maxDuration = 120;
@@ -96,9 +96,38 @@ export async function POST(request: Request) {
       tier: "standard",
     });
     const raw = parseLastJSON<{ questions?: unknown }>(result.texts);
+    // Normalize to {question, options}; tolerate a model that emits bare
+    // strings (degradation ladder drops the enforced format under load).
     const questions = (Array.isArray(raw.questions) ? raw.questions : [])
-      .filter((q): q is string => typeof q === "string" && q.trim().length > 0)
-      .map((q) => q.trim())
+      .map((q): ClarifyQuestion | null => {
+        if (typeof q === "string" && q.trim()) {
+          return { question: q.trim(), options: [] };
+        }
+        if (q && typeof q === "object") {
+          const { question, options } = q as {
+            question?: unknown;
+            options?: unknown;
+          };
+          if (typeof question === "string" && question.trim()) {
+            return {
+              question: question.trim(),
+              // Dedupe AFTER truncation so slice-collisions are caught too —
+              // duplicate options would make twin chips toggle together.
+              options: Array.from(
+                new Set(
+                  (Array.isArray(options) ? options : [])
+                    .filter(
+                      (o): o is string => typeof o === "string" && !!o.trim(),
+                    )
+                    .map((o) => o.trim().slice(0, 120)),
+                ),
+              ).slice(0, 4),
+            };
+          }
+        }
+        return null;
+      })
+      .filter((q): q is ClarifyQuestion => q !== null)
       .slice(0, 5);
     const response: ClarifyResponse = { questions };
     await logClarify?.();

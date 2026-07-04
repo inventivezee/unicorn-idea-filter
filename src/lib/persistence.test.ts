@@ -12,6 +12,10 @@ describe("acceptance test 6: export → import round-trips losslessly", () => {
       buyerICP: "CTOs",
       initialWedge: "wedge",
       thesisNotes: "notes with, commas and \"quotes\"",
+      clarifications: [
+        { question: "Who pays?", answer: "Independent HVAC technicians" },
+        { question: "Why now?", answer: "" },
+      ],
       confidence: 0.75,
       topRiskOverride1: "manual risk 1",
       validationTest30d: "run 10 interviews",

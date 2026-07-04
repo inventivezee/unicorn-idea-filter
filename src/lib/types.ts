@@ -60,6 +60,32 @@ export interface AIAnalysis {
   webSearches?: number;
 }
 
+/** A clarifying question and the founder's answer, saved with the idea. */
+export interface Clarification {
+  question: string;
+  answer: string;
+}
+
+/** Coerce arbitrary input into a clean, capped Clarification[] (DB/local/import). */
+export function normalizeClarifications(value: unknown): Clarification[] {
+  if (!Array.isArray(value)) return [];
+  const out: Clarification[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const { question, answer } = raw as {
+      question?: unknown;
+      answer?: unknown;
+    };
+    if (typeof question !== "string" || !question.trim()) continue;
+    out.push({
+      question: question.trim().slice(0, 300),
+      answer: typeof answer === "string" ? answer.trim().slice(0, 600) : "",
+    });
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
 export interface Idea {
   id: string;
   name: string;
@@ -68,6 +94,8 @@ export interface Idea {
   buyerICP: string;
   initialWedge: string;
   thesisNotes: string;
+  /** Clarifying Q&A gathered when the idea was added. */
+  clarifications?: Clarification[];
   gates: Record<GateId, GateValue>;
   scores: Record<CriterionId, number | null>;
   confidence: Confidence;
@@ -152,7 +180,14 @@ export interface AnalyzeMetadataResponse {
   model: string;
 }
 
+/** One clarifying question with click-to-answer choices. */
+export interface ClarifyQuestion {
+  question: string;
+  /** Suggested answers; empty → the UI shows a free-text field only. */
+  options: string[];
+}
+
 /** Shape returned by POST /api/clarify. */
 export interface ClarifyResponse {
-  questions: string[];
+  questions: ClarifyQuestion[];
 }

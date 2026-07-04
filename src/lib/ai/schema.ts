@@ -93,11 +93,23 @@ export const METADATA_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-/** Schema for the clarifying questions asked before an idea is added. */
+/** Schema for the clarifying questions asked before an idea is added.
+ *  Each question ships click-to-answer options; the UI adds an "Other" field. */
 export const CLARIFY_SCHEMA = {
   type: "object",
   properties: {
-    questions: { type: "array", items: { type: "string" } },
+    questions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          question: { type: "string" },
+          options: { type: "array", items: { type: "string" } },
+        },
+        required: ["question", "options"],
+        additionalProperties: false,
+      },
+    },
   },
   required: ["questions"],
   additionalProperties: false,

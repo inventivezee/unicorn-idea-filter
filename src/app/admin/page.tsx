@@ -16,6 +16,7 @@ import {
 } from "@/components/ui";
 import { computeDefaultRawScore } from "@/lib/db/types";
 import type { IdeaRow } from "@/lib/db/types";
+import { normalizeClarifications } from "@/lib/types";
 import { useStore } from "@/lib/store";
 
 // ---------------------------------------------------------------------------
@@ -688,6 +689,31 @@ export default function AdminPage() {
                                   </p>
                                 )}
                               </div>
+                              {(() => {
+                                const clar = normalizeClarifications(
+                                  idea.clarifications,
+                                );
+                                if (!clar.length) return null;
+                                return (
+                                  <div>
+                                    <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+                                      Clarifying Q&amp;A
+                                    </div>
+                                    <dl className="mt-1 max-w-3xl space-y-1.5">
+                                      {clar.map((c, i) => (
+                                        <div key={i} className="text-xs">
+                                          <dt className="font-medium text-zinc-500">
+                                            {c.question}
+                                          </dt>
+                                          <dd className="text-zinc-700">
+                                            {c.answer || "(skipped)"}
+                                          </dd>
+                                        </div>
+                                      ))}
+                                    </dl>
+                                  </div>
+                                );
+                              })()}
                               <div>
                                 <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">
                                   AI summary

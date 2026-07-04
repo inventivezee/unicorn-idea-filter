@@ -5,11 +5,47 @@ import { useRouter } from "next/navigation";
 import { getAnonKey } from "@/lib/anon";
 import { Button } from "@/components/ui";
 import { useStore } from "@/lib/store";
-import type { ClarifyResponse } from "@/lib/types";
+import type { ClarifyQuestion } from "@/lib/types";
 
 type Stage = "draft" | "clarify";
 /** "analyze" = full scoring after add; "add" = name + metadata + description only. */
 type AddMode = "analyze" | "add";
+
+/** Per-question answer: a clicked option, or free text behind the Other chip. */
+interface ClarifyAnswer {
+  choice: string | null;
+  custom: string;
+  showCustom: boolean;
+}
+
+/** Coerce the /api/clarify payload into valid ClarifyQuestion[] (dedupes options). */
+function normalizeClarifyQuestions(value: unknown): ClarifyQuestion[] {
+  if (!Array.isArray(value)) return [];
+  const out: ClarifyQuestion[] = [];
+  for (const q of value) {
+    if (typeof q === "string") {
+      if (q.trim()) out.push({ question: q.trim(), options: [] });
+      continue;
+    }
+    if (q && typeof q === "object") {
+      const { question, options } = q as {
+        question?: unknown;
+        options?: unknown;
+      };
+      if (typeof question === "string" && question.trim()) {
+        const opts = Array.from(
+          new Set(
+            (Array.isArray(options) ? options : [])
+              .filter((o): o is string => typeof o === "string" && !!o.trim())
+              .map((o) => o.trim()),
+          ),
+        ).slice(0, 4);
+        out.push({ question: question.trim(), options: opts });
+      }
+    }
+  }
+  return out.slice(0, 5);
+}
 
 export function QuickAdd() {
   const { state, addIdea, updateSettings } = useStore();
@@ -17,8 +53,8 @@ export function QuickAdd() {
 
   const [stage, setStage] = useState<Stage>("draft");
   const [draft, setDraft] = useState("");
-  const [questions, setQuestions] = useState<string[]>([]);
-  const [answers, setAnswers] = useState<string[]>([]);
+  const [questions, setQuestions] = useState<ClarifyQuestion[]>([]);
+  const [answers, setAnswers] = useState<ClarifyAnswer[]>([]);
   const [mode, setMode] = useState<AddMode>("analyze");
   const [loadingMode, setLoadingMode] = useState<AddMode | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -79,14 +115,24 @@ export function QuickAdd() {
         setError(message);
         return;
       }
-      const data = (await res.json()) as ClarifyResponse;
-      if (!Array.isArray(data.questions) || data.questions.length === 0) {
+      const data = (await res.json()) as { questions?: unknown };
+      // Normalize defensively: tolerate bare strings (an older server bundle)
+      // and drop malformed entries, so the render never sees a non-object.
+      const normalized = normalizeClarifyQuestions(data.questions);
+      if (normalized.length === 0) {
         // Nothing worth asking — go straight to the add.
         finishAdd(chosenMode, text);
         return;
       }
-      setQuestions(data.questions);
-      setAnswers(data.questions.map(() => ""));
+      setQuestions(normalized);
+      setAnswers(
+        normalized.map((q) => ({
+          choice: null,
+          custom: "",
+          // No options to click → open the text field straight away.
+          showCustom: q.options.length === 0,
+        })),
+      );
       setStage("clarify");
     } catch {
       setError("Network error while fetching clarifying questions.");
@@ -95,9 +141,15 @@ export function QuickAdd() {
     }
   }
 
+  function answerText(a: ClarifyAnswer | undefined): string {
+    if (!a) return "";
+    if (a.showCustom) return a.custom.trim();
+    return a.choice ?? "";
+  }
+
   function composeNotes(): string {
     const answered = questions
-      .map((q, i) => ({ q, a: (answers[i] ?? "").trim() }))
+      .map((q, i) => ({ q: q.question, a: answerText(answers[i]) }))
       .filter((x) => x.a);
     const base = draft.trim();
     if (answered.length === 0) return base;
@@ -108,6 +160,19 @@ export function QuickAdd() {
     );
   }
 
+  function patchAnswer(i: number, patch: Partial<ClarifyAnswer>) {
+    setAnswers((all) =>
+      all.map((a, j) => (j === i ? { ...a, ...patch } : a)),
+    );
+  }
+
+  /** Structured Q&A to persist with the idea (answered questions only). */
+  function composeClarifications() {
+    return questions
+      .map((q, i) => ({ question: q.question, answer: answerText(answers[i]) }))
+      .filter((c) => c.answer);
+  }
+
   /** Create the idea and hand off: full analysis, metadata-only fill, or nothing. */
   function finishAdd(chosenMode: AddMode | "plain", notes?: string) {
     if (submittingRef.current) return;
@@ -115,7 +180,11 @@ export function QuickAdd() {
     if (!text) return;
     submittingRef.current = true;
     setSubmitting(true);
-    const idea = addIdea({ thesisNotes: text });
+    const clarifications = composeClarifications();
+    const idea = addIdea({
+      thesisNotes: text,
+      ...(clarifications.length ? { clarifications } : {}),
+    });
     const param =
       chosenMode === "analyze" ? "?analyze=1" : chosenMode === "add" ? "?fill=1" : "";
     router.push(`/idea/${idea.id}${param}`);
@@ -152,34 +221,88 @@ export function QuickAdd() {
           A few clarifying questions
         </h2>
         <p className="mt-0.5 text-xs text-zinc-500">
-          Answers are optional — skip any you're not sure about. They sharpen
-          the AI's naming, metadata, and scoring.
+          Click an answer — or pick Other to type your own. All optional; skip
+          any you're not sure about. They sharpen the AI's naming, metadata,
+          and scoring.
         </p>
         <blockquote className="mt-3 max-h-24 overflow-y-auto rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
           {draft.trim()}
         </blockquote>
-        <div className="mt-3 space-y-3">
-          {questions.map((q, i) => (
-            <div key={i}>
-              <label
-                htmlFor={`clarify-${i}`}
-                className="block text-sm text-zinc-800"
-              >
-                {q}
-              </label>
-              <textarea
-                id={`clarify-${i}`}
-                rows={2}
-                value={answers[i] ?? ""}
-                onChange={(e) =>
-                  setAnswers((a) =>
-                    a.map((v, j) => (j === i ? e.target.value : v)),
-                  )
-                }
-                className="mt-1 w-full rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600"
-              />
-            </div>
-          ))}
+        <div className="mt-3 space-y-4">
+          {questions.map((q, i) => {
+            const a = answers[i] ?? {
+              choice: null,
+              custom: "",
+              showCustom: true,
+            };
+            const chip =
+              "rounded-full border px-3 py-1.5 text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600";
+            return (
+              <div key={i}>
+                <p className="text-sm text-zinc-800">{q.question}</p>
+                <div
+                  className="mt-1.5 flex flex-wrap gap-1.5"
+                  role="group"
+                  aria-label={q.question}
+                >
+                  {q.options.map((opt) => {
+                    const selected = !a.showCustom && a.choice === opt;
+                    return (
+                      <button
+                        key={opt}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() =>
+                          patchAnswer(i, {
+                            // Click again to deselect.
+                            choice: selected ? null : opt,
+                            showCustom: false,
+                          })
+                        }
+                        className={`${chip} ${
+                          selected
+                            ? "border-teal-600 bg-teal-600 font-medium text-white"
+                            : "border-zinc-300 bg-white text-zinc-700 hover:border-teal-600 hover:text-teal-700"
+                        }`}
+                      >
+                        {opt}
+                      </button>
+                    );
+                  })}
+                  {q.options.length > 0 ? (
+                    <button
+                      type="button"
+                      aria-pressed={a.showCustom}
+                      onClick={() =>
+                        patchAnswer(i, {
+                          showCustom: !a.showCustom,
+                          choice: null,
+                        })
+                      }
+                      className={`${chip} ${
+                        a.showCustom
+                          ? "border-teal-600 bg-teal-50 font-medium text-teal-700"
+                          : "border-dashed border-zinc-300 bg-white text-zinc-500 hover:border-teal-600 hover:text-teal-700"
+                      }`}
+                    >
+                      Other…
+                    </button>
+                  ) : null}
+                </div>
+                {a.showCustom ? (
+                  <input
+                    type="text"
+                    autoFocus={q.options.length > 0}
+                    value={a.custom}
+                    onChange={(e) => patchAnswer(i, { custom: e.target.value })}
+                    placeholder="Type your answer…"
+                    aria-label={`Your answer: ${q.question}`}
+                    className="mt-1.5 w-full rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600"
+                  />
+                ) : null}
+              </div>
+            );
+          })}
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <Button

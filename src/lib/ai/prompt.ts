@@ -86,7 +86,8 @@ Rules:
 - Never ask about something the description already answers.
 - Each question must be answerable in a sentence or two — no essays, no multi-part questions.
 - Prefer questions whose answers would most change a gate or score judgment.
-- Plain language, no jargon, no numbering in the question text itself.`;
+- Plain language, no jargon, no numbering in the question text itself.
+- With each question, give 2 to 4 answer options the founder can pick with one click. Options must be the most plausible concrete answers FOR THIS SPECIFIC IDEA (e.g. for "who pays?": the actual candidate buyers), each 8 words or fewer, mutually distinct, no "Other"/"Not sure" filler — the UI adds a free-text option itself. If a question truly has no guessable answers, return an empty options array.`;
 
 export function buildClarifyPrompt(
   description: string,

@@ -3,7 +3,7 @@
 import { DEFAULT_WEIGHTS } from "../criteria";
 import { emptyGates, emptyScores, newIdea } from "../defaults";
 import { rawScore } from "../engine";
-import { CRITERION_IDS, GATE_IDS } from "../types";
+import { CRITERION_IDS, GATE_IDS, normalizeClarifications } from "../types";
 import type { AIAnalysis, CoFounder, Idea } from "../types";
 
 export interface IdeaRow {
@@ -16,6 +16,7 @@ export interface IdeaRow {
   buyer_icp: string;
   initial_wedge: string;
   thesis_notes: string;
+  clarifications?: unknown;
   gates: Record<string, unknown>;
   scores: Record<string, unknown>;
   confidence: number | null;
@@ -92,6 +93,8 @@ export function rowToIdea(row: IdeaRow): Idea & {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
+  const clarifications = normalizeClarifications(row.clarifications);
+  if (clarifications.length) idea.clarifications = clarifications;
   if (typeof row.top_risk_override_1 === "string") {
     idea.topRiskOverride1 = row.top_risk_override_1;
   }
@@ -127,6 +130,9 @@ export function ideaToWritableRow(idea: Partial<Idea>): Record<string, unknown> 
   if (idea.buyerICP !== undefined) row.buyer_icp = idea.buyerICP;
   if (idea.initialWedge !== undefined) row.initial_wedge = idea.initialWedge;
   if (idea.thesisNotes !== undefined) row.thesis_notes = idea.thesisNotes;
+  if (idea.clarifications !== undefined) {
+    row.clarifications = normalizeClarifications(idea.clarifications);
+  }
   if (idea.gates !== undefined) row.gates = idea.gates;
   if (idea.scores !== undefined) row.scores = idea.scores;
   if (idea.confidence !== undefined) row.confidence = idea.confidence;
