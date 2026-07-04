@@ -33,8 +33,8 @@ const BENEFITS = [
     body: "Keep any idea out of the public Explore database — yours to see, no one else's.",
   },
   {
-    title: "Web-grounded scoring",
-    body: "Analyses can search the live web to verify market size, competitors, and timing.",
+    title: "Unlimited web search",
+    body: "Subscriber analyses search the live web as much as the idea needs to verify market size, competitors, and timing. The free tier is capped at 5 searches per analysis.",
   },
 ];
 

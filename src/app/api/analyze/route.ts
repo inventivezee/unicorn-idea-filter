@@ -1,8 +1,8 @@
 import { GATES } from "@/lib/criteria";
 import {
+  buildSystemPrompt,
   buildUserPrompt,
   METADATA_SYSTEM_PROMPT,
-  SYSTEM_PROMPT,
 } from "@/lib/ai/prompt";
 import type { AnalyzeRequestIdea } from "@/lib/ai/prompt";
 import { ANALYSIS_SCHEMA, METADATA_SCHEMA } from "@/lib/ai/schema";
@@ -24,6 +24,7 @@ import {
   ANON_ANALYSES_PER_DAY,
   FREE_ANALYSES_PER_MONTH,
   isPremiumModel,
+  STANDARD_WEB_SEARCH_CAP,
 } from "@/lib/entitlements";
 import {
   adminClient,
@@ -357,10 +358,12 @@ export async function POST(request: Request) {
       return Response.json(response);
     }
 
+    // Subscribers/admins (premium) search uncapped; free tier is budgeted.
+    const searchBudget = tier === "premium" ? null : STANDARD_WEB_SEARCH_CAP;
     const result = await callProviderJSON({
       provider,
       model,
-      system: SYSTEM_PROMPT,
+      system: buildSystemPrompt(searchBudget),
       prompt: userPrompt,
       schemaName: "idea_analysis",
       schema: ANALYSIS_SCHEMA as unknown as Record<string, unknown>,

@@ -3,6 +3,7 @@
 // mapping. Never import this from client components.
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
+import { STANDARD_WEB_SEARCH_CAP } from "@/lib/entitlements";
 import type { Provider } from "@/lib/types";
 
 export class UserFacingError extends Error {
@@ -191,8 +192,12 @@ const OPENAI_XHIGH_MODELS = /^gpt-5\.[5-9]/;
 // -pro reasoning models accept only "high" effort — no low/xhigh.
 const OPENAI_HIGH_ONLY_MODELS = /^(gpt-5-pro|o\d-pro)/;
 
-const MAX_WEB_SEARCHES = 5;
+// Premium (subscriber/admin/local) analyses run uncapped web search; the free
+// tier is hard-capped at STANDARD_WEB_SEARCH_CAP via the tool's max_uses.
+// Premium pause-turn continuations get a higher ceiling so an uncapped search
+// run isn't cut short mid-turn.
 const MAX_PAUSE_CONTINUATIONS = 5;
+const MAX_PAUSE_CONTINUATIONS_PREMIUM = 20;
 
 export interface JSONCallOptions {
   provider: Provider;
@@ -214,6 +219,12 @@ export interface JSONCallOptions {
    * itself is subscriber-gated), Sonnet 5 medium for everyone.
    */
   tier: "premium" | "standard";
+  /**
+   * Explicit hard cap on web-search tool uses (Anthropic max_uses), overriding
+   * the tier default. Use for bounded helper routes (e.g. profile lookups) that
+   * shouldn't inherit the analysis flow's uncapped premium search.
+   */
+  maxWebSearches?: number;
 }
 
 export interface JSONCallResult {
@@ -295,18 +306,29 @@ async function anthropicJSONAttempt(
           ? ("medium" as const)
           : undefined;
 
+  // An explicit maxWebSearches (bounded helper routes) always wins. Otherwise:
+  // premium tier gets uncapped search (omit max_uses), the free tier is
+  // hard-capped — aligned with the prompt's budget (buildSystemPrompt), both
+  // keyed off STANDARD_WEB_SEARCH_CAP.
+  const maxUses =
+    opts.maxWebSearches !== undefined
+      ? opts.maxWebSearches
+      : opts.tier === "premium"
+        ? undefined
+        : STANDARD_WEB_SEARCH_CAP;
+  const maxUsesField = maxUses === undefined ? {} : { max_uses: maxUses };
   const tools: Anthropic.ToolUnion[] | undefined = opts.webSearch
     ? [
         DYNAMIC_SEARCH_MODELS.test(opts.model)
           ? {
               type: "web_search_20260209",
               name: "web_search",
-              max_uses: MAX_WEB_SEARCHES,
+              ...maxUsesField,
             }
           : {
               type: "web_search_20250305",
               name: "web_search",
-              max_uses: MAX_WEB_SEARCHES,
+              ...maxUsesField,
             },
       ]
     : undefined;
@@ -356,11 +378,16 @@ async function anthropicJSONAttempt(
   ];
   let response = await createMessage(messages);
 
-  // Long web-search turns can pause server-side; resend to continue.
+  // Long web-search turns can pause server-side; resend to continue. Uncapped
+  // premium searches can pause more often, so give them a higher ceiling.
+  const pauseLimit =
+    opts.tier === "premium"
+      ? MAX_PAUSE_CONTINUATIONS_PREMIUM
+      : MAX_PAUSE_CONTINUATIONS;
   let continuations = 0;
   while (
     response.stop_reason === "pause_turn" &&
-    continuations++ < MAX_PAUSE_CONTINUATIONS
+    continuations++ < pauseLimit
   ) {
     messages = [...messages, { role: "assistant", content: response.content }];
     response = await createMessage(messages);

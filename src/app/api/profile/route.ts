@@ -17,7 +17,11 @@ import {
   providerFromBody,
   readJsonBody,
 } from "@/lib/ai/server";
-import { DEFAULT_MODEL_FALLBACKS, isPremiumModel } from "@/lib/entitlements";
+import {
+  DEFAULT_MODEL_FALLBACKS,
+  isPremiumModel,
+  PROFILE_WEB_SEARCH_CAP,
+} from "@/lib/entitlements";
 import {
   adminClient,
   anonKeyFromBody,
@@ -91,6 +95,8 @@ export async function POST(request: Request) {
       webSearch: true, // the whole point — always search for a profile lookup
       speed: "quality",
       tier: subscribed ? "premium" : "standard",
+      // Bounded task — cap search for every tier (not "unlimited" like analysis).
+      maxWebSearches: PROFILE_WEB_SEARCH_CAP,
     });
     const raw = parseLastJSON<{
       found?: unknown;

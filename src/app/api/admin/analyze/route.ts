@@ -1,7 +1,7 @@
 // Admin: manually run the full analysis on any idea. Uses the owner's stored
 // founder background when available (or the latest anonymous snapshot), and
 // persists results with the standard fill-blanks merge. Quota-exempt.
-import { buildUserPrompt, SYSTEM_PROMPT } from "@/lib/ai/prompt";
+import { buildSystemPrompt, buildUserPrompt } from "@/lib/ai/prompt";
 import { ANALYSIS_SCHEMA } from "@/lib/ai/schema";
 import {
   callProviderJSON,
@@ -110,7 +110,8 @@ export async function POST(request: Request) {
     const result = await callProviderJSON({
       provider,
       model,
-      system: SYSTEM_PROMPT,
+      // Admin runs premium tier — uncapped web search.
+      system: buildSystemPrompt(null),
       prompt: userPrompt,
       schemaName: "idea_analysis",
       schema: ANALYSIS_SCHEMA as unknown as Record<string, unknown>,

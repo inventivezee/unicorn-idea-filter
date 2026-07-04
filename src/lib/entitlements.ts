@@ -25,6 +25,21 @@ export const ANON_ANALYSES_PER_DAY = 3;
 /** Free signed-in accounts: full analyses per calendar month. */
 export const FREE_ANALYSES_PER_MONTH = 10;
 
+/**
+ * Web searches a non-subscriber ANALYSIS may run (hard-capped via the tool's
+ * max_uses on Anthropic; prompt-guided on OpenAI). Subscribers/admins run the
+ * "premium" tier, which is uncapped for analysis — see the web-search budget
+ * in src/lib/ai/server.ts and buildSystemPrompt in src/lib/ai/prompt.ts.
+ */
+export const STANDARD_WEB_SEARCH_CAP = 5;
+
+/**
+ * Profile-URL lookups are a bounded single-person research task, so they carry
+ * an explicit cap for EVERY tier (passed as maxWebSearches) — "unlimited"
+ * search is scoped to the analysis flow, not this helper route.
+ */
+export const PROFILE_WEB_SEARCH_CAP = 6;
+
 export type SubscriptionStatus =
   | "none"
   | "active"

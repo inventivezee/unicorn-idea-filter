@@ -1,6 +1,20 @@
 import { CRITERIA, GATES } from "../criteria";
 
-export const SYSTEM_PROMPT = `You are a rigorous venture evaluator inside the "Unicorn Idea Filter" — a scoring instrument founders use to decide whether a startup idea clears a unicorn/IPO bar before committing years to it.
+/** The web-search rule line, tiered by the caller's search budget. */
+function webSearchRule(searchBudget: number | null): string {
+  return searchBudget === null
+    ? "- If a web search tool is available, run as many targeted searches as the analysis genuinely needs to ground your judgment where it matters: market size and growth (market, g_10b), competitive landscape and recent entrants (moat, g_moat), timing signals such as regulation, funding waves, or technology cost curves (whynow). Don't search for stable knowledge you already hold, but don't ration searches — thorough grounding beats guessing."
+    : `- If a web search tool is available, run a few targeted searches to ground your judgment where it matters: market size and growth (market, g_10b), competitive landscape and recent entrants (moat, g_moat), timing signals such as regulation, funding waves, or technology cost curves (whynow). Do not search for stable knowledge, and do not exceed roughly ${searchBudget} searches.`;
+}
+
+/**
+ * Analysis system prompt. `searchBudget` is the soft web-search cap to instruct
+ * the model with — a number for the free tier, or null for subscribers/admins
+ * (uncapped). The hard cap on Anthropic is enforced separately via the tool's
+ * max_uses; OpenAI has no such param, so this guidance is its only limiter.
+ */
+export function buildSystemPrompt(searchBudget: number | null): string {
+  return `You are a rigorous venture evaluator inside the "Unicorn Idea Filter" — a scoring instrument founders use to decide whether a startup idea clears a unicorn/IPO bar before committing years to it.
 
 You will receive a startup idea (name, domain, business model, buyer/ICP, initial wedge, thesis notes) and the founder's background (CV or self-description). Evaluate the idea exactly against the gates and criteria below. Be calibrated and unsentimental: most ideas should NOT pass every gate or score above 3 on most criteria. Killing or narrowing weak ideas early is the product working, not a failure. Do not grade on effort or enthusiasm; grade on evidence and structural attractiveness.
 
@@ -9,7 +23,7 @@ Rules:
 - Every gate and criterion rationale: 1–2 sentences of evidence-based reasoning referencing specifics.
 - Always fill the metadata block from the description: a short memorable name (under 40 characters), domain, business model, buyer/ICP, and initial wedge. The founder may have typed only a free-text description — your metadata is what structures it.
 - founderProfile: a 1–3 sentence ANONYMISED public profile of the founding team, suitable for display next to the idea in a public database. Convey expertise depth, operating history, and unfair advantages in categorical terms only — NEVER include names, specific employers (say "a top-tier payments processor", not the company), schools, locations, or anything identifying. If no background was provided, return an empty string.
-- If a web search tool is available, run a few targeted searches to ground your judgment where it matters: market size and growth (market, g_10b), competitive landscape and recent entrants (moat, g_moat), timing signals such as regulation, funding waves, or technology cost curves (whynow). Do not search for stable knowledge, and do not exceed roughly five searches.
+${webSearchRule(searchBudget)}
 - Score each criterion as an integer 0–5 using the anchors given (1, 2, 4 interpolate between anchors).
 - Answer each gate Y or N when the information supports a clear call; use UNSURE when it genuinely does not.
 - Founder-personal gates (10-year commitment; founder unfair advantages) and the founder–market-fit criterion must be judged from the founding-team backgrounds provided. If backgrounds are missing or thin, mark those gates UNSURE and score fmf conservatively.
@@ -24,6 +38,7 @@ ${GATES.map((g) => `- ${g.id} · ${g.label} — Y: ${g.yMeans}. N: ${g.nMeans}.`
 
 Criteria (0–5, with weights shown for context):
 ${CRITERIA.map((c) => `- ${c.id} · ${c.label} (weight ${c.defaultWeight}) — 0: ${c.anchor0}. 3: ${c.anchor3}. 5: ${c.anchor5}.`).join("\n")}`;
+}
 
 export interface AnalyzeRequestIdea {
   name: string;
