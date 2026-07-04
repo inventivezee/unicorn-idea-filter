@@ -59,13 +59,22 @@ export function QuickAdd() {
       });
       if (!res.ok) {
         let message = `Couldn't get clarifying questions (HTTP ${res.status}).`;
+        let upgrade = false;
         try {
-          const body = (await res.json()) as { error?: unknown };
+          const body = (await res.json()) as {
+            error?: unknown;
+            upgrade?: unknown;
+          };
           if (body && typeof body.error === "string" && body.error) {
             message = body.error;
           }
+          upgrade = body?.upgrade === true;
         } catch {
           // Non-JSON error body — keep the generic message.
+        }
+        if (upgrade || res.status === 402) {
+          router.push("/upgrade?reason=premium");
+          return;
         }
         setError(message);
         return;

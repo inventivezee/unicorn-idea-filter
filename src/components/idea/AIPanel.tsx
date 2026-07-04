@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { getAnonKey } from "@/lib/anon";
 import { GATES_BY_ID } from "@/lib/criteria";
+import { isPremiumModel } from "@/lib/entitlements";
 import { CRITERION_IDS, GATE_IDS } from "@/lib/types";
 import { Button, Section } from "@/components/ui";
 import type {
@@ -26,6 +28,7 @@ export function AIPanel({
   settings: Settings;
   onPatch: (patch: Partial<Idea> | ((latest: Idea) => Partial<Idea>)) => void;
 }) {
+  const router = useRouter();
   const [pending, setPending] = useState(false);
   const [pendingMode, setPendingMode] = useState<"full" | "metadata">("full");
   const [error, setError] = useState<string | null>(null);
@@ -134,13 +137,24 @@ export function AIPanel({
 
       if (!res.ok) {
         let message = `Analysis failed (HTTP ${res.status}).`;
+        let upgrade = false;
         try {
-          const body = (await res.json()) as { error?: unknown };
+          const body = (await res.json()) as {
+            error?: unknown;
+            upgrade?: unknown;
+          };
           if (body && typeof body.error === "string" && body.error) {
             message = body.error;
           }
+          upgrade = body?.upgrade === true;
         } catch {
           // Non-JSON error body — keep the generic message.
+        }
+        // Free tier exceeded / premium model → send them to the plan page.
+        if (upgrade || res.status === 402) {
+          const reason = isPremiumModel(model) ? "premium" : "quota";
+          router.push(`/upgrade?reason=${reason}`);
+          return;
         }
         if (mountedRef.current) {
           setError(message);

@@ -539,97 +539,6 @@ export default function SettingsPage() {
           </Section>
         ) : null}
 
-        {/* 0b. Subscription (cloud mode only) */}
-        {cloud ? (
-          <Section title="Subscription">
-            <div className="space-y-3">
-              {upgradeWelcome ? (
-                <div className="rounded border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
-                  Welcome aboard — subscription active.
-                </div>
-              ) : null}
-              {entitlements.subscribed ? (
-                <>
-                  <div className="rounded border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
-                    Subscriber — unlimited analyses, private ideas, and premium
-                    models.
-                  </div>
-                  <p className="text-xs text-zinc-500">
-                    Status:{" "}
-                    <span className="font-medium text-zinc-700">
-                      {entitlements.subscriptionStatus}
-                    </span>
-                    {entitlements.subscriptionStatus === "trialing"
-                      ? " — becomes a paid subscription when the trial ends."
-                      : " — renews monthly; manage or cancel any time in the billing portal."}
-                  </p>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Button
-                      onClick={() => void openBilling("/api/stripe/portal")}
-                      disabled={billingBusy}
-                    >
-                      {billingBusy ? "Opening…" : "Manage billing"}
-                    </Button>
-                    {billingError ? (
-                      <span className="text-xs text-red-600">
-                        {billingError}
-                      </span>
-                    ) : null}
-                  </div>
-                </>
-              ) : (
-                <div className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-4">
-                  <div className="text-sm font-semibold text-zinc-900">
-                    {SUBSCRIPTION_PRICE_LABEL}
-                  </div>
-                  <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-zinc-700">
-                    <li>
-                      <span className="font-medium">Private ideas</span> — keep
-                      anything out of the public feed
-                    </li>
-                    <li>
-                      <span className="font-medium">Premium power</span> —
-                      Claude Fable 5, plus GPT-5.5 at xhigh reasoning (free
-                      tier runs it at medium)
-                    </li>
-                    <li>
-                      <span className="font-medium">
-                        Unlimited AI analyses
-                      </span>{" "}
-                      — free tier gets {FREE_ANALYSES_PER_MONTH}/month
-                    </li>
-                  </ul>
-                  {entitlements.analysesRemaining !== null ? (
-                    <p className="mt-2 text-xs text-zinc-500">
-                      <span className="tnum">
-                        {entitlements.analysesRemaining}
-                      </span>{" "}
-                      of <span className="tnum">{FREE_ANALYSES_PER_MONTH}</span>{" "}
-                      free analyses left this month
-                    </p>
-                  ) : null}
-                  <div className="mt-3 flex flex-wrap items-center gap-3">
-                    <Button
-                      variant="primary"
-                      onClick={handleUpgrade}
-                      disabled={billingBusy}
-                    >
-                      {billingBusy
-                        ? "Redirecting…"
-                        : `Upgrade — ${SUBSCRIPTION_PRICE_LABEL}`}
-                    </Button>
-                    {billingError ? (
-                      <span className="text-xs text-red-600">
-                        {billingError}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-              )}
-            </div>
-          </Section>
-        ) : null}
-
         {/* 1. Founding team */}
         <Section
           title="Founding team"
@@ -892,6 +801,97 @@ export default function SettingsPage() {
             </div>
           </div>
         </Section>
+
+        {/* 2b. Subscription — sits under the AI model picker */}
+        {cloud ? (
+          <Section title="Subscription">
+            <div className="space-y-3">
+              {upgradeWelcome ? (
+                <div className="rounded border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
+                  Welcome aboard — subscription active.
+                </div>
+              ) : null}
+              {entitlements.subscribed ? (
+                <>
+                  <div className="rounded border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
+                    Subscriber — unlimited analyses, private ideas, and premium
+                    models.
+                  </div>
+                  <p className="text-xs text-zinc-500">
+                    Status:{" "}
+                    <span className="font-medium text-zinc-700">
+                      {entitlements.subscriptionStatus}
+                    </span>
+                    {entitlements.subscriptionStatus === "trialing"
+                      ? " — becomes a paid subscription when the trial ends."
+                      : " — renews monthly; manage or cancel any time in the billing portal."}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button
+                      onClick={() => void openBilling("/api/stripe/portal")}
+                      disabled={billingBusy}
+                    >
+                      {billingBusy ? "Opening…" : "Manage billing"}
+                    </Button>
+                    {billingError ? (
+                      <span className="text-xs text-red-600">
+                        {billingError}
+                      </span>
+                    ) : null}
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-4">
+                  <div className="text-sm font-semibold text-zinc-900">
+                    {SUBSCRIPTION_PRICE_LABEL}
+                  </div>
+                  <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-zinc-700">
+                    <li>
+                      <span className="font-medium">Private ideas</span> — keep
+                      anything out of the public feed
+                    </li>
+                    <li>
+                      <span className="font-medium">Premium power</span> —
+                      Claude Fable 5, plus GPT-5.5 at xhigh reasoning (free
+                      tier runs it at medium)
+                    </li>
+                    <li>
+                      <span className="font-medium">
+                        Unlimited AI analyses
+                      </span>{" "}
+                      — free tier gets {FREE_ANALYSES_PER_MONTH}/month
+                    </li>
+                  </ul>
+                  {entitlements.analysesRemaining !== null ? (
+                    <p className="mt-2 text-xs text-zinc-500">
+                      <span className="tnum">
+                        {entitlements.analysesRemaining}
+                      </span>{" "}
+                      of <span className="tnum">{FREE_ANALYSES_PER_MONTH}</span>{" "}
+                      free analyses left this month
+                    </p>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <Button
+                      variant="primary"
+                      onClick={handleUpgrade}
+                      disabled={billingBusy}
+                    >
+                      {billingBusy
+                        ? "Redirecting…"
+                        : `Upgrade — ${SUBSCRIPTION_PRICE_LABEL}`}
+                    </Button>
+                    {billingError ? (
+                      <span className="text-xs text-red-600">
+                        {billingError}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Section>
+        ) : null}
 
         {/* 3. Criteria weights */}
         <Section
