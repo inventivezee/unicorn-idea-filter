@@ -51,6 +51,48 @@ describe("acceptance test 6: export → import round-trips losslessly", () => {
     expect(() => normalizeState(null)).toThrow();
   });
 
+  it("sanitizes malformed ai objects instead of passing them through", () => {
+    const state = initialState();
+    const dirty = JSON.parse(JSON.stringify(state));
+    dirty.ideas[0].ai = {}; // truthy but missing every field
+    dirty.ideas[1].ai = "garbage";
+    const restored = normalizeState(dirty);
+    expect(restored.ideas[0].ai?.needsFounderConfirmation).toEqual([]);
+    expect(restored.ideas[0].ai?.summary).toBe("");
+    expect(restored.ideas[1].ai).toBeNull();
+  });
+
+  it("keeps generated ids when imported ideas lack one", () => {
+    const state = initialState();
+    const dirty = JSON.parse(JSON.stringify(state));
+    delete dirty.ideas[0].id;
+    dirty.ideas[1].id = 42;
+    const restored = normalizeState(dirty);
+    expect(typeof restored.ideas[0].id).toBe("string");
+    expect(restored.ideas[0].id.length).toBeGreaterThan(0);
+    expect(typeof restored.ideas[1].id).toBe("string");
+    expect(restored.ideas[1].id.length).toBeGreaterThan(0);
+  });
+
+  it("clamps pathological trials values to sane defaults", () => {
+    const state = initialState();
+    const cases: Array<[unknown, number]> = [
+      [0.5, 300],
+      [0, 300],
+      [-1, 300],
+      [Infinity, 300],
+      [300.7, 300],
+      [10_000_000, 100_000],
+    ];
+    for (const [input, expected] of cases) {
+      const dirty = JSON.parse(JSON.stringify(state));
+      dirty.settings.trials = input;
+      // JSON round-trip drops Infinity — set it directly on the object.
+      if (input === Infinity) dirty.settings.trials = Infinity;
+      expect(normalizeState(dirty).settings.trials).toBe(expected);
+    }
+  });
+
   it("coerces invalid values instead of crashing", () => {
     const state = initialState();
     const dirty = JSON.parse(JSON.stringify(state));
@@ -74,5 +116,12 @@ describe("pipelineCSV", () => {
     expect(lines[0].startsWith("Name,Domain")).toBe(true);
     expect(lines[1]).toContain('"Acme, ""The"" Best"');
     expect(lines[1]).toContain("PENDING");
+  });
+
+  it("quotes fields containing bare carriage returns", () => {
+    const state = initialState();
+    const idea = newIdea({ name: "Acme\rCo" });
+    const csv = pipelineCSV([idea], state.settings);
+    expect(csv).toContain('"Acme\rCo"');
   });
 });

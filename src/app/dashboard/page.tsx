@@ -92,9 +92,13 @@ export default function DashboardPage() {
     const decidedTotal = decisionCounts.reduce((acc, e) => acc + e.count, 0);
 
     // Raw-score stats over named, fully-scored ideas (matches stressTest's pool).
+    // rawScore can still be null when the weight sum is 0 — drop those rows.
     const scored = ideas
       .filter((i) => i.name && isFullyScored(i.scores))
-      .map((i) => ({ idea: i, raw: rawScore(i.scores, weights) as number }));
+      .flatMap((i) => {
+        const raw = rawScore(i.scores, weights);
+        return raw === null ? [] : [{ idea: i, raw }];
+      });
     const avgRaw =
       scored.length > 0
         ? scored.reduce((acc, e) => acc + e.raw, 0) / scored.length

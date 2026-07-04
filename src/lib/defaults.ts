@@ -56,11 +56,8 @@ export function defaultSettings(): Settings {
 
 export function newIdea(partial?: Partial<Idea>): Idea {
   const now = new Date().toISOString();
-  return {
-    id:
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `idea-${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
+  const idea: Idea = {
+    id: "",
     name: "",
     domain: "",
     businessModel: "",
@@ -76,6 +73,15 @@ export function newIdea(partial?: Partial<Idea>): Idea {
     updatedAt: now,
     ...partial,
   };
+  // The id survives spreads of partials that carry id: undefined (e.g. from
+  // imported JSON) — generate it last so it can never be clobbered away.
+  if (!idea.id || typeof idea.id !== "string") {
+    idea.id =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `idea-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  }
+  return idea;
 }
 
 /** Two generic, clearly-marked example ideas so first-time users see how the pipeline works. */

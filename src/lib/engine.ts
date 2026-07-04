@@ -153,7 +153,9 @@ export function stressTest(
   seed: number = STRESS_TEST_SEED,
 ): StressTestResult | null {
   const scored = ideas.filter((i) => i.name && isFullyScored(i.scores));
-  if (scored.length === 0 || trials <= 0) return null;
+  if (scored.length === 0 || trials <= 0 || sumWeights(weights) <= 0) {
+    return null;
+  }
 
   const baseScores = scored.map((i) => rawScore(i.scores, weights) as number);
   let leaderIdx = 0;

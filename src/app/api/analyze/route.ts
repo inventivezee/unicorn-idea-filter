@@ -163,32 +163,108 @@ function isIdeaEmpty(idea: AnalyzeRequestIdea): boolean {
   ].some((f) => typeof f === "string" && f.trim().length > 0);
 }
 
-export async function POST(request: Request) {
-  let body: {
-    idea?: AnalyzeRequestIdea;
-    founderBackground?: string;
-    provider?: string;
-    model?: string;
-  };
+// This endpoint spends the deployment owner's API credits, so it gets basic
+// abuse protection: same-origin enforcement, input size caps, and a
+// best-effort per-IP rate limit (per serverless instance — a determined
+// attacker needs provider-side spend limits, noted in the README).
+const RATE_LIMIT_PER_MINUTE = 10;
+const MAX_FIELD_CHARS = 20_000;
+const MAX_BACKGROUND_CHARS = 60_000;
+const rateBuckets = new Map<string, number[]>();
+
+function rateLimited(ip: string): boolean {
+  const now = Date.now();
+  const hits = (rateBuckets.get(ip) ?? []).filter((t) => now - t < 60_000);
+  if (hits.length >= RATE_LIMIT_PER_MINUTE) {
+    rateBuckets.set(ip, hits);
+    return true;
+  }
+  hits.push(now);
+  rateBuckets.set(ip, hits);
+  if (rateBuckets.size > 10_000) rateBuckets.clear();
+  return false;
+}
+
+function sameOrigin(request: Request): boolean {
+  const origin = request.headers.get("origin");
+  if (!origin) return true; // same-origin fetches may omit the header
+  const host = request.headers.get("host");
   try {
-    body = await request.json();
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+function field(value: unknown): string {
+  return typeof value === "string" ? value.slice(0, MAX_FIELD_CHARS) : "";
+}
+
+export async function POST(request: Request) {
+  if (!sameOrigin(request)) {
+    return Response.json(
+      { error: "Cross-origin requests are not allowed." },
+      { status: 403 },
+    );
+  }
+  const ip =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  if (rateLimited(ip)) {
+    return Response.json(
+      { error: "Too many analyses — wait a minute and try again." },
+      { status: 429 },
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = await request.json();
   } catch {
     return Response.json({ error: "Invalid JSON body." }, { status: 400 });
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return Response.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+  const body = parsed as {
+    idea?: unknown;
+    founderBackground?: unknown;
+    provider?: unknown;
+    model?: unknown;
+  };
 
   const provider: Provider = body.provider === "openai" ? "openai" : "anthropic";
-  const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : null;
-  const idea = body.idea;
+  const model =
+    typeof body.model === "string" && body.model.trim()
+      ? body.model.trim().slice(0, 200)
+      : null;
 
   if (!model) {
     return Response.json({ error: "No model selected." }, { status: 400 });
   }
+  const rawIdea =
+    body.idea && typeof body.idea === "object" && !Array.isArray(body.idea)
+      ? (body.idea as Record<string, unknown>)
+      : null;
+  const idea: AnalyzeRequestIdea | null = rawIdea
+    ? {
+        name: field(rawIdea.name),
+        domain: field(rawIdea.domain),
+        businessModel: field(rawIdea.businessModel),
+        buyerICP: field(rawIdea.buyerICP),
+        initialWedge: field(rawIdea.initialWedge),
+        thesisNotes: field(rawIdea.thesisNotes),
+      }
+    : null;
   if (!idea || isIdeaEmpty(idea)) {
     return Response.json(
       { error: "Describe the idea first — at minimum a name and thesis notes." },
       { status: 400 },
     );
   }
+  const founderBackground =
+    typeof body.founderBackground === "string"
+      ? body.founderBackground.slice(0, MAX_BACKGROUND_CHARS)
+      : "";
 
   const keyPresent =
     provider === "anthropic"
@@ -204,7 +280,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const userPrompt = buildUserPrompt(idea, body.founderBackground ?? "");
+  const userPrompt = buildUserPrompt(idea, founderBackground);
 
   try {
     const raw =

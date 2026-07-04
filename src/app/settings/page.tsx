@@ -128,7 +128,13 @@ export default function SettingsPage() {
   async function handleImportFile(file: File) {
     setImportError(null);
     setImportSuccess(false);
-    const text = await file.text();
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      setImportError("Couldn't read that file — try selecting it again.");
+      return;
+    }
     if (
       !window.confirm(
         "Importing replaces ALL current ideas and settings. Continue?",

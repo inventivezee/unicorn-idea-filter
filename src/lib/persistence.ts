@@ -2,7 +2,51 @@ import { DEFAULT_WEIGHTS, CRITERIA_BY_ID } from "./criteria";
 import { defaultSettings, emptyGates, emptyScores, newIdea } from "./defaults";
 import { adjustedScore, decision, gateStatus, killerFlags, rawScore } from "./engine";
 import { CRITERION_IDS, GATE_IDS } from "./types";
-import type { AppState, Idea, Settings } from "./types";
+import type {
+  AIAnalysis,
+  AppState,
+  CriterionId,
+  GateId,
+  Idea,
+  Settings,
+} from "./types";
+
+export const MAX_TRIALS = 100_000;
+
+function str(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+/** Rebuild a conforming AIAnalysis from unknown imported data, or drop it. */
+function normalizeAI(value: unknown): AIAnalysis | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const a = value as Partial<AIAnalysis>;
+  const gateRationales: Partial<Record<GateId, string>> = {};
+  for (const id of GATE_IDS) {
+    const r = a.gateRationales?.[id];
+    if (typeof r === "string") gateRationales[id] = r;
+  }
+  const scoreRationales: Partial<Record<CriterionId, string>> = {};
+  for (const id of CRITERION_IDS) {
+    const r = a.scoreRationales?.[id];
+    if (typeof r === "string") scoreRationales[id] = r;
+  }
+  const needsFounderConfirmation = Array.isArray(a.needsFounderConfirmation)
+    ? a.needsFounderConfirmation.filter((g): g is GateId =>
+        (GATE_IDS as readonly string[]).includes(g as string),
+      )
+    : [];
+  return {
+    summary: str(a.summary),
+    gateRationales,
+    scoreRationales,
+    confidenceRationale: str(a.confidenceRationale),
+    needsFounderConfirmation,
+    provider: a.provider === "openai" ? "openai" : "anthropic",
+    model: str(a.model),
+    analyzedAt: str(a.analyzedAt, new Date().toISOString()),
+  };
+}
 
 /** Coerce unknown persisted/imported JSON into a valid AppState. Throws on garbage. */
 export function normalizeState(data: unknown): AppState {
@@ -15,10 +59,13 @@ export function normalizeState(data: unknown): AppState {
   const s = obj.settings as Partial<Settings>;
   const settings: Settings = {
     weights: { ...base.weights },
-    trials:
-      typeof s.trials === "number" && s.trials > 0
-        ? Math.floor(s.trials)
-        : base.trials,
+    trials: (() => {
+      const t =
+        typeof s.trials === "number" && Number.isFinite(s.trials)
+          ? Math.floor(s.trials)
+          : 0;
+      return t >= 1 ? Math.min(t, MAX_TRIALS) : base.trials;
+    })(),
     provider: s.provider === "openai" ? "openai" : "anthropic",
     models: {
       anthropic:
@@ -55,7 +102,7 @@ export function normalizeState(data: unknown): AppState {
           : null,
       validationTest30d:
         typeof i.validationTest30d === "string" ? i.validationTest30d : "",
-      ai: i.ai ?? null,
+      ai: normalizeAI(i.ai),
       createdAt:
         typeof i.createdAt === "string" ? i.createdAt : new Date().toISOString(),
       updatedAt:
@@ -90,7 +137,7 @@ export function normalizeState(data: unknown): AppState {
 
 function csvEscape(value: string | number | null | undefined): string {
   const s = value === null || value === undefined ? "" : String(value);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 /** CSV export of the pipeline table. */

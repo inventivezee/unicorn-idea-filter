@@ -45,6 +45,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Corrupt storage — keep seed state rather than crashing.
     }
     setHydrated(true);
+
+    // Another tab saved — adopt its state instead of clobbering it on our next edit.
+    function onStorage(e: StorageEvent) {
+      if (e.key !== STORAGE_KEY || e.newValue === null) return;
+      try {
+        skipNextSave.current = true;
+        setState(normalizeState(JSON.parse(e.newValue)));
+      } catch {
+        // Ignore malformed cross-tab writes.
+      }
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   useEffect(() => {

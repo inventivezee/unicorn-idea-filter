@@ -49,7 +49,11 @@ export async function extractTextFromFile(file: File): Promise<string> {
   } else {
     text = await file.text();
   }
-  const cleaned = text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const cleaned = text
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   if (!cleaned) {
     throw new Error(
       "No text could be extracted from that file (it may be a scanned image). Paste your background as text instead.",

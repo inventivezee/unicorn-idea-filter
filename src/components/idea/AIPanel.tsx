@@ -7,6 +7,7 @@ import { CRITERION_IDS, GATE_IDS } from "@/lib/types";
 import { Button, Section } from "@/components/ui";
 import type {
   AnalyzeResponse,
+  Confidence,
   CriterionId,
   GateId,
   GateValue,
@@ -25,18 +26,33 @@ export function AIPanel({
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const controllerRef = useRef<AbortController | null>(null);
-
-  // Abort any in-flight request when the component unmounts.
-  useEffect(() => () => controllerRef.current?.abort(), []);
+  // The request may outlive this component (user navigates away mid-analysis).
+  // The result is still applied through the store, which survives; only local
+  // setState calls must stop after unmount.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  // Latest idea values, so a result arriving minutes later can preserve any
+  // manual edits the user made while the request was in flight.
+  const ideaRef = useRef(idea);
+  ideaRef.current = idea;
 
   const model = settings.models[settings.provider];
 
   async function analyze() {
     setError(null);
     setPending(true);
-    const controller = new AbortController();
-    controllerRef.current = controller;
+    // Snapshot at click time: fields the user later touches win over the AI.
+    const snapshot = {
+      gates: { ...idea.gates },
+      scores: { ...idea.scores },
+      confidence: idea.confidence,
+      validationTest30d: idea.validationTest30d,
+    };
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
@@ -54,7 +70,6 @@ export function AIPanel({
           provider: settings.provider,
           model,
         }),
-        signal: controller.signal,
       });
 
       if (!res.ok) {
@@ -67,33 +82,53 @@ export function AIPanel({
         } catch {
           // Non-JSON error body — keep the generic message.
         }
-        setError(message);
+        if (mountedRef.current) setError(message);
         return;
       }
 
       const data = (await res.json()) as AnalyzeResponse;
+      const latest = ideaRef.current;
 
       const gates = {} as Record<GateId, GateValue>;
       const gateRationales: Partial<Record<GateId, string>> = {};
       for (const gid of GATE_IDS) {
+        if (latest.gates[gid] !== snapshot.gates[gid]) {
+          gates[gid] = latest.gates[gid]; // user answered this gate mid-flight
+        } else {
+          const g = data.gates?.[gid];
+          gates[gid] = g ? (g.value === "UNSURE" ? null : g.value) : null;
+        }
         const g = data.gates?.[gid];
-        gates[gid] = g ? (g.value === "UNSURE" ? null : g.value) : null;
         if (g?.rationale) gateRationales[gid] = g.rationale;
       }
 
       const scores = {} as Record<CriterionId, number | null>;
       const scoreRationales: Partial<Record<CriterionId, string>> = {};
       for (const cid of CRITERION_IDS) {
+        if (latest.scores[cid] !== snapshot.scores[cid]) {
+          scores[cid] = latest.scores[cid]; // user scored this one mid-flight
+        } else {
+          const s = data.scores?.[cid];
+          scores[cid] = s ? s.score : null;
+        }
         const s = data.scores?.[cid];
-        scores[cid] = s ? s.score : null;
         if (s?.rationale) scoreRationales[cid] = s.rationale;
       }
+
+      const confidence: Confidence =
+        latest.confidence !== snapshot.confidence
+          ? latest.confidence
+          : data.confidence;
+      const validationTest30d =
+        latest.validationTest30d !== snapshot.validationTest30d
+          ? latest.validationTest30d
+          : data.validationTest30d;
 
       onPatch({
         gates,
         scores,
-        confidence: data.confidence,
-        validationTest30d: data.validationTest30d,
+        confidence,
+        validationTest30d,
         ai: {
           summary: data.summary,
           gateRationales,
@@ -106,10 +141,11 @@ export function AIPanel({
         },
       });
     } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") return;
-      setError(e instanceof Error ? e.message : "Network error.");
+      if (mountedRef.current) {
+        setError(e instanceof Error ? e.message : "Network error.");
+      }
     } finally {
-      if (!controller.signal.aborted) setPending(false);
+      if (mountedRef.current) setPending(false);
     }
   }
 
@@ -146,7 +182,8 @@ export function AIPanel({
               aria-hidden
               className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-200 border-t-teal-600"
             />
-            Analyzing — thinking models can take a minute or two…
+            Analyzing — thinking models can take a minute or two. The result
+            is applied even if you navigate elsewhere.
           </span>
         ) : null}
       </div>
@@ -164,7 +201,7 @@ export function AIPanel({
             Analyzed with {ai.model} ·{" "}
             {new Date(ai.analyzedAt).toLocaleString()}
           </p>
-          {ai.needsFounderConfirmation.length > 0 ? (
+          {ai.needsFounderConfirmation?.length ? (
             <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
               Confirm these gates yourself:{" "}
               {ai.needsFounderConfirmation

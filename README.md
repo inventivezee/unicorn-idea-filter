@@ -30,6 +30,8 @@ Describe your idea, add your founder background (paste text or upload a CV), and
    - Set at least one; Settings in the app shows which providers are live.
 3. Deploy. Anyone you share the URL with gets their own private, browser-local workspace and uses your configured keys for AI analysis.
 
+> **Cost note:** the analyze endpoint spends *your* API credits and is open to anyone who can reach the deployment. It enforces same-origin requests, caps input sizes, and rate-limits per IP (best effort on serverless), but for a widely shared URL you should also set spend limits in your Anthropic/OpenAI dashboards, and consider Vercel's deployment protection if you want to restrict who can open the app at all.
+
 ## Local development
 
 ```bash
