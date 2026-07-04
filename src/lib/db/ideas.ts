@@ -163,6 +163,7 @@ export async function applyAnalysisToIdea(
   ideaId: string,
   analysis: {
     metadata?: Record<string, string>;
+    founderProfile?: string;
     gates?: Record<string, { value: string }>;
     scores?: Record<string, { score: number }>;
     confidence?: number;
@@ -195,6 +196,13 @@ export async function applyAnalysisToIdea(
     if (proposal && (typeof current !== "string" || !current.trim())) {
       row[column] = proposal;
     }
+  }
+
+  if (
+    analysis.founderProfile?.trim() &&
+    !(existing.founder_profile ?? "").trim()
+  ) {
+    row.founder_profile = analysis.founderProfile.trim();
   }
 
   if (analysis.gates) {

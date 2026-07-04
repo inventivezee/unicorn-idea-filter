@@ -22,7 +22,7 @@ Describe your idea, add your founder background (paste text or upload a CV), and
 ## Privacy model
 
 - **Scored ideas are public by default.** When cloud sync is configured, every idea you score is published to a shared database and appears on the Explore page. Treat the idea's name, metadata, gates, and scores as public.
-- **Your founder data is never public.** Founder backgrounds, co-founders, per-item rationales, and validation plans are stored but never exposed on the public feed — only you (and site admins) can see them.
+- **Your founder data is never public.** Founder backgrounds, co-founders, per-item rationales, and validation plans are stored but never exposed on the public feed — only you (and site admins) can see them. Public ideas instead carry an **anonymised founding-team profile**: an AI-written 1–3 sentence summary of expertise and advantages with no names, employers, or identifying details, which you can edit on the idea page.
 - **Anonymous usage is allowed.** No account is needed to score or publish ideas; a random device key in localStorage lets you keep editing what you created. The server logs IP address and device metadata with each submission — these logs are visible only to admins.
 - **Private ideas are a subscriber feature.** Subscribers ($19/month) can mark any idea private, which removes it from the public feed. The subscription also unlocks the premium models (Claude Fable 5, GPT-5.5).
 - **Quotas:** anonymous visitors get 3 full analyses/day, free accounts 10/month, subscribers unlimited (fair use).

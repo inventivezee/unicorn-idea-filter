@@ -102,6 +102,7 @@ export function AIPanel({
       confidence: idea.confidence,
       validationTest30d: idea.validationTest30d,
       thesisNotes: idea.thesisNotes,
+      founderProfile: idea.founderProfile ?? "",
       meta: Object.fromEntries(META_FIELDS.map((f) => [f, idea[f]])) as Record<
         (typeof META_FIELDS)[number],
         string
@@ -170,6 +171,13 @@ export function AIPanel({
           ) {
             patch.thesisNotes = data.refinedDescription;
           }
+          if (
+            data.founderProfile &&
+            !snapshot.founderProfile.trim() &&
+            (latest.founderProfile ?? "") === snapshot.founderProfile
+          ) {
+            patch.founderProfile = data.founderProfile;
+          }
           return patch;
         });
         return;
@@ -230,8 +238,18 @@ export function AIPanel({
           }
         }
 
+        const profilePatch: Partial<Idea> = {};
+        if (
+          data.founderProfile &&
+          !snapshot.founderProfile.trim() &&
+          (latest.founderProfile ?? "") === snapshot.founderProfile
+        ) {
+          profilePatch.founderProfile = data.founderProfile;
+        }
+
         return {
           ...metaPatch,
+          ...profilePatch,
           gates,
           scores,
           confidence,

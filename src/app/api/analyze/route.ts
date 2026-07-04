@@ -51,6 +51,7 @@ const FOUNDER_PERSONAL_GATES = GATES.filter((g) => g.founderPersonal).map(
 interface RawAnalysis {
   summary: string;
   metadata?: Record<string, unknown>;
+  founderProfile?: string;
   gates: Record<string, { value: string; rationale: string }>;
   scores: Record<string, { score: number; rationale: string }>;
   confidence: string;
@@ -62,6 +63,7 @@ interface RawAnalysis {
 interface RawMetadata {
   metadata?: Record<string, unknown>;
   refinedDescription?: string;
+  founderProfile?: string;
 }
 
 function normalizeMetadataBlock(
@@ -119,6 +121,10 @@ function normalize(
   return {
     summary: raw.summary ?? "",
     metadata: normalizeMetadataBlock(raw.metadata),
+    founderProfile:
+      typeof raw.founderProfile === "string"
+        ? raw.founderProfile.trim().slice(0, 600)
+        : "",
     gates,
     scores,
     confidence,
@@ -311,12 +317,17 @@ export async function POST(request: Request) {
           typeof raw.refinedDescription === "string"
             ? raw.refinedDescription.trim()
             : "",
+        founderProfile:
+          typeof raw.founderProfile === "string"
+            ? raw.founderProfile.trim().slice(0, 600)
+            : "",
         provider,
         model,
       };
       if (persistTo) {
         await applyAnalysisToIdea(adminClient(), persistTo, {
           metadata: response.metadata as unknown as Record<string, string>,
+          founderProfile: response.founderProfile,
         });
       }
       await logAnalysis?.(0);
@@ -338,6 +349,7 @@ export async function POST(request: Request) {
     if (persistTo) {
       await applyAnalysisToIdea(adminClient(), persistTo, {
         metadata: response.metadata as unknown as Record<string, string>,
+        founderProfile: response.founderProfile,
         gates: response.gates,
         scores: response.scores,
         confidence: response.confidence,

@@ -26,6 +26,7 @@ function baseRow(overrides: Partial<IdeaRow> = {}): IdeaRow {
     top_risk_override_2: null,
     ai: null,
     ai_summary: "",
+    founder_profile: "",
     is_private: false,
     published: false,
     created_at: "2026-07-04T00:00:00.000Z",

@@ -80,6 +80,8 @@ export interface Idea {
   isPrivate?: boolean;
   /** Cloud mode: visible in the public feed once scored (and not private). */
   published?: boolean;
+  /** Anonymised founding-team profile shown publicly with the idea. */
+  founderProfile?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -123,6 +125,8 @@ export interface IdeaMetadataProposal {
 export interface AnalyzeResponse {
   summary: string;
   metadata: IdeaMetadataProposal;
+  /** Anonymised public founding-team profile ("" when no background given). */
+  founderProfile: string;
   gates: Record<GateId, { value: "Y" | "N" | "UNSURE"; rationale: string }>;
   scores: Record<CriterionId, { score: number; rationale: string }>;
   confidence: 0.5 | 0.75 | 1.0;
@@ -138,6 +142,8 @@ export interface AnalyzeResponse {
 /** Shape returned by POST /api/analyze with mode "metadata" ("Add only" flow). */
 export interface AnalyzeMetadataResponse {
   metadata: IdeaMetadataProposal;
+  /** Anonymised public founding-team profile ("" when no background given). */
+  founderProfile: string;
   /** The description rewritten in better detail from the clarification Q&A. */
   refinedDescription: string;
   provider: Provider;

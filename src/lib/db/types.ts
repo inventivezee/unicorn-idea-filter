@@ -24,6 +24,7 @@ export interface IdeaRow {
   top_risk_override_2: string | null;
   ai: AIAnalysis | null;
   ai_summary: string;
+  founder_profile: string;
   is_private: boolean;
   published: boolean;
   created_at: string;
@@ -44,6 +45,7 @@ export interface PublicIdeaRow {
   confidence: number | null;
   raw_score: number | null;
   ai_summary: string;
+  founder_profile: string;
   author_handle: string | null;
   created_at: string;
   updated_at: string;
@@ -85,6 +87,7 @@ export function rowToIdea(row: IdeaRow): Idea & {
         ? row.confidence
         : null,
     validationTest30d: row.validation_test_30d ?? "",
+    founderProfile: row.founder_profile ?? "",
     ai: row.ai ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -129,6 +132,9 @@ export function ideaToWritableRow(idea: Partial<Idea>): Record<string, unknown> 
   if (idea.confidence !== undefined) row.confidence = idea.confidence;
   if (idea.validationTest30d !== undefined) {
     row.validation_test_30d = idea.validationTest30d;
+  }
+  if (idea.founderProfile !== undefined) {
+    row.founder_profile = idea.founderProfile;
   }
   if ("topRiskOverride1" in idea) {
     row.top_risk_override_1 = idea.topRiskOverride1 ?? null;

@@ -29,6 +29,7 @@ const DEFAULT_ADMIN_MODEL = "claude-opus-4-8";
 interface RawAnalysis {
   summary: string;
   metadata?: Record<string, string>;
+  founderProfile?: string;
   gates: Record<string, { value: string; rationale: string }>;
   scores: Record<string, { score: number; rationale: string }>;
   confidence: string;
@@ -145,6 +146,10 @@ export async function POST(request: Request) {
 
     await applyAnalysisToIdea(admin, ideaId, {
       metadata: raw.metadata ?? {},
+      founderProfile:
+        typeof raw.founderProfile === "string"
+          ? raw.founderProfile.trim().slice(0, 600)
+          : "",
       gates,
       scores,
       confidence:

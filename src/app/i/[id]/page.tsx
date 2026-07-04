@@ -200,6 +200,17 @@ export default function PublicIdeaPage() {
             ) : null}
           </Section>
 
+          {idea.founder_profile ? (
+            <Section
+              title="Founding team"
+              description="Anonymised profile — the founder's identity and full background stay private."
+            >
+              <p className="whitespace-pre-wrap text-sm text-zinc-700">
+                {idea.founder_profile}
+              </p>
+            </Section>
+          ) : null}
+
           {idea.ai_summary ? (
             <Section title="AI assessment">
               <p className="whitespace-pre-wrap text-sm text-zinc-700">

@@ -70,6 +70,9 @@ create table public.ideas (
   ai jsonb,
   -- Public-safe copy of the AI's summary paragraph.
   ai_summary text not null default '',
+  -- Anonymised founding-team profile (AI-written, no identifying details) —
+  -- the only founder information that is ever public.
+  founder_profile text not null default '',
   -- Premium feature: subscribers can keep an idea out of the public feed.
   is_private boolean not null default false,
   -- True once the idea has scores (AI or manual) — public-feed eligibility.
@@ -245,6 +248,7 @@ select
   i.confidence,
   i.raw_score,
   i.ai_summary,
+  i.founder_profile,
   case
     when p.show_handle and coalesce(p.display_name, '') <> '' then p.display_name
     else null

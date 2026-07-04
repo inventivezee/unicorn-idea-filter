@@ -218,6 +218,24 @@ export default function IdeaDetailPage() {
                 placeholder="First narrow entry point"
               />
             </div>
+            {cloud ? (
+              <label className="mt-3 block">
+                <span className="mb-1 block text-xs font-medium text-zinc-500">
+                  Public founder profile (anonymised)
+                </span>
+                <textarea
+                  className={textareaCls}
+                  rows={2}
+                  value={idea.founderProfile ?? ""}
+                  onChange={(e) => patch({ founderProfile: e.target.value })}
+                  placeholder="Written by the AI from your background without identifying details — shown publicly next to this idea once scored."
+                />
+                <span className="mt-0.5 block text-[10px] text-zinc-400">
+                  Your full founder background is never public; only this
+                  anonymised profile appears with the idea.
+                </span>
+              </label>
+            ) : null}
             <label className="mt-3 block">
               <span className="mb-1 block text-xs font-medium text-zinc-500">
                 Thesis / description

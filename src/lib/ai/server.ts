@@ -240,7 +240,41 @@ export function parseLastJSON<T>(texts: string[]): T {
   );
 }
 
+function isGrammarTooLarge(err: unknown): boolean {
+  return (
+    err instanceof Anthropic.APIError &&
+    err.status === 400 &&
+    /grammar is too large|reduce the number of strict tools/i.test(err.message)
+  );
+}
+
 async function anthropicJSON(opts: JSONCallOptions): Promise<JSONCallResult> {
+  // Anthropic compiles the output schema (and tool grammars) into one
+  // constrained-decoding grammar with a hard size limit. If a request trips
+  // it, degrade gracefully: drop web search first, then fall back from the
+  // enforced schema to a JSON instruction + parse.
+  try {
+    return await anthropicJSONAttempt(opts, { format: true });
+  } catch (err) {
+    if (!isGrammarTooLarge(err)) throw err;
+  }
+  if (opts.webSearch) {
+    try {
+      return await anthropicJSONAttempt(
+        { ...opts, webSearch: false },
+        { format: true },
+      );
+    } catch (err) {
+      if (!isGrammarTooLarge(err)) throw err;
+    }
+  }
+  return anthropicJSONAttempt({ ...opts, webSearch: false }, { format: false });
+}
+
+async function anthropicJSONAttempt(
+  opts: JSONCallOptions,
+  attempt: { format: boolean },
+): Promise<JSONCallResult> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const isFable = FABLE_MODELS.test(opts.model);
 
@@ -269,17 +303,27 @@ async function anthropicJSON(opts: JSONCallOptions): Promise<JSONCallResult> {
       ]
     : undefined;
 
+  const system = attempt.format
+    ? opts.system
+    : `${opts.system}\n\nRespond with ONLY a single valid JSON object exactly matching this JSON Schema — no prose, no markdown fences:\n${JSON.stringify(opts.schema)}`;
+
   const baseParams = {
     model: opts.model,
     max_tokens: opts.speed === "fast" ? 8000 : 16000,
     ...(ADAPTIVE_THINKING_MODELS.test(opts.model)
       ? { thinking: { type: "adaptive" as const } }
       : {}),
-    system: opts.system,
-    output_config: {
-      ...(effort ? { effort } : {}),
-      format: { type: "json_schema" as const, schema: opts.schema },
-    },
+    system,
+    ...(effort || attempt.format
+      ? {
+          output_config: {
+            ...(effort ? { effort } : {}),
+            ...(attempt.format
+              ? { format: { type: "json_schema" as const, schema: opts.schema } }
+              : {}),
+          },
+        }
+      : {}),
     ...(tools ? { tools } : {}),
   };
 
