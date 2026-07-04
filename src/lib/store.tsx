@@ -63,6 +63,14 @@ interface StoreContextValue {
   resetWeights: () => void;
   exportJSON: () => string;
   importJSON: (json: string) => void;
+  /**
+   * Ideas with an AI request in flight, keyed by id → mode. Ephemeral (never
+   * persisted or synced): lets the UI show progress app-wide and survive
+   * navigating away from the idea while it runs.
+   */
+  analyzing: Record<string, "full" | "metadata">;
+  beginAnalysis: (id: string, mode: "full" | "metadata") => void;
+  endAnalysis: (id: string) => void;
 }
 
 const StoreContext = createContext<StoreContextValue | null>(null);
@@ -91,6 +99,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [pendingLocalImport, setPendingLocalImport] = useState(0);
   const [anonKey, setAnonKey] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState<
+    Record<string, "full" | "metadata">
+  >({});
   const skipNextSave = useRef(true);
   const signedInRef = useRef(false);
 
@@ -537,6 +548,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     await loadCloudIdeas();
   }, [cloud, loadCloudIdeas]);
 
+  const beginAnalysis = useCallback(
+    (id: string, mode: "full" | "metadata") => {
+      setAnalyzing((a) => ({ ...a, [id]: mode }));
+    },
+    [],
+  );
+  const endAnalysis = useCallback((id: string) => {
+    setAnalyzing((a) => {
+      if (!(id in a)) return a;
+      const next = { ...a };
+      delete next[id];
+      return next;
+    });
+  }, []);
+
   const value = useMemo(
     () => ({
       state,
@@ -557,6 +583,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       resetWeights,
       exportJSON,
       importJSON,
+      analyzing,
+      beginAnalysis,
+      endAnalysis,
     }),
     [
       state,
@@ -577,6 +606,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       resetWeights,
       exportJSON,
       importJSON,
+      analyzing,
+      beginAnalysis,
+      endAnalysis,
     ],
   );
 

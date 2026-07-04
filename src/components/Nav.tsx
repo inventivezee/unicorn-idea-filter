@@ -102,6 +102,26 @@ function AuthControl() {
   );
 }
 
+/** App-wide "N analyzing" pill — visible from any page while requests run. */
+function AnalyzingIndicator() {
+  const { analyzing } = useStore();
+  const count = Object.keys(analyzing).length;
+  if (count === 0) return null;
+  return (
+    <Link
+      href="/"
+      title="AI requests are running in the background. Click to see which ideas."
+      className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-teal-200 bg-teal-50 px-2 py-1 text-xs font-medium text-teal-700 transition-colors hover:bg-teal-100"
+    >
+      <span
+        aria-hidden
+        className="inline-block h-3 w-3 animate-spin rounded-full border border-teal-300 border-t-teal-600"
+      />
+      {count} analyzing
+    </Link>
+  );
+}
+
 export function Nav() {
   const pathname = usePathname();
   const { syncError, pendingLocalImport, importLocalIdeas } = useStore();
@@ -143,6 +163,7 @@ export function Nav() {
         {/* Right-aligned cluster: auth control, then background reading.
             Kept outside the scrollable nav so the account dropdown isn't
             clipped by overflow-x-auto. */}
+        <AnalyzingIndicator />
         <AuthControl />
         <Link
           href="/exit-reference"

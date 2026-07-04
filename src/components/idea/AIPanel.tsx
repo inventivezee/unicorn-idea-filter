@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { getAnonKey } from "@/lib/anon";
 import { GATES_BY_ID } from "@/lib/criteria";
 import { isPremiumModel } from "@/lib/entitlements";
+import { useStore } from "@/lib/store";
 import { CRITERION_IDS, GATE_IDS } from "@/lib/types";
 import { Button, Section } from "@/components/ui";
 import type {
@@ -29,8 +30,13 @@ export function AIPanel({
   onPatch: (patch: Partial<Idea> | ((latest: Idea) => Partial<Idea>)) => void;
 }) {
   const router = useRouter();
-  const [pending, setPending] = useState(false);
-  const [pendingMode, setPendingMode] = useState<"full" | "metadata">("full");
+  const { analyzing, beginAnalysis, endAnalysis } = useStore();
+  // Pending state lives in the store (keyed by idea id), so it survives
+  // navigating away and is reflected if the user returns to this idea while
+  // the request is still running.
+  const activeMode = analyzing[idea.id] ?? null;
+  const pending = activeMode !== null;
+  const pendingMode = activeMode ?? "full";
   const [error, setError] = useState<string | null>(null);
   const [failedMode, setFailedMode] = useState<"full" | "metadata" | null>(
     null,
@@ -88,6 +94,7 @@ export function AIPanel({
   ] as const;
 
   async function analyze(mode: "full" | "metadata" = "full") {
+    if (analyzing[idea.id]) return; // already running for this idea
     if (mode === "full" && !settings.founderBackground.trim()) {
       setError(
         "Analysis needs your founder background — add it in Settings first.",
@@ -96,8 +103,7 @@ export function AIPanel({
     }
     setError(null);
     setFailedMode(null);
-    setPending(true);
-    setPendingMode(mode);
+    beginAnalysis(idea.id, mode);
     // Snapshot at click time: fields the user later touches win over the AI.
     const snapshot = {
       gates: { ...idea.gates },
@@ -287,7 +293,8 @@ export function AIPanel({
         setFailedMode(mode);
       }
     } finally {
-      if (mountedRef.current) setPending(false);
+      // Store update — safe after unmount, and clears the app-wide indicator.
+      endAnalysis(idea.id);
     }
   }
 

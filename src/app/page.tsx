@@ -132,9 +132,25 @@ function HeaderCell({
   );
 }
 
+/** Small inline "Analyzing…" badge shown while an idea has an AI request in flight. */
+function AnalyzingBadge({ mode }: { mode: "full" | "metadata" }) {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[10px] font-medium text-teal-700"
+      title="An AI request is still running for this idea. You can keep working elsewhere — the result is applied automatically."
+    >
+      <span
+        aria-hidden
+        className="inline-block h-2.5 w-2.5 animate-spin rounded-full border border-teal-300 border-t-teal-600"
+      />
+      {mode === "metadata" ? "Filling…" : "Analyzing…"}
+    </span>
+  );
+}
+
 export default function PipelinePage() {
   const router = useRouter();
-  const { state, hydrated } = useStore();
+  const { state, hydrated, analyzing } = useStore();
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({
     key: "updated",
     dir: "desc",
@@ -186,6 +202,7 @@ export default function PipelinePage() {
   if (!hydrated) return null;
 
   const fullyScored = state.ideas.filter((i) => isFullyScored(i.scores)).length;
+  const analyzingCount = state.ideas.filter((i) => analyzing[i.id]).length;
 
   function handleSort(key: SortKey) {
     setSort((s) =>
@@ -215,7 +232,9 @@ export default function PipelinePage() {
       description={
         state.ideas.length === 0
           ? "No ideas yet."
-          : `${state.ideas.length} idea${state.ideas.length === 1 ? "" : "s"} · ${fullyScored} fully scored`
+          : `${state.ideas.length} idea${state.ideas.length === 1 ? "" : "s"} · ${fullyScored} fully scored${
+              analyzingCount > 0 ? ` · ${analyzingCount} analyzing` : ""
+            }`
       }
       actions={
         <>
@@ -285,6 +304,9 @@ export default function PipelinePage() {
                         <span className="shrink-0 rounded bg-zinc-100 px-1 text-[10px] text-zinc-500">
                           example
                         </span>
+                      ) : null}
+                      {analyzing[row.idea.id] ? (
+                        <AnalyzingBadge mode={analyzing[row.idea.id]} />
                       ) : null}
                     </span>
                   </td>
