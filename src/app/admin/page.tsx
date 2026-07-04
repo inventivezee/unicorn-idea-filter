@@ -52,6 +52,8 @@ interface CvUpload {
   filename: string;
   mime_type: string;
   size_bytes: number | null;
+  source_url: string | null;
+  web_searches: number | null;
   extracted_text: string;
   ai_summary: string;
   provider: string | null;
@@ -855,6 +857,16 @@ export default function AdminPage() {
                               className="font-medium text-teal-700 underline"
                             >
                               {u.filename || "download"}
+                            </a>
+                          ) : u.source_url ? (
+                            <a
+                              href={u.source_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="max-w-[220px] truncate font-medium text-teal-700 underline"
+                              title={u.source_url}
+                            >
+                              {u.source_url.replace(/^https?:\/\//, "").slice(0, 40)}
                             </a>
                           ) : (
                             <span className="text-zinc-400">

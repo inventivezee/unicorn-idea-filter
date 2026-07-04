@@ -50,6 +50,43 @@ async function readApiError(res: Response, fallback: string): Promise<string> {
   return fallback;
 }
 
+/** "or paste a profile URL" row — AI web-search lookup for one founder slot.
+ *  Module-level so it keeps a stable identity (the URL input keeps focus). */
+function ProfileUrlRow({
+  value,
+  busy,
+  anyBusy,
+  onChange,
+  onFetch,
+}: {
+  value: string;
+  busy: boolean;
+  anyBusy: boolean;
+  onChange: (v: string) => void;
+  onFetch: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        type="url"
+        inputMode="url"
+        value={value}
+        disabled={busy}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="or paste a LinkedIn / bio / personal-site URL"
+        className="h-8 min-w-0 flex-1 rounded border border-zinc-300 bg-white px-2 text-xs text-zinc-900 placeholder:text-zinc-400 focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600"
+      />
+      <Button
+        onClick={onFetch}
+        disabled={anyBusy || !value.trim()}
+        className="text-xs!"
+      >
+        {busy ? "Looking up…" : "Fetch from URL"}
+      </Button>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const {
     state,
@@ -200,6 +237,72 @@ export default function SettingsPage() {
     });
   }
 
+  // --- Profile-URL lookup (per founder slot) ---
+  const [profileUrls, setProfileUrls] = useState<Record<string, string>>({});
+  const [lookupSlot, setLookupSlot] = useState<string | null>(null);
+
+  async function lookupProfile(target: string) {
+    const url = (profileUrls[target] ?? "").trim();
+    if (!url || lookupSlot) return;
+    const existing =
+      target === "primary"
+        ? settings.founderBackground
+        : (settings.coFounders.find((c) => c.id === target)?.background ?? "");
+    if (
+      existing.trim() !== "" &&
+      !window.confirm(
+        "Replace this founder's existing background with the AI lookup?",
+      )
+    ) {
+      return;
+    }
+    setExtractError(null);
+    setExtractSuccess(null);
+    setLookupSlot(target);
+    try {
+      const res = await fetch("/api/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url,
+          provider: settings.provider,
+          model: settings.models[settings.provider],
+          anonKey: getAnonKey(),
+          founderSlot: target,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as {
+        found?: boolean;
+        background?: string;
+        error?: string;
+      } | null;
+      if (!res.ok) {
+        setExtractError(data?.error ?? `Lookup failed (HTTP ${res.status}).`);
+        return;
+      }
+      if (data?.found && data.background?.trim()) {
+        if (target === "primary") {
+          updateSettings({ founderBackground: data.background });
+        } else {
+          setCoFounder(target, { background: data.background });
+        }
+        setExtractSuccess(
+          "Built a background from public info — review and edit it below.",
+        );
+      } else {
+        // Honest miss: don't overwrite anything, tell the founder.
+        setExtractError(
+          data?.background?.trim() ||
+            "Couldn't find enough public information from that URL — paste your background or upload a CV instead.",
+        );
+      }
+    } catch {
+      setExtractError("Network error during the profile lookup.");
+    } finally {
+      setLookupSlot(null);
+    }
+  }
+
   async function handleCvFile(file: File) {
     setExtractError(null);
     setExtractSuccess(null);
@@ -345,6 +448,16 @@ export default function SettingsPage() {
       setImportError("That file isn't a valid backup.");
     }
   }
+
+  const profileRow = (slot: string) => (
+    <ProfileUrlRow
+      value={profileUrls[slot] ?? ""}
+      busy={lookupSlot === slot}
+      anyBusy={lookupSlot !== null}
+      onChange={(v) => setProfileUrls((m) => ({ ...m, [slot]: v }))}
+      onFetch={() => void lookupProfile(slot)}
+    />
+  );
 
   if (!hydrated) return null;
 
@@ -554,6 +667,7 @@ export default function SettingsPage() {
                     : "Upload CV (.pdf / .docx / .txt)"}
                 </Button>
               </div>
+              {profileRow("primary")}
               <textarea
                 rows={8}
                 value={settings.founderBackground}
@@ -598,6 +712,7 @@ export default function SettingsPage() {
                     Remove
                   </Button>
                 </div>
+                {profileRow(c.id)}
                 <textarea
                   rows={5}
                   value={c.background}

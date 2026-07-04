@@ -77,8 +77,9 @@ export async function POST(request: Request) {
   let model = requestedModel ?? DEFAULT_MODEL_FALLBACKS[provider];
   let subscribed = true; // local-only deployments run on the owner's keys
   const cloud = cloudConfigured();
-  if (cloud) {
-    const caller = await resolveCaller();
+  // Resolve the caller once and reuse across entitlement + persistence.
+  const caller = cloud ? await resolveCaller() : null;
+  if (caller) {
     subscribed = caller.subscribed || caller.isAdmin;
     if (isPremiumModel(model) && !subscribed) {
       model = DEFAULT_MODEL_FALLBACKS[provider];
@@ -91,10 +92,9 @@ export async function POST(request: Request) {
   let uploadId: string | null = null;
   if (cloud) {
     const admin = adminClient();
-    const caller = await resolveCaller();
     uploadId = crypto.randomUUID();
     if (uploadFile) {
-      const path = `${caller.user?.id ?? "anon"}/${uploadId}-${safeName(uploadFile.name)}`;
+      const path = `${caller?.user?.id ?? "anon"}/${uploadId}-${safeName(uploadFile.name)}`;
       const bytes = new Uint8Array(await uploadFile.arrayBuffer());
       const { error: upErr } = await admin.storage
         .from(CV_BUCKET)
@@ -103,12 +103,13 @@ export async function POST(request: Request) {
           upsert: false,
         });
       if (!upErr) storagePath = path;
+      else console.error("cv-upload storage failed", upErr.message);
     }
     const telemetry = requestTelemetry(request);
-    await admin.from("cv_uploads").insert({
+    const { error: insErr } = await admin.from("cv_uploads").insert({
       id: uploadId,
-      user_id: caller.user?.id ?? null,
-      anon_key: caller.user ? null : anonKey,
+      user_id: caller?.user?.id ?? null,
+      anon_key: caller?.user ? null : anonKey,
       founder_slot: founderSlot,
       filename: uploadFile ? safeName(uploadFile.name) : "",
       mime_type: uploadFile?.type ?? "",
@@ -119,6 +120,7 @@ export async function POST(request: Request) {
       model,
       ...telemetry,
     });
+    if (insErr) console.error("cv_uploads insert failed", insErr.message);
   }
 
   // Summarise. If the AI call fails, fall back to the raw extracted text so the
@@ -141,10 +143,11 @@ export async function POST(request: Request) {
         ? raw.background.trim()
         : extractedText;
     if (cloud && uploadId) {
-      await adminClient()
+      const { error: updErr } = await adminClient()
         .from("cv_uploads")
         .update({ ai_summary: background })
         .eq("id", uploadId);
+      if (updErr) console.error("cv_uploads summary update failed", updErr.message);
     }
     return Response.json({ background, summarised: background !== extractedText });
   } catch (err) {

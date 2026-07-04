@@ -112,3 +112,15 @@ export const CV_SUMMARY_SCHEMA = {
   required: ["background"],
   additionalProperties: false,
 } as const;
+
+/** Schema for an AI web-search lookup of a founder from a profile URL. */
+export const PROFILE_LOOKUP_SCHEMA = {
+  type: "object",
+  properties: {
+    found: { type: "boolean" },
+    background: { type: "string" },
+    sources: { type: "array", items: { type: "string" } },
+  },
+  required: ["found", "background", "sources"],
+  additionalProperties: false,
+} as const;

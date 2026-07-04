@@ -11,6 +11,8 @@ interface CvUploadRow {
   mime_type: string;
   size_bytes: number | null;
   storage_path: string | null;
+  source_url: string | null;
+  web_searches: number | null;
   extracted_text: string;
   ai_summary: string;
   provider: string | null;

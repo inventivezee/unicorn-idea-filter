@@ -118,3 +118,15 @@ Hard rules: use ONLY facts present in the CV text — never invent employers, ti
 export function buildCvSummaryPrompt(cvText: string): string {
   return `## Founder CV / resume (extracted text)\n\n${cvText}\n\nSummarise this into a founder background now.`;
 }
+
+export const PROFILE_LOOKUP_SYSTEM_PROMPT = `You research a startup founder from a profile URL they pasted (often LinkedIn, sometimes a personal site, company bio, or Crunchbase) and produce a PRIVATE founder background for a startup-idea evaluation.
+
+Use the web search tool to find publicly available professional information about THIS SPECIFIC person: current and past roles, companies, tenure, notable outcomes (exits, scale, launches, funding), domain expertise, education/credentials, and networks or access. The profile URL slug and any name/company in the conversation are your starting points. LinkedIn profile pages are usually login-walled and cannot be read directly — rely on web search results, cached snippets, company pages, press, and other public sources instead.
+
+Set "found": true only when you have located real, specific information you are confident is about the right person, and put a concise 4-8 sentence background in "background", leading with the strongest differentiating facts (what matters for founder-market fit and unfair advantages). List the URLs you actually used in "sources".
+
+Set "found": false when you cannot confidently identify the person or find substantive public information — do NOT guess, and NEVER fabricate employers, titles, dates, or achievements. In that case put a short honest note in "background" (e.g. "Couldn't find enough public information from this URL — paste your background or upload a CV instead.") and leave sources as what little you found (may be empty).`;
+
+export function buildProfileLookupPrompt(url: string): string {
+  return `## Founder profile URL\n\n${url}\n\nResearch this founder via web search and return the structured background now.`;
+}
