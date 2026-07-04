@@ -58,7 +58,7 @@ Notes:
 When a subscription is canceled or payment fails past due:
 
 - Existing private ideas **stay private** — nothing is retroactively published.
-- The user can **no longer mark new ideas private** or use the premium models (Claude Fable 5, GPT-5.5) until they resubscribe.
+- The user can **no longer mark new ideas private** use Claude Fable 5, or run GPT-5.5 at xhigh reasoning until they resubscribe (GPT-5.5 falls back to medium effort).
 - Quotas revert to the free tier (10 analyses/month signed in; anonymous is 3/day).
 
 ## 6. Smoke test

@@ -445,8 +445,9 @@ export default function SettingsPage() {
                       anything out of the public feed
                     </li>
                     <li>
-                      <span className="font-medium">Premium models</span> —
-                      Claude Fable 5 and GPT-5.5 at max reasoning
+                      <span className="font-medium">Premium power</span> —
+                      Claude Fable 5, plus GPT-5.5 at xhigh reasoning (free
+                      tier runs it at medium)
                     </li>
                     <li>
                       <span className="font-medium">

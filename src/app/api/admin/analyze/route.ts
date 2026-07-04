@@ -116,6 +116,7 @@ export async function POST(request: Request) {
       schema: ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
       webSearch: true,
       speed: "quality",
+      tier: "premium",
     });
     const raw = parseLastJSON<RawAnalysis>(result.texts);
 

@@ -206,10 +206,13 @@ export async function POST(request: Request) {
   let logAnalysis: ((webSearches: number) => Promise<void>) | null = null;
   let refundQuota: (() => Promise<void>) | null = null;
   let persistTo: string | null = null;
+  // Local-only deployments run on the owner's keys — premium tier applies.
+  let tier: "premium" | "standard" = "premium";
 
   if (cloudConfigured()) {
     const caller = await resolveCaller();
     const subscribed = caller.subscribed || caller.isAdmin;
+    tier = subscribed ? "premium" : "standard";
 
     if (isPremiumModel(model) && !subscribed) {
       return Response.json(
@@ -328,6 +331,7 @@ export async function POST(request: Request) {
         schema: METADATA_SCHEMA as unknown as Record<string, unknown>,
         webSearch: false,
         speed: "fast",
+        tier,
       });
       const raw = parseLastJSON<RawMetadata>(result.texts);
       const response: AnalyzeMetadataResponse = {
@@ -362,6 +366,7 @@ export async function POST(request: Request) {
       schema: ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
       webSearch,
       speed: "quality",
+      tier,
     });
     const raw = parseLastJSON<RawAnalysis>(result.texts);
     const response = normalize(raw, result.webSearches, provider, model);

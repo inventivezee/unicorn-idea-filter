@@ -92,6 +92,8 @@ export async function POST(request: Request) {
       schema: CLARIFY_SCHEMA as unknown as Record<string, unknown>,
       webSearch: false,
       speed: "fast",
+      // Fast calls run at low effort regardless of tier.
+      tier: "standard",
     });
     const raw = parseLastJSON<{ questions?: unknown }>(result.texts);
     const questions = (Array.isArray(raw.questions) ? raw.questions : [])

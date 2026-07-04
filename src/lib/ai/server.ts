@@ -203,11 +203,17 @@ export interface JSONCallOptions {
   schema: Record<string, unknown>;
   webSearch: boolean;
   /**
-   * "quality" applies the per-model policy effort (Fable 5 → xhigh,
-   * GPT-5.5 → xhigh, other gpt-5 → high); "fast" nudges effort low for
-   * snappy helper calls like clarifying questions and metadata fills.
+   * "quality" applies the per-model policy effort; "fast" nudges effort low
+   * for snappy helper calls like clarifying questions and metadata fills.
    */
   speed: "quality" | "fast";
+  /**
+   * Effort tier: subscribers/admins (and local-only deployments) run
+   * "premium" — GPT-5.5 at xhigh; free/anon callers run "standard" —
+   * GPT-5.5 capped at medium. Anthropic policy: Fable 5 xhigh (the model
+   * itself is subscriber-gated), Sonnet 5 medium for everyone.
+   */
+  tier: "premium" | "standard";
 }
 
 export interface JSONCallResult {
@@ -285,7 +291,9 @@ async function anthropicJSONAttempt(
         : undefined
       : isFable
         ? ("xhigh" as const)
-        : undefined;
+        : /^claude-sonnet-5/.test(opts.model)
+          ? ("medium" as const)
+          : undefined;
 
   const tools: Anthropic.ToolUnion[] | undefined = opts.webSearch
     ? [
@@ -389,7 +397,9 @@ async function openaiJSON(opts: JSONCallOptions): Promise<JSONCallResult> {
       : opts.speed === "fast"
         ? ("low" as const)
         : OPENAI_XHIGH_MODELS.test(opts.model)
-          ? ("xhigh" as const)
+          ? opts.tier === "premium"
+            ? ("xhigh" as const)
+            : ("medium" as const)
           : ("high" as const)
     : null;
 

@@ -11,23 +11,26 @@ import type {
 } from "./types";
 
 export const ANTHROPIC_MODELS = [
+  { id: "claude-sonnet-5", label: "Claude Sonnet 5 (default, medium effort)" },
   { id: "claude-fable-5", label: "Claude Fable 5 (most capable, xhigh effort)" },
-  { id: "claude-opus-4-8", label: "Claude Opus 4.8 (recommended)" },
-  { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
+  { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
   { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
 ];
 
 export const OPENAI_MODELS = [
-  { id: "gpt-5.5", label: "GPT-5.5 (most capable, xhigh reasoning)" },
-  { id: "gpt-5.1", label: "GPT-5.1 (recommended)" },
+  {
+    id: "gpt-5.5",
+    label: "GPT-5.5 (default — medium effort; xhigh for subscribers)",
+  },
+  { id: "gpt-5.1", label: "GPT-5.1" },
   { id: "gpt-5", label: "GPT-5" },
   { id: "gpt-5-mini", label: "GPT-5 mini" },
   { id: "gpt-4.1", label: "GPT-4.1" },
 ];
 
 export const DEFAULT_MODELS: Record<Provider, string> = {
-  anthropic: "claude-opus-4-8",
-  openai: "gpt-5.1",
+  anthropic: "claude-sonnet-5",
+  openai: "gpt-5.5",
 };
 
 export const DEFAULT_TRIALS = 300;
