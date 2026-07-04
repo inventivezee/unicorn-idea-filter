@@ -35,6 +35,9 @@ describe("acceptance test 6: export → import round-trips losslessly", () => {
     state.settings.trials = 500;
     state.settings.provider = "openai";
     state.settings.founderBackground = "10 years in fintech";
+    state.settings.coFounders = [
+      { id: "cf-1", name: "Alex", background: "Ex-Stripe payments infra lead" },
+    ];
 
     const json = JSON.stringify(state, null, 2);
     const restored = normalizeState(JSON.parse(json));

@@ -3,11 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, PageHeader, Section } from "@/components/ui";
 import { CRITERIA } from "@/lib/criteria";
-import { ANTHROPIC_MODELS, OPENAI_MODELS } from "@/lib/defaults";
+import { ANTHROPIC_MODELS, generateId, OPENAI_MODELS } from "@/lib/defaults";
 import { sumWeights } from "@/lib/engine";
 import { extractTextFromFile } from "@/lib/extractText";
 import { useStore } from "@/lib/store";
-import type { CriterionId, Provider } from "@/lib/types";
+import type { CoFounder, CriterionId, Provider } from "@/lib/types";
 
 const CUSTOM_OPTION = "__custom__";
 
@@ -36,19 +36,61 @@ export default function SettingsPage() {
     useStore();
   const settings = state.settings;
 
-  // --- Founder background ---
+  // --- Founding team ---
   const cvInputRef = useRef<HTMLInputElement>(null);
+  // Which founder the next CV upload belongs to: "primary" or a co-founder id.
+  const uploadTargetRef = useRef<string>("primary");
   const [extracting, setExtracting] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [extractSuccess, setExtractSuccess] = useState<string | null>(null);
 
+  function uploadCvFor(target: string) {
+    uploadTargetRef.current = target;
+    cvInputRef.current?.click();
+  }
+
+  function setCoFounder(id: string, patch: Partial<CoFounder>) {
+    updateSettings({
+      coFounders: state.settings.coFounders.map((c) =>
+        c.id === id ? { ...c, ...patch } : c,
+      ),
+    });
+  }
+
+  function addCoFounder() {
+    updateSettings({
+      coFounders: [
+        ...state.settings.coFounders,
+        { id: generateId("founder"), name: "", background: "" },
+      ],
+    });
+  }
+
+  function removeCoFounder(id: string) {
+    const target = state.settings.coFounders.find((c) => c.id === id);
+    if (
+      target?.background.trim() &&
+      !window.confirm("Remove this co-founder and their background?")
+    ) {
+      return;
+    }
+    updateSettings({
+      coFounders: state.settings.coFounders.filter((c) => c.id !== id),
+    });
+  }
+
   async function handleCvFile(file: File) {
     setExtractError(null);
     setExtractSuccess(null);
+    const target = uploadTargetRef.current;
+    const existing =
+      target === "primary"
+        ? settings.founderBackground
+        : (settings.coFounders.find((c) => c.id === target)?.background ?? "");
     if (
-      settings.founderBackground.trim() !== "" &&
+      existing.trim() !== "" &&
       !window.confirm(
-        "Replace your existing founder background with the extracted text?",
+        "Replace this founder's existing background with the extracted text?",
       )
     ) {
       return;
@@ -56,7 +98,11 @@ export default function SettingsPage() {
     setExtracting(true);
     try {
       const text = await extractTextFromFile(file);
-      updateSettings({ founderBackground: text });
+      if (target === "primary") {
+        updateSettings({ founderBackground: text });
+      } else {
+        setCoFounder(target, { background: text });
+      }
       setExtractSuccess(
         `Extracted ${text.length.toLocaleString()} characters from ${file.name}`,
       );
@@ -156,54 +202,114 @@ export default function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        description="Founder background, AI provider, criteria weights, and data."
+        description="Founding team, AI provider, criteria weights, and data."
       />
       <div className="space-y-6">
-        {/* 1. Founder background */}
+        {/* 1. Founding team */}
         <Section
-          title="Founder background"
-          description="Used by the AI to judge founder–market fit, unfair advantages, and founder-personal gates. Paste it or upload your CV."
+          title="Founding team"
+          description="Used by the AI to judge founder–market fit, unfair advantages, and founder-personal gates. With co-founders, founder–market fit scores as the strongest founder's fit."
         >
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-3">
-              <input
-                ref={cvInputRef}
-                type="file"
-                accept=".pdf,.docx,.txt,.md"
-                hidden
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = "";
-                  if (file) void handleCvFile(file);
-                }}
+          <div className="space-y-4">
+            <input
+              ref={cvInputRef}
+              type="file"
+              accept=".pdf,.docx,.txt,.md"
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void handleCvFile(file);
+              }}
+            />
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-zinc-800">
+                  Your background
+                </span>
+                {settings.founderBackground.trim() ? null : (
+                  <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                    required for analysis
+                  </span>
+                )}
+                <span className="flex-1" />
+                <Button
+                  onClick={() => uploadCvFor("primary")}
+                  disabled={extracting}
+                >
+                  {extracting ? "Extracting…" : "Upload CV (.pdf / .docx / .txt)"}
+                </Button>
+              </div>
+              <textarea
+                rows={8}
+                value={settings.founderBackground}
+                onChange={(e) =>
+                  updateSettings({ founderBackground: e.target.value })
+                }
+                placeholder="Domain expertise, operating history, networks, capital access, distribution, credibility…"
+                className="w-full rounded border border-zinc-300 bg-white p-2 font-mono text-xs text-zinc-900 focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600"
               />
-              <Button
-                onClick={() => cvInputRef.current?.click()}
-                disabled={extracting}
+              <div className="text-right text-xs text-zinc-400">
+                <span className="tnum">
+                  {settings.founderBackground.length.toLocaleString()}
+                </span>{" "}
+                characters
+              </div>
+            </div>
+
+            {settings.coFounders.map((c, i) => (
+              <div
+                key={c.id}
+                className="space-y-2 rounded-lg border border-zinc-200 bg-zinc-50/50 p-3"
               >
-                {extracting ? "Extracting…" : "Upload CV (.pdf / .docx / .txt)"}
-              </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-zinc-800">
+                    Co-founder {i + 2}
+                  </span>
+                  <input
+                    type="text"
+                    value={c.name}
+                    onChange={(e) => setCoFounder(c.id, { name: e.target.value })}
+                    placeholder="Name (optional)"
+                    className="h-8 w-40 rounded border border-zinc-300 bg-white px-2 text-sm text-zinc-900 focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600"
+                  />
+                  <span className="flex-1" />
+                  <Button
+                    onClick={() => uploadCvFor(c.id)}
+                    disabled={extracting}
+                  >
+                    Upload CV
+                  </Button>
+                  <Button variant="danger" onClick={() => removeCoFounder(c.id)}>
+                    Remove
+                  </Button>
+                </div>
+                <textarea
+                  rows={5}
+                  value={c.background}
+                  onChange={(e) =>
+                    setCoFounder(c.id, { background: e.target.value })
+                  }
+                  placeholder="This co-founder's expertise, track record, networks, and unfair advantages…"
+                  className="w-full rounded border border-zinc-300 bg-white p-2 font-mono text-xs text-zinc-900 focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600"
+                />
+              </div>
+            ))}
+
+            <div className="flex flex-wrap items-center gap-3">
+              {settings.coFounders.length < 4 ? (
+                <Button onClick={addCoFounder}>Add co-founder</Button>
+              ) : (
+                <span className="text-xs text-zinc-400">
+                  Maximum of 4 co-founders.
+                </span>
+              )}
               {extractError ? (
                 <span className="text-xs text-red-600">{extractError}</span>
               ) : null}
               {extractSuccess ? (
                 <span className="text-xs text-teal-700">{extractSuccess}</span>
               ) : null}
-            </div>
-            <textarea
-              rows={10}
-              value={settings.founderBackground}
-              onChange={(e) =>
-                updateSettings({ founderBackground: e.target.value })
-              }
-              placeholder="Domain expertise, operating history, networks, capital access, distribution, credibility…"
-              className="w-full rounded border border-zinc-300 bg-white p-2 font-mono text-xs text-zinc-900 focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600"
-            />
-            <div className="text-right text-xs text-zinc-400">
-              <span className="tnum">
-                {settings.founderBackground.length.toLocaleString()}
-              </span>{" "}
-              characters
             </div>
           </div>
         </Section>

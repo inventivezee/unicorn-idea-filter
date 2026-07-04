@@ -80,13 +80,22 @@ export interface Idea {
   updatedAt: string;
 }
 
+export interface CoFounder {
+  id: string;
+  name: string;
+  background: string;
+}
+
 export interface Settings {
   weights: Record<CriterionId, number>;
   trials: number;
   provider: Provider;
   /** Model id per provider, remembered independently. */
   models: Record<Provider, string>;
+  /** Primary founder — required before an idea can be analyzed. */
   founderBackground: string;
+  /** Optional co-founders; fmf scores as the strongest founder's fit. */
+  coFounders: CoFounder[];
   /** Let the model ground its analysis with live web searches. */
   webSearch: boolean;
 }
@@ -120,4 +129,18 @@ export interface AnalyzeResponse {
   model: string;
   /** Number of live web searches the model ran during the analysis. */
   webSearches: number;
+}
+
+/** Shape returned by POST /api/analyze with mode "metadata" ("Add only" flow). */
+export interface AnalyzeMetadataResponse {
+  metadata: IdeaMetadataProposal;
+  /** The description rewritten in better detail from the clarification Q&A. */
+  refinedDescription: string;
+  provider: Provider;
+  model: string;
+}
+
+/** Shape returned by POST /api/clarify. */
+export interface ClarifyResponse {
+  questions: string[];
 }

@@ -1,10 +1,11 @@
 import { DEFAULT_WEIGHTS, CRITERIA_BY_ID } from "./criteria";
-import { defaultSettings, emptyGates, emptyScores, newIdea } from "./defaults";
+import { defaultSettings, emptyGates, emptyScores, generateId, newIdea } from "./defaults";
 import { adjustedScore, decision, gateStatus, killerFlags, rawScore } from "./engine";
 import { CRITERION_IDS, GATE_IDS } from "./types";
 import type {
   AIAnalysis,
   AppState,
+  CoFounder,
   CriterionId,
   GateId,
   Idea,
@@ -83,6 +84,20 @@ export function normalizeState(data: unknown): AppState {
     },
     founderBackground:
       typeof s.founderBackground === "string" ? s.founderBackground : "",
+    coFounders: (Array.isArray(s.coFounders) ? s.coFounders : [])
+      .slice(0, 4)
+      .flatMap((c): CoFounder[] => {
+        if (!c || typeof c !== "object") return [];
+        const cf = c as Partial<CoFounder>;
+        return [
+          {
+            id:
+              typeof cf.id === "string" && cf.id ? cf.id : generateId("founder"),
+            name: typeof cf.name === "string" ? cf.name : "",
+            background: typeof cf.background === "string" ? cf.background : "",
+          },
+        ];
+      }),
     webSearch: s.webSearch !== false,
   };
   for (const id of CRITERION_IDS) {

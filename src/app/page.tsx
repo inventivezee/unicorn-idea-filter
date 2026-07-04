@@ -15,6 +15,7 @@ import {
 } from "@/lib/engine";
 import { pipelineCSV } from "@/lib/persistence";
 import { useStore } from "@/lib/store";
+import { QuickAdd } from "@/components/pipeline/QuickAdd";
 import { GATE_IDS } from "@/lib/types";
 import type { CriterionId, Decision, Idea } from "@/lib/types";
 import {
@@ -133,8 +134,7 @@ function HeaderCell({
 
 export default function PipelinePage() {
   const router = useRouter();
-  const { state, hydrated, addIdea } = useStore();
-  const [draft, setDraft] = useState("");
+  const { state, hydrated } = useStore();
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({
     key: "updated",
     dir: "desc",
@@ -195,17 +195,6 @@ export default function PipelinePage() {
     );
   }
 
-  function handleNewIdea() {
-    const idea = addIdea();
-    router.push(`/idea/${idea.id}`);
-  }
-
-  function handleQuickAdd() {
-    const text = draft.trim();
-    if (!text) return;
-    const idea = addIdea({ thesisNotes: text });
-    router.push(`/idea/${idea.id}?analyze=1`);
-  }
 
   function handleExportCSV() {
     const csv = pipelineCSV(state.ideas, state.settings);
@@ -219,48 +208,6 @@ export default function PipelinePage() {
     a.remove();
     URL.revokeObjectURL(url);
   }
-
-  const quickAdd = (
-    <div className="mb-6 rounded-lg border border-zinc-200 bg-white p-4">
-      <label
-        htmlFor="quick-add"
-        className="text-sm font-semibold text-zinc-900"
-      >
-        New idea
-      </label>
-      <p className="mt-0.5 text-xs text-zinc-500">
-        Just describe it — the AI names it, fills in the metadata, and scores
-        it against the gates and criteria. Everything stays editable.
-      </p>
-      <textarea
-        id="quick-add"
-        rows={3}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleQuickAdd();
-        }}
-        placeholder="e.g. A marketplace that lets independent HVAC technicians source scarce repair parts same-day from local distributors…"
-        className="mt-3 w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600"
-      />
-      <div className="mt-2 flex flex-wrap items-center gap-3">
-        <Button
-          variant="primary"
-          onClick={handleQuickAdd}
-          disabled={!draft.trim()}
-        >
-          Add &amp; analyze with AI
-        </Button>
-        <button
-          type="button"
-          onClick={handleNewIdea}
-          className="text-xs text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline"
-        >
-          or add a blank idea to fill in manually
-        </button>
-      </div>
-    </div>
-  );
 
   const header = (
     <PageHeader
@@ -286,7 +233,7 @@ export default function PipelinePage() {
     return (
       <div>
         {header}
-        {quickAdd}
+        <QuickAdd />
         <EmptyState>
           No ideas in the pipeline — describe one above to start filtering.
         </EmptyState>
@@ -297,7 +244,7 @@ export default function PipelinePage() {
   return (
     <div>
       {header}
-      {quickAdd}
+      <QuickAdd />
       <div className="rounded-lg border border-zinc-200 bg-white">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] border-collapse text-sm">

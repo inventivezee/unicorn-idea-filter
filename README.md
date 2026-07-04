@@ -14,7 +14,7 @@ Describe your idea, add your founder background (paste text or upload a CV), and
 - **Dashboard** — decision counts, top idea, killer risks across the pipeline, and a seeded stress test: how often does your leader stay #1 when every weight is perturbed ±20%?
 - **Outcome math** — exit calculator (valuation ÷ multiple = required revenue) plus multiple scenarios.
 - **Reference** — $1B benchmarks per business model: IPO-quality targets, early proof signals, kill risks.
-- **Settings** — founder background (text or CV upload: PDF / DOCX / TXT parsed in-browser), AI provider + model, editable criterion weights (auto-normalized), JSON backup/restore.
+- **Settings** — founding team backgrounds (text or CV upload: PDF / DOCX / TXT parsed in-browser; co-founders supported — founder–market fit scores as the strongest founder's fit; your own background is required before analysis), AI provider + model, editable criterion weights (auto-normalized), JSON backup/restore.
 
 ## Privacy model
 

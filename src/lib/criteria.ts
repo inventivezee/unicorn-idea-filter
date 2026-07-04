@@ -211,7 +211,7 @@ export const GATES: GateDef[] = [
     id: "g_edge",
     label: "Founder unfair advantages (≥2 present)",
     yMeans:
-      "At least two of: capital, domain expertise, operating experience, founder credibility, dealflow, network, distribution",
+      "At least two of, across the founding team: capital, domain expertise, operating experience, founder credibility, dealflow, network, distribution",
     nMeans: "Competing as a generic founder",
     founderPersonal: true,
   },

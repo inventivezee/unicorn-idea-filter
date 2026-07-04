@@ -6,6 +6,7 @@ import { GATES_BY_ID } from "@/lib/criteria";
 import { CRITERION_IDS, GATE_IDS } from "@/lib/types";
 import { Button, Section } from "@/components/ui";
 import type {
+  AnalyzeMetadataResponse,
   AnalyzeResponse,
   Confidence,
   CriterionId,
@@ -25,6 +26,7 @@ export function AIPanel({
   onPatch: (patch: Partial<Idea>) => void;
 }) {
   const [pending, setPending] = useState(false);
+  const [pendingMode, setPendingMode] = useState<"full" | "metadata">("full");
   const [error, setError] = useState<string | null>(null);
   // The request may outlive this component (user navigates away mid-analysis).
   // The result is still applied through the store, which survives; only local
@@ -42,22 +44,36 @@ export function AIPanel({
   ideaRef.current = idea;
 
   const model = settings.models[settings.provider];
+  const hasBackground = settings.founderBackground.trim().length > 0;
+  const teamPayload = settings.coFounders
+    .filter((c) => c.background.trim())
+    .map((c) => ({ name: c.name, background: c.background }));
 
-  // Quick-add flow: /idea/[id]?analyze=1 starts the analysis automatically.
+  // Quick-add flow: /idea/[id]?analyze=1 auto-runs the full analysis;
+  // ?fill=1 ("Add only") just names and describes the idea, no scoring.
   const autoRanRef = useRef(false);
   useEffect(() => {
     if (autoRanRef.current) return;
     const params = new URLSearchParams(window.location.search);
-    if (params.get("analyze") !== "1") return;
+    const wantsFull = params.get("analyze") === "1";
+    const wantsFill = params.get("fill") === "1";
+    if (!wantsFull && !wantsFill) return;
     autoRanRef.current = true;
     params.delete("analyze");
+    params.delete("fill");
     const query = params.toString();
     window.history.replaceState(
       null,
       "",
       window.location.pathname + (query ? `?${query}` : ""),
     );
-    if (!idea.ai) void analyze();
+    if (wantsFull && !idea.ai) {
+      if (settings.founderBackground.trim()) void analyze("full");
+      else
+        setError(
+          "Analysis needs your founder background — add it in Settings, then press Analyze.",
+        );
+    } else if (wantsFill) void analyze("metadata");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -69,15 +85,23 @@ export function AIPanel({
     "initialWedge",
   ] as const;
 
-  async function analyze() {
+  async function analyze(mode: "full" | "metadata" = "full") {
+    if (mode === "full" && !settings.founderBackground.trim()) {
+      setError(
+        "Analysis needs your founder background — add it in Settings first.",
+      );
+      return;
+    }
     setError(null);
     setPending(true);
+    setPendingMode(mode);
     // Snapshot at click time: fields the user later touches win over the AI.
     const snapshot = {
       gates: { ...idea.gates },
       scores: { ...idea.scores },
       confidence: idea.confidence,
       validationTest30d: idea.validationTest30d,
+      thesisNotes: idea.thesisNotes,
       meta: Object.fromEntries(META_FIELDS.map((f) => [f, idea[f]])) as Record<
         (typeof META_FIELDS)[number],
         string
@@ -97,9 +121,11 @@ export function AIPanel({
             thesisNotes: idea.thesisNotes,
           },
           founderBackground: settings.founderBackground,
+          coFounders: teamPayload,
           provider: settings.provider,
           model,
           webSearch: settings.webSearch,
+          mode,
         }),
       });
 
@@ -114,6 +140,30 @@ export function AIPanel({
           // Non-JSON error body — keep the generic message.
         }
         if (mountedRef.current) setError(message);
+        return;
+      }
+
+      if (mode === "metadata") {
+        const data = (await res.json()) as AnalyzeMetadataResponse;
+        const latest = ideaRef.current;
+        const patch: Partial<Idea> = {};
+        for (const f of META_FIELDS) {
+          const proposal = data.metadata?.[f]?.trim();
+          if (
+            proposal &&
+            !snapshot.meta[f].trim() &&
+            latest[f] === snapshot.meta[f]
+          ) {
+            patch[f] = proposal;
+          }
+        }
+        if (
+          data.refinedDescription &&
+          latest.thesisNotes === snapshot.thesisNotes
+        ) {
+          patch.thesisNotes = data.refinedDescription;
+        }
+        onPatch(patch);
         return;
       }
 
@@ -210,10 +260,10 @@ export function AIPanel({
         </span>
       }
     >
-      {!settings.founderBackground.trim() ? (
+      {!hasBackground ? (
         <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          Founder-personal gates will come back unanswered — add your
-          background in{" "}
+          Founder background is required before analysis — the AI judges
+          founder–market fit and founder-personal gates from it. Add yours in{" "}
           <Link href="/settings" className="underline">
             Settings
           </Link>
@@ -222,7 +272,16 @@ export function AIPanel({
       ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button variant="primary" onClick={analyze} disabled={pending}>
+        <Button
+          variant="primary"
+          onClick={() => void analyze("full")}
+          disabled={pending || !hasBackground}
+          title={
+            hasBackground
+              ? undefined
+              : "Add your founder background in Settings first"
+          }
+        >
           Analyze with AI
         </Button>
         {pending ? (
@@ -231,8 +290,9 @@ export function AIPanel({
               aria-hidden
               className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-200 border-t-teal-600"
             />
-            Analyzing — thinking models can take a minute or two. The result
-            is applied even if you navigate elsewhere.
+            {pendingMode === "metadata"
+              ? "Naming and describing the idea…"
+              : "Analyzing — thinking models can take a minute or two. The result is applied even if you navigate elsewhere."}
           </span>
         ) : null}
       </div>

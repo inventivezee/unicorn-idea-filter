@@ -47,6 +47,40 @@ const scoreProperties = Object.fromEntries(
   ]),
 );
 
+const METADATA_OBJECT = {
+  type: "object",
+  description:
+    "Concise metadata inferred from the idea description. Always fill every field with your best inference — the app applies these only where the founder left a field blank.",
+  properties: {
+    name: {
+      type: "string",
+      description:
+        "Short, memorable working name for the idea (under 40 characters, no quotes, not a sentence).",
+    },
+    domain: {
+      type: "string",
+      description: 'Domain/sector, e.g. "AI", "Fintech", "AI + Bio".',
+    },
+    businessModel: {
+      type: "string",
+      description:
+        'Business model, e.g. "SaaS", "Marketplace", "Fintech/Payments", "Infra", "Consumer".',
+    },
+    buyerICP: {
+      type: "string",
+      description:
+        "Who pays: the ideal customer profile in one specific phrase.",
+    },
+    initialWedge: {
+      type: "string",
+      description:
+        "The narrow initial wedge plus the expansion direction, one sentence.",
+    },
+  },
+  required: ["name", "domain", "businessModel", "buyerICP", "initialWedge"],
+  additionalProperties: false,
+} as const;
+
 export const ANALYSIS_SCHEMA = {
   type: "object",
   properties: {
@@ -55,39 +89,7 @@ export const ANALYSIS_SCHEMA = {
       description:
         "3–5 sentence overall assessment of the idea against a unicorn/IPO bar, referencing the founder's background where relevant.",
     },
-    metadata: {
-      type: "object",
-      description:
-        "Concise metadata inferred from the idea description. Always fill every field with your best inference — the app applies these only where the founder left a field blank.",
-      properties: {
-        name: {
-          type: "string",
-          description:
-            "Short, memorable working name for the idea (under 40 characters, no quotes, not a sentence).",
-        },
-        domain: {
-          type: "string",
-          description: 'Domain/sector, e.g. "AI", "Fintech", "AI + Bio".',
-        },
-        businessModel: {
-          type: "string",
-          description:
-            'Business model, e.g. "SaaS", "Marketplace", "Fintech/Payments", "Infra", "Consumer".',
-        },
-        buyerICP: {
-          type: "string",
-          description:
-            "Who pays: the ideal customer profile in one specific phrase.",
-        },
-        initialWedge: {
-          type: "string",
-          description:
-            "The narrow initial wedge plus the expansion direction, one sentence.",
-        },
-      },
-      required: ["name", "domain", "businessModel", "buyerICP", "initialWedge"],
-      additionalProperties: false,
-    },
+    metadata: METADATA_OBJECT,
     gates: {
       type: "object",
       properties: gateProperties,
@@ -129,5 +131,35 @@ export const ANALYSIS_SCHEMA = {
     "validationTest30d",
     "needsFounderConfirmation",
   ],
+  additionalProperties: false,
+} as const;
+
+/** Schema for the lightweight "Add only" fill — metadata + a better description, no scoring. */
+export const METADATA_SCHEMA = {
+  type: "object",
+  properties: {
+    metadata: METADATA_OBJECT,
+    refinedDescription: {
+      type: "string",
+      description:
+        "The idea description rewritten in better detail: 3–6 sentences in the founder's voice, integrating their clarification answers. Preserve their meaning and claims exactly — never invent facts, numbers, or traction they didn't state.",
+    },
+  },
+  required: ["metadata", "refinedDescription"],
+  additionalProperties: false,
+} as const;
+
+/** Schema for the clarifying questions asked before an idea is added. */
+export const CLARIFY_SCHEMA = {
+  type: "object",
+  properties: {
+    questions: {
+      type: "array",
+      description:
+        "Exactly 3 to 5 short clarifying questions, each answerable in a sentence or two.",
+      items: { type: "string" },
+    },
+  },
+  required: ["questions"],
   additionalProperties: false,
 } as const;

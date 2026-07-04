@@ -53,8 +53,15 @@ export function defaultSettings(): Settings {
     provider: "anthropic",
     models: { ...DEFAULT_MODELS },
     founderBackground: "",
+    coFounders: [],
     webSearch: true,
   };
+}
+
+export function generateId(prefix: string): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 }
 
 export function newIdea(partial?: Partial<Idea>): Idea {
@@ -79,10 +86,7 @@ export function newIdea(partial?: Partial<Idea>): Idea {
   // The id survives spreads of partials that carry id: undefined (e.g. from
   // imported JSON) — generate it last so it can never be clobbered away.
   if (!idea.id || typeof idea.id !== "string") {
-    idea.id =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `idea-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    idea.id = generateId("idea");
   }
   return idea;
 }
