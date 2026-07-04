@@ -22,7 +22,10 @@ interface StoreContextValue {
   /** True once localStorage has been read — render data only after this. */
   hydrated: boolean;
   addIdea: (partial?: Partial<Idea>) => Idea;
-  updateIdea: (id: string, patch: Partial<Idea>) => void;
+  updateIdea: (
+    id: string,
+    patch: Partial<Idea> | ((latest: Idea) => Partial<Idea>),
+  ) => void;
   deleteIdea: (id: string) => void;
   updateSettings: (patch: Partial<Settings>) => void;
   resetWeights: () => void;
@@ -79,16 +82,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return idea;
   }, []);
 
-  const updateIdea = useCallback((id: string, patch: Partial<Idea>) => {
-    setState((s) => ({
-      ...s,
-      ideas: s.ideas.map((i) =>
-        i.id === id
-          ? { ...i, ...patch, updatedAt: new Date().toISOString() }
-          : i,
-      ),
-    }));
-  }, []);
+  const updateIdea = useCallback(
+    (id: string, patch: Partial<Idea> | ((latest: Idea) => Partial<Idea>)) => {
+      setState((s) => ({
+        ...s,
+        ideas: s.ideas.map((i) =>
+          i.id === id
+            ? {
+                ...i,
+                ...(typeof patch === "function" ? patch(i) : patch),
+                updatedAt: new Date().toISOString(),
+              }
+            : i,
+        ),
+      }));
+    },
+    [],
+  );
 
   const deleteIdea = useCallback((id: string) => {
     setState((s) => ({ ...s, ideas: s.ideas.filter((i) => i.id !== id) }));

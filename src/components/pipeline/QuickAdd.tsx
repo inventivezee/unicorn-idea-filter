@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
 import { useStore } from "@/lib/store";
@@ -21,6 +21,9 @@ export function QuickAdd() {
   const [mode, setMode] = useState<AddMode>("analyze");
   const [loadingMode, setLoadingMode] = useState<AddMode | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // One idea per wizard — guards double-clicks across every add path.
+  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const settings = state.settings;
   const hasBackground = settings.founderBackground.trim().length > 0;
@@ -91,18 +94,28 @@ export function QuickAdd() {
 
   /** Create the idea and hand off: full analysis, metadata-only fill, or nothing. */
   function finishAdd(chosenMode: AddMode | "plain", notes?: string) {
-    const idea = addIdea({ thesisNotes: notes ?? composeNotes() });
+    if (submittingRef.current) return;
+    const text = (notes ?? composeNotes()).trim();
+    if (!text) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    const idea = addIdea({ thesisNotes: text });
     const param =
       chosenMode === "analyze" ? "?analyze=1" : chosenMode === "add" ? "?fill=1" : "";
     router.push(`/idea/${idea.id}${param}`);
   }
 
   function handleManualAdd() {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
     const idea = addIdea();
     router.push(`/idea/${idea.id}`);
   }
 
   function backToDraft() {
+    submittingRef.current = false;
+    setSubmitting(false);
     setStage("draft");
     setQuestions([]);
     setAnswers([]);
@@ -156,7 +169,7 @@ export function QuickAdd() {
           <Button
             variant={mode === "analyze" ? "primary" : "secondary"}
             onClick={() => finishAdd("analyze")}
-            disabled={!hasBackground}
+            disabled={!hasBackground || submitting}
             title={
               hasBackground
                 ? undefined
@@ -168,6 +181,7 @@ export function QuickAdd() {
           <Button
             variant={mode === "add" ? "primary" : "secondary"}
             onClick={() => finishAdd("add")}
+            disabled={submitting}
           >
             Add only
           </Button>
@@ -200,6 +214,7 @@ export function QuickAdd() {
         id="quick-add"
         rows={3}
         value={draft}
+        disabled={loadingMode !== null}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -261,7 +276,8 @@ export function QuickAdd() {
               <button
                 type="button"
                 onClick={() => finishAdd("analyze", draft.trim())}
-                className="font-medium underline underline-offset-2"
+                disabled={submitting || !draft.trim()}
+                className="font-medium underline underline-offset-2 disabled:opacity-50"
               >
                 Add anyway &amp; analyze
               </button>
@@ -269,7 +285,8 @@ export function QuickAdd() {
             <button
               type="button"
               onClick={() => finishAdd("plain", draft.trim())}
-              className="font-medium underline underline-offset-2"
+              disabled={submitting || !draft.trim()}
+              className="font-medium underline underline-offset-2 disabled:opacity-50"
             >
               Add without AI
             </button>

@@ -23,11 +23,14 @@ export function AIPanel({
 }: {
   idea: Idea;
   settings: Settings;
-  onPatch: (patch: Partial<Idea>) => void;
+  onPatch: (patch: Partial<Idea> | ((latest: Idea) => Partial<Idea>)) => void;
 }) {
   const [pending, setPending] = useState(false);
   const [pendingMode, setPendingMode] = useState<"full" | "metadata">("full");
   const [error, setError] = useState<string | null>(null);
+  const [failedMode, setFailedMode] = useState<"full" | "metadata" | null>(
+    null,
+  );
   // The request may outlive this component (user navigates away mid-analysis).
   // The result is still applied through the store, which survives; only local
   // setState calls must stop after unmount.
@@ -38,11 +41,6 @@ export function AIPanel({
       mountedRef.current = false;
     };
   }, []);
-  // Latest idea values, so a result arriving minutes later can preserve any
-  // manual edits the user made while the request was in flight.
-  const ideaRef = useRef(idea);
-  ideaRef.current = idea;
-
   const model = settings.models[settings.provider];
   const hasBackground = settings.founderBackground.trim().length > 0;
   const teamPayload = settings.coFounders
@@ -93,6 +91,7 @@ export function AIPanel({
       return;
     }
     setError(null);
+    setFailedMode(null);
     setPending(true);
     setPendingMode(mode);
     // Snapshot at click time: fields the user later touches win over the AI.
@@ -139,14 +138,84 @@ export function AIPanel({
         } catch {
           // Non-JSON error body — keep the generic message.
         }
-        if (mountedRef.current) setError(message);
+        if (mountedRef.current) {
+          setError(message);
+          setFailedMode(mode);
+        }
         return;
       }
 
       if (mode === "metadata") {
         const data = (await res.json()) as AnalyzeMetadataResponse;
-        const latest = ideaRef.current;
-        const patch: Partial<Idea> = {};
+        // Merge against the store's live idea at apply time — a component
+        // ref would freeze at unmount and clobber edits made after remount.
+        onPatch((latest) => {
+          const patch: Partial<Idea> = {};
+          for (const f of META_FIELDS) {
+            const proposal = data.metadata?.[f]?.trim();
+            if (
+              proposal &&
+              !snapshot.meta[f].trim() &&
+              latest[f] === snapshot.meta[f]
+            ) {
+              patch[f] = proposal;
+            }
+          }
+          if (
+            data.refinedDescription &&
+            latest.thesisNotes === snapshot.thesisNotes
+          ) {
+            patch.thesisNotes = data.refinedDescription;
+          }
+          return patch;
+        });
+        return;
+      }
+
+      const data = (await res.json()) as AnalyzeResponse;
+
+      // Merge against the store's live idea at apply time (see above).
+      onPatch((latest) => {
+        const gates = {} as Record<GateId, GateValue>;
+        const gateRationales: Partial<Record<GateId, string>> = {};
+        for (const gid of GATE_IDS) {
+          if (latest.gates[gid] !== snapshot.gates[gid]) {
+            gates[gid] = latest.gates[gid]; // user answered this gate mid-flight
+          } else {
+            const g = data.gates?.[gid];
+            gates[gid] = g ? (g.value === "UNSURE" ? null : g.value) : null;
+          }
+          const g = data.gates?.[gid];
+          if (g?.rationale) gateRationales[gid] = g.rationale;
+        }
+
+        const scores = {} as Record<CriterionId, number | null>;
+        const scoreRationales: Partial<Record<CriterionId, string>> = {};
+        for (const cid of CRITERION_IDS) {
+          if (latest.scores[cid] !== snapshot.scores[cid]) {
+            scores[cid] = latest.scores[cid]; // user scored this one mid-flight
+          } else {
+            const s = data.scores?.[cid];
+            scores[cid] = s ? s.score : null;
+          }
+          const s = data.scores?.[cid];
+          if (s?.rationale) scoreRationales[cid] = s.rationale;
+        }
+
+        const confidence: Confidence =
+          latest.confidence !== snapshot.confidence
+            ? latest.confidence
+            : data.confidence;
+        const validationTest30d =
+          latest.validationTest30d !== snapshot.validationTest30d
+            ? latest.validationTest30d
+            : data.validationTest30d;
+
+        // Metadata: only fill fields the founder left blank (and didn't touch
+        // while the request ran) — never rewrite what they typed themselves.
+        const metaPatch: Partial<
+          Record<(typeof META_FIELDS)[number], string>
+        > = {};
         for (const f of META_FIELDS) {
           const proposal = data.metadata?.[f]?.trim();
           if (
@@ -154,94 +223,33 @@ export function AIPanel({
             !snapshot.meta[f].trim() &&
             latest[f] === snapshot.meta[f]
           ) {
-            patch[f] = proposal;
+            metaPatch[f] = proposal;
           }
         }
-        if (
-          data.refinedDescription &&
-          latest.thesisNotes === snapshot.thesisNotes
-        ) {
-          patch.thesisNotes = data.refinedDescription;
-        }
-        onPatch(patch);
-        return;
-      }
 
-      const data = (await res.json()) as AnalyzeResponse;
-      const latest = ideaRef.current;
-
-      const gates = {} as Record<GateId, GateValue>;
-      const gateRationales: Partial<Record<GateId, string>> = {};
-      for (const gid of GATE_IDS) {
-        if (latest.gates[gid] !== snapshot.gates[gid]) {
-          gates[gid] = latest.gates[gid]; // user answered this gate mid-flight
-        } else {
-          const g = data.gates?.[gid];
-          gates[gid] = g ? (g.value === "UNSURE" ? null : g.value) : null;
-        }
-        const g = data.gates?.[gid];
-        if (g?.rationale) gateRationales[gid] = g.rationale;
-      }
-
-      const scores = {} as Record<CriterionId, number | null>;
-      const scoreRationales: Partial<Record<CriterionId, string>> = {};
-      for (const cid of CRITERION_IDS) {
-        if (latest.scores[cid] !== snapshot.scores[cid]) {
-          scores[cid] = latest.scores[cid]; // user scored this one mid-flight
-        } else {
-          const s = data.scores?.[cid];
-          scores[cid] = s ? s.score : null;
-        }
-        const s = data.scores?.[cid];
-        if (s?.rationale) scoreRationales[cid] = s.rationale;
-      }
-
-      const confidence: Confidence =
-        latest.confidence !== snapshot.confidence
-          ? latest.confidence
-          : data.confidence;
-      const validationTest30d =
-        latest.validationTest30d !== snapshot.validationTest30d
-          ? latest.validationTest30d
-          : data.validationTest30d;
-
-      // Metadata: only fill fields the founder left blank (and didn't touch
-      // while the request ran) — never rewrite what they typed themselves.
-      const metaPatch: Partial<
-        Record<(typeof META_FIELDS)[number], string>
-      > = {};
-      for (const f of META_FIELDS) {
-        const proposal = data.metadata?.[f]?.trim();
-        if (
-          proposal &&
-          !snapshot.meta[f].trim() &&
-          latest[f] === snapshot.meta[f]
-        ) {
-          metaPatch[f] = proposal;
-        }
-      }
-
-      onPatch({
-        ...metaPatch,
-        gates,
-        scores,
-        confidence,
-        validationTest30d,
-        ai: {
-          summary: data.summary,
-          gateRationales,
-          scoreRationales,
-          confidenceRationale: data.confidenceRationale,
-          needsFounderConfirmation: data.needsFounderConfirmation ?? [],
-          provider: data.provider,
-          model: data.model,
-          analyzedAt: new Date().toISOString(),
-          webSearches: data.webSearches ?? 0,
-        },
+        return {
+          ...metaPatch,
+          gates,
+          scores,
+          confidence,
+          validationTest30d,
+          ai: {
+            summary: data.summary,
+            gateRationales,
+            scoreRationales,
+            confidenceRationale: data.confidenceRationale,
+            needsFounderConfirmation: data.needsFounderConfirmation ?? [],
+            provider: data.provider,
+            model: data.model,
+            analyzedAt: new Date().toISOString(),
+            webSearches: data.webSearches ?? 0,
+          },
+        };
       });
     } catch (e) {
       if (mountedRef.current) {
         setError(e instanceof Error ? e.message : "Network error.");
+        setFailedMode(mode);
       }
     } finally {
       if (mountedRef.current) setPending(false);
@@ -299,7 +307,17 @@ export function AIPanel({
 
       {error ? (
         <div className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {error}
+          <p>{error}</p>
+          {failedMode === "metadata" ? (
+            <button
+              type="button"
+              onClick={() => void analyze("metadata")}
+              disabled={pending}
+              className="mt-2 font-medium underline underline-offset-2 disabled:opacity-50"
+            >
+              Retry naming &amp; description
+            </button>
+          ) : null}
         </div>
       ) : null}
 

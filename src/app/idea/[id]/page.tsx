@@ -76,7 +76,8 @@ export default function IdeaDetailPage() {
   }
 
   const weights = state.settings.weights;
-  const patch = (p: Partial<Idea>) => updateIdea(idea.id, p);
+  const patch = (p: Partial<Idea> | ((latest: Idea) => Partial<Idea>)) =>
+    updateIdea(idea.id, p);
 
   function handleDelete() {
     if (!idea) return;

@@ -188,6 +188,8 @@ const ANTHROPIC_EFFORT_MODELS =
 const OPENAI_REASONING_MODELS = /^(gpt-5|o\d)/;
 // xhigh reasoning effort exists on models after gpt-5.1-codex-max (e.g. gpt-5.5).
 const OPENAI_XHIGH_MODELS = /^gpt-5\.[5-9]/;
+// -pro reasoning models accept only "high" effort — no low/xhigh.
+const OPENAI_HIGH_ONLY_MODELS = /^(gpt-5-pro|o\d-pro)/;
 
 const MAX_WEB_SEARCHES = 5;
 const MAX_PAUSE_CONTINUATIONS = 5;
@@ -338,11 +340,13 @@ async function openaiJSON(opts: JSONCallOptions): Promise<JSONCallResult> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   const effort = OPENAI_REASONING_MODELS.test(opts.model)
-    ? opts.speed === "fast"
-      ? ("low" as const)
-      : OPENAI_XHIGH_MODELS.test(opts.model)
-        ? ("xhigh" as const)
-        : ("high" as const)
+    ? OPENAI_HIGH_ONLY_MODELS.test(opts.model)
+      ? ("high" as const)
+      : opts.speed === "fast"
+        ? ("low" as const)
+        : OPENAI_XHIGH_MODELS.test(opts.model)
+          ? ("xhigh" as const)
+          : ("high" as const)
     : null;
 
   const response = await client.responses.create({
