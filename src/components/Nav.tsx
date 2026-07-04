@@ -13,7 +13,10 @@ const LINKS = [
   { href: "/settings", label: "Settings" },
 ];
 
-/** Sign-in link / account menu — rendered only in cloud mode. */
+const EXIT_HREF = "/exit-reference";
+const EXIT_LABEL = "Exit calculations & References";
+
+/** Sign-in link / account menu — desktop only (mobile uses the drawer). */
 function AuthControl() {
   const { cloud, hydrated, entitlements, signOut } = useStore();
   const [open, setOpen] = useState(false);
@@ -102,6 +105,51 @@ function AuthControl() {
   );
 }
 
+/** Auth rows for the mobile drawer (flat, full-width). */
+function MobileAuth({ onNavigate }: { onNavigate: () => void }) {
+  const { cloud, hydrated, entitlements, signOut } = useStore();
+  if (!cloud || !hydrated) return null;
+
+  if (!entitlements.signedIn) {
+    return (
+      <Link
+        href="/signin"
+        onClick={onNavigate}
+        className="block rounded-md px-3 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+      >
+        Sign in
+      </Link>
+    );
+  }
+
+  return (
+    <>
+      <div className="truncate px-3 py-1.5 text-xs text-zinc-400">
+        {entitlements.email}
+      </div>
+      {entitlements.isAdmin ? (
+        <Link
+          href="/admin"
+          onClick={onNavigate}
+          className="block rounded-md px-3 py-2.5 text-sm text-zinc-700 hover:bg-zinc-50"
+        >
+          Admin
+        </Link>
+      ) : null}
+      <button
+        type="button"
+        onClick={() => {
+          onNavigate();
+          void signOut();
+        }}
+        className="block w-full rounded-md px-3 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"
+      >
+        Sign out
+      </button>
+    </>
+  );
+}
+
 /** App-wide "N analyzing" pill — visible from any page while requests run. */
 function AnalyzingIndicator() {
   const { analyzing } = useStore();
@@ -117,14 +165,42 @@ function AnalyzingIndicator() {
         aria-hidden
         className="inline-block h-3 w-3 animate-spin rounded-full border border-teal-300 border-t-teal-600"
       />
-      {count} analyzing
+      <span className="tnum">{count}</span> analyzing
     </Link>
+  );
+}
+
+function MenuIcon({ open }: { open: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden>
+      {open ? (
+        <path
+          d="M6 6l12 12M18 6L6 18"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+      ) : (
+        <path
+          d="M4 7h16M4 12h16M4 17h16"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+      )}
+    </svg>
   );
 }
 
 export function Nav() {
   const pathname = usePathname();
   const { syncError, pendingLocalImport, importLocalIdeas } = useStore();
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Close the drawer whenever the route changes.
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/" || pathname.startsWith("/idea/");
@@ -145,7 +221,10 @@ export function Nav() {
         >
           Unicorn Idea Filter
         </Link>
-        <nav className="-mb-px flex flex-1 items-center gap-1 overflow-x-auto">
+
+        {/* Desktop nav — only once there's room for every item (see the long
+            exit link); tablets and phones use the drawer. */}
+        <nav className="-mb-px hidden flex-1 items-center gap-1 overflow-x-auto lg:flex">
           {LINKS.map((link) => (
             <Link
               key={link.href}
@@ -160,22 +239,74 @@ export function Nav() {
             </Link>
           ))}
         </nav>
-        {/* Right-aligned cluster: auth control, then background reading.
-            Kept outside the scrollable nav so the account dropdown isn't
-            clipped by overflow-x-auto. */}
+
+        {/* Push the right-hand cluster to the edge below the desktop breakpoint. */}
+        <div className="flex-1 lg:hidden" />
+
         <AnalyzingIndicator />
-        <AuthControl />
-        <Link
-          href="/exit-reference"
-          className={`-mb-px whitespace-nowrap border-b-2 py-3 pr-1 text-xs transition-colors ${
-            exitActive
-              ? "border-teal-600 font-medium text-teal-700"
-              : "border-transparent text-zinc-400 hover:text-zinc-700"
-          }`}
+
+        {/* Desktop-only: account control + de-emphasized exit link. */}
+        <div className="hidden items-center gap-4 lg:flex">
+          <AuthControl />
+          <Link
+            href={EXIT_HREF}
+            className={`-mb-px whitespace-nowrap border-b-2 py-3 pr-1 text-xs transition-colors ${
+              exitActive
+                ? "border-teal-600 font-medium text-teal-700"
+                : "border-transparent text-zinc-400 hover:text-zinc-700"
+            }`}
+          >
+            {EXIT_LABEL}
+          </Link>
+        </div>
+
+        {/* Mobile hamburger */}
+        <button
+          type="button"
+          onClick={() => setMobileOpen((v) => !v)}
+          aria-label={mobileOpen ? "Close menu" : "Open menu"}
+          aria-expanded={mobileOpen}
+          className="-mr-1 shrink-0 rounded-md p-2 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 lg:hidden"
         >
-          Exit calculations &amp; References
-        </Link>
+          <MenuIcon open={mobileOpen} />
+        </button>
       </div>
+
+      {/* Mobile / tablet drawer */}
+      {mobileOpen ? (
+        <nav className="border-t border-zinc-200 bg-white lg:hidden">
+          <div className="mx-auto w-full max-w-6xl space-y-0.5 px-2 py-2">
+            {LINKS.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                onClick={() => setMobileOpen(false)}
+                className={`block rounded-md px-3 py-2.5 text-sm transition-colors ${
+                  isActive(link.href)
+                    ? "bg-teal-50 font-medium text-teal-700"
+                    : "text-zinc-700 hover:bg-zinc-50"
+                }`}
+              >
+                {link.label}
+              </Link>
+            ))}
+            <Link
+              href={EXIT_HREF}
+              onClick={() => setMobileOpen(false)}
+              className={`block rounded-md px-3 py-2.5 text-sm transition-colors ${
+                exitActive
+                  ? "bg-teal-50 font-medium text-teal-700"
+                  : "text-zinc-500 hover:bg-zinc-50"
+              }`}
+            >
+              {EXIT_LABEL}
+            </Link>
+            <div className="my-1 border-t border-zinc-100" />
+            <MobileAuth onNavigate={() => setMobileOpen(false)} />
+          </div>
+        </nav>
+      ) : null}
+
       {syncError !== null ? (
         <div className="border-t border-amber-100 bg-amber-50">
           <div className="mx-auto w-full max-w-6xl px-4 py-1.5 text-xs text-amber-800 sm:px-6">
@@ -186,7 +317,7 @@ export function Nav() {
       ) : null}
       {pendingLocalImport > 0 ? (
         <div className="border-t border-teal-100 bg-teal-50">
-          <div className="mx-auto flex w-full max-w-6xl items-center gap-3 px-4 py-1.5 text-xs text-teal-800 sm:px-6">
+          <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-3 px-4 py-1.5 text-xs text-teal-800 sm:px-6">
             <span>
               {pendingLocalImport} ideas from this browser aren&apos;t in the
               cloud yet.
