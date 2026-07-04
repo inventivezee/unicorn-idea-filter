@@ -26,7 +26,7 @@ Notes:
 ## 2. Supabase
 
 1. Create a project at [supabase.com](https://supabase.com/dashboard).
-2. Open **SQL Editor** → paste the contents of [`supabase/migrations/001_init.sql`](supabase/migrations/001_init.sql) → Run. This creates `profiles`, `ideas`, `submission_logs`, `anon_usage`, RLS policies, and the quota function.
+2. Open **SQL Editor** → paste the contents of [`supabase/migrations/001_init.sql (then also run supabase/migrations/002_cv_uploads.sql — it adds the CV-upload storage bucket and retained audit table)`](supabase/migrations/001_init.sql) → Run. This creates `profiles`, `ideas`, `submission_logs`, `anon_usage`, RLS policies, and the quota function.
 3. **Authentication → Providers**:
    - Enable **Email** (magic link is on by default).
    - Enable **Google**. This needs an OAuth client from Google Cloud Console — follow the Supabase guide: <https://supabase.com/docs/guides/auth/social-login/auth-google>.

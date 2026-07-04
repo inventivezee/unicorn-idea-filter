@@ -108,3 +108,13 @@ export const METADATA_SYSTEM_PROMPT = `You structure a founder's rough startup i
 3. founderProfile — a 1–3 sentence ANONYMISED public profile of the founding team (categorical terms only; never names, specific employers, schools, locations, or anything identifying; empty string if no background provided).
 
 Hard rule: never invent facts, numbers, traction, or capabilities the founder didn't state. If something stayed vague after clarification, keep it appropriately vague. You are organizing their thinking, not embellishing it.`;
+
+export const CV_SUMMARY_SYSTEM_PROMPT = `You turn a founder's raw CV / resume text into a concise founder background for a startup-idea evaluation. This background is PRIVATE (only the founder and site admins see it), so keep specifics — companies, roles, dates, achievements, domains, credentials — you are condensing, not anonymising.
+
+Write 4-8 sentences (or tight bullet-like sentences) that surface exactly what a venture evaluator weighs for founder-market fit and unfair advantages: domain expertise and depth, operating and building history, notable outcomes (exits, scale, launches), networks and access (capital, talent, distribution, customers), technical or regulatory credibility, and any proprietary insight. Lead with the strongest, most differentiating facts.
+
+Hard rules: use ONLY facts present in the CV text — never invent employers, titles, dates, or achievements. If the text is sparse or garbled, produce a shorter honest summary. Omit hobbies, references, and formatting artifacts. Output plain prose, no headings.`;
+
+export function buildCvSummaryPrompt(cvText: string): string {
+  return `## Founder CV / resume (extracted text)\n\n${cvText}\n\nSummarise this into a founder background now.`;
+}

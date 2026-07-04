@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Button, PageHeader, Section } from "@/components/ui";
 import { CRITERIA } from "@/lib/criteria";
+import { getAnonKey } from "@/lib/anon";
 import { ANTHROPIC_MODELS, generateId, OPENAI_MODELS } from "@/lib/defaults";
 import { sumWeights } from "@/lib/engine";
 import {
@@ -218,13 +219,42 @@ export default function SettingsPage() {
     setExtracting(true);
     try {
       const text = await extractTextFromFile(file);
+      // Send the raw file + extracted text to be stored (cloud) and
+      // AI-summarised into a cleaner background. Fall back to the raw text if
+      // the endpoint is unreachable so an upload never dead-ends.
+      let background = text;
+      let summarised = false;
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("extractedText", text);
+        fd.append("provider", settings.provider);
+        fd.append("model", settings.models[settings.provider]);
+        fd.append("anonKey", getAnonKey());
+        fd.append("founderSlot", target);
+        const res = await fetch("/api/cv", { method: "POST", body: fd });
+        if (res.ok) {
+          const data = (await res.json()) as {
+            background?: string;
+            summarised?: boolean;
+          };
+          if (data.background && data.background.trim()) {
+            background = data.background;
+            summarised = data.summarised === true;
+          }
+        }
+      } catch {
+        // Network error — keep the locally extracted text.
+      }
       if (target === "primary") {
-        updateSettings({ founderBackground: text });
+        updateSettings({ founderBackground: background });
       } else {
-        setCoFounder(target, { background: text });
+        setCoFounder(target, { background });
       }
       setExtractSuccess(
-        `Extracted ${text.length.toLocaleString()} characters from ${file.name}`,
+        summarised
+          ? `Summarised your background from ${file.name} with AI — edit it below if needed.`
+          : `Extracted ${background.length.toLocaleString()} characters from ${file.name}.`,
       );
     } catch (err) {
       setExtractError(err instanceof Error ? err.message : String(err));
@@ -490,7 +520,7 @@ export default function SettingsPage() {
         {/* 1. Founding team */}
         <Section
           title="Founding team"
-          description="Used by the AI to judge founder–market fit, unfair advantages, and founder-personal gates. With co-founders, founder–market fit scores as the strongest founder's fit."
+          description="Used by the AI to judge founder–market fit, unfair advantages, and founder-personal gates. Upload a CV and the AI summarises it into a background for you. With co-founders, founder–market fit scores as the strongest founder's fit."
         >
           <div className="space-y-4">
             <input
@@ -519,7 +549,9 @@ export default function SettingsPage() {
                   onClick={() => uploadCvFor("primary")}
                   disabled={extracting}
                 >
-                  {extracting ? "Extracting…" : "Upload CV (.pdf / .docx / .txt)"}
+                  {extracting
+                    ? "Reading & summarising…"
+                    : "Upload CV (.pdf / .docx / .txt)"}
                 </Button>
               </div>
               <textarea

@@ -43,6 +43,26 @@ interface LogRow {
   created_at: string;
 }
 
+interface CvUpload {
+  id: string;
+  user_id: string | null;
+  anon_key: string | null;
+  owner_email: string | null;
+  founder_slot: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number | null;
+  extracted_text: string;
+  ai_summary: string;
+  provider: string | null;
+  model: string | null;
+  ip: string | null;
+  user_agent: string | null;
+  country: string | null;
+  download_url: string | null;
+  created_at: string;
+}
+
 type AnalyzeState =
   | { status: "pending" }
   | { status: "done" }
@@ -357,6 +377,14 @@ export default function AdminPage() {
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityError, setActivityError] = useState<string | null>(null);
 
+  // CV uploads (retained even after a founder clears their background).
+  const [cvUploads, setCvUploads] = useState<CvUpload[] | null>(null);
+  const [cvTotal, setCvTotal] = useState(0);
+  const [cvPage, setCvPage] = useState(0);
+  const [cvLoading, setCvLoading] = useState(false);
+  const [cvError, setCvError] = useState<string | null>(null);
+  const [cvOpen, setCvOpen] = useState<ReadonlySet<string>>(new Set());
+
   const loadIdeas = useCallback(async (page: number) => {
     setIdeasLoading(true);
     setIdeasError(null);
@@ -417,11 +445,33 @@ export default function AdminPage() {
     }
   }, []);
 
+  const loadCvUploads = useCallback(async (page: number) => {
+    setCvLoading(true);
+    setCvError(null);
+    try {
+      const data = await fetchJSON<{ uploads: CvUpload[]; total: number }>(
+        `/api/admin/cv?page=${page}`,
+      );
+      setCvUploads((prev) => {
+        if (page === 0 || !prev) return data.uploads;
+        const seen = new Set(prev.map((u) => u.id));
+        return [...prev, ...data.uploads.filter((u) => !seen.has(u.id))];
+      });
+      setCvTotal(data.total);
+      setCvPage(page);
+    } catch (e) {
+      setCvError(errMsg(e, "Couldn't load CV uploads."));
+    } finally {
+      setCvLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!hydrated || !isAdmin) return;
     void loadIdeas(0);
     void loadActivity(0);
-  }, [hydrated, isAdmin, loadIdeas, loadActivity]);
+    void loadCvUploads(0);
+  }, [hydrated, isAdmin, loadIdeas, loadActivity, loadCvUploads]);
 
   const runAnalyze = useCallback(
     async (ideaId: string) => {
@@ -735,6 +785,156 @@ export default function AdminPage() {
               onClick={() => void loadActivity(activityPage + 1)}
             >
               {activityLoading ? "Loading…" : "Load more"}
+            </Button>
+          </div>
+        ) : null}
+      </Section>
+
+      <Section
+        title="CV uploads"
+        description="Every CV a founder uploaded — retained even after they clear their background. Download links are signed and expire after an hour."
+      >
+        {cvError ? (
+          <div className="mb-3 flex items-center gap-3 text-xs text-red-600">
+            <span>{cvError}</span>
+            <Button
+              className="px-2! py-0.5! text-xs!"
+              onClick={() => void loadCvUploads(cvUploads ? cvPage : 0)}
+            >
+              Retry
+            </Button>
+          </div>
+        ) : null}
+
+        {!cvUploads ? (
+          cvLoading ? (
+            <p className="text-xs text-zinc-400">Loading CV uploads…</p>
+          ) : null
+        ) : cvUploads.length === 0 ? (
+          <p className="text-xs text-zinc-400">No CVs uploaded yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[52rem] border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-zinc-200 text-left text-zinc-500">
+                  <th className="py-1.5 pr-3 font-medium">Uploaded</th>
+                  <th className="py-1.5 pr-3 font-medium">Founder</th>
+                  <th className="py-1.5 pr-3 font-medium">File</th>
+                  <th className="py-1.5 pr-3 font-medium">Size</th>
+                  <th className="py-1.5 pr-3 font-medium">IP / country</th>
+                  <th className="py-1.5 pr-3 font-medium">Model</th>
+                  <th className="py-1.5 font-medium">Content</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cvUploads.map((u) => {
+                  const isOpen = cvOpen.has(u.id);
+                  return (
+                    <Fragment key={u.id}>
+                      <tr className="border-b border-zinc-100 align-top">
+                        <td className="tnum py-1.5 pr-3 whitespace-nowrap text-zinc-600">
+                          {fmtTime(u.created_at)}
+                        </td>
+                        <td className="py-1.5 pr-3 text-zinc-700">
+                          {u.owner_email ??
+                            (u.anon_key
+                              ? `anon:${u.anon_key.slice(0, 8)}`
+                              : "—")}
+                          <span className="ml-1 text-zinc-400">
+                            ({u.founder_slot === "primary"
+                              ? "primary"
+                              : "co-founder"})
+                          </span>
+                        </td>
+                        <td className="py-1.5 pr-3">
+                          {u.download_url ? (
+                            <a
+                              href={u.download_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-medium text-teal-700 underline"
+                            >
+                              {u.filename || "download"}
+                            </a>
+                          ) : (
+                            <span className="text-zinc-400">
+                              {u.filename || "(text only)"}
+                            </span>
+                          )}
+                        </td>
+                        <td className="tnum py-1.5 pr-3 whitespace-nowrap text-zinc-500">
+                          {u.size_bytes
+                            ? `${Math.round(u.size_bytes / 1024)} KB`
+                            : "—"}
+                        </td>
+                        <td className="py-1.5 pr-3 text-zinc-500">
+                          <span className="font-mono">{u.ip ?? "—"}</span>
+                          {u.country ? ` · ${u.country}` : ""}
+                        </td>
+                        <td className="py-1.5 pr-3 text-zinc-500">
+                          {u.model ?? "—"}
+                        </td>
+                        <td className="py-1.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCvOpen((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(u.id)) next.delete(u.id);
+                                else next.add(u.id);
+                                return next;
+                              })
+                            }
+                            className="text-teal-700 underline underline-offset-2"
+                          >
+                            {isOpen ? "Hide" : "View"}
+                          </button>
+                        </td>
+                      </tr>
+                      {isOpen ? (
+                        <tr className="border-b border-zinc-100 bg-zinc-50">
+                          <td colSpan={7} className="px-3 py-3">
+                            <div className="grid gap-4 md:grid-cols-2">
+                              <div>
+                                <div className="mb-1 font-medium text-zinc-600">
+                                  AI summary (shown to the founder)
+                                </div>
+                                <p className="whitespace-pre-wrap text-zinc-700">
+                                  {u.ai_summary || "—"}
+                                </p>
+                              </div>
+                              <div>
+                                <div className="mb-1 font-medium text-zinc-600">
+                                  Raw extracted text
+                                </div>
+                                <p className="max-h-64 overflow-y-auto whitespace-pre-wrap text-zinc-600">
+                                  {u.extracted_text || "—"}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="mt-2 text-[11px] text-zinc-400">
+                              User agent: {truncate(u.user_agent ?? "—", 120)}
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {cvUploads && cvUploads.length < cvTotal ? (
+          <div className="mt-3">
+            <Button
+              variant="secondary"
+              className="text-xs!"
+              disabled={cvLoading}
+              onClick={() => void loadCvUploads(cvPage + 1)}
+            >
+              {cvLoading ? "Loading…" : "Load more"}
             </Button>
           </div>
         ) : null}

@@ -102,3 +102,13 @@ export const CLARIFY_SCHEMA = {
   required: ["questions"],
   additionalProperties: false,
 } as const;
+
+/** Schema for AI-summarising an uploaded CV into a founder background. */
+export const CV_SUMMARY_SCHEMA = {
+  type: "object",
+  properties: {
+    background: { type: "string" },
+  },
+  required: ["background"],
+  additionalProperties: false,
+} as const;
