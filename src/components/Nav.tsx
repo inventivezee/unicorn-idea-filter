@@ -179,8 +179,8 @@ export function Nav() {
       {syncError !== null ? (
         <div className="border-t border-amber-100 bg-amber-50">
           <div className="mx-auto w-full max-w-6xl px-4 py-1.5 text-xs text-amber-800 sm:px-6">
-            Cloud sync issue: {syncError} — changes are kept locally and
-            retried.
+            Cloud sync issue: {syncError} — unsaved changes live only in this
+            tab and are retried. Keep the tab open until this clears.
           </div>
         </div>
       ) : null}

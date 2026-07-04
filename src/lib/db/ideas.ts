@@ -67,6 +67,43 @@ export async function fetchOwnedIdea(
   return data;
 }
 
+/**
+ * PGRST204 = PostgREST can't find a column named in the payload — the deploy
+ * is ahead of the database (an unapplied migration). Returns the column name.
+ */
+function missingColumn(error: {
+  code?: string;
+  message?: string;
+}): string | null {
+  if (error.code !== "PGRST204") return null;
+  return /'([^']+)' column/.exec(error.message ?? "")?.[1] ?? null;
+}
+
+/**
+ * Run a write, and when the database rejects a column it doesn't have yet,
+ * strip that field and retry (up to 3 columns). Migration drift must degrade
+ * the newest feature — never lose the user's idea.
+ */
+async function writeToleratingMissingColumns<T>(
+  row: Record<string, unknown>,
+  write: (row: Record<string, unknown>) => PromiseLike<{
+    data: T | null;
+    error: { code?: string; message: string } | null;
+  }>,
+): Promise<{ data: T | null; error: { code?: string; message: string } | null }> {
+  let result = await write(row);
+  for (let i = 0; i < 3 && result.error; i++) {
+    const column = missingColumn(result.error);
+    if (!column || !(column in row)) break;
+    console.error(
+      `ideas.${column} column missing in the database — run the latest migrations in supabase/migrations (see SETUP.md). Saving the idea without it.`,
+    );
+    delete row[column];
+    result = await write(row);
+  }
+  return result;
+}
+
 export async function insertIdea(
   admin: SupabaseClient,
   actor: IdeaActor,
@@ -94,11 +131,10 @@ export async function insertIdea(
   row.raw_score = computeDefaultRawScore(
     (row.scores ?? {}) as Record<string, unknown>,
   );
-  const { data, error } = await admin
-    .from("ideas")
-    .insert(row)
-    .select("*")
-    .single<IdeaRow>();
+  const { data, error } = await writeToleratingMissingColumns<IdeaRow>(
+    row,
+    (r) => admin.from("ideas").insert(r).select("*").single<IdeaRow>(),
+  );
   if (error) {
     // 23505 = duplicate key: the row already exists (import retry or an
     // optimistic create racing a sync) — treat as success for idempotency.
@@ -112,6 +148,7 @@ export async function insertIdea(
     }
     throw new IdeaAccessError(error.message, 500);
   }
+  if (!data) throw new IdeaAccessError("Insert returned no row.", 500);
   return rowToIdea(data);
 }
 
@@ -144,13 +181,13 @@ export async function patchIdea(
     (row.scores ?? existing.scores ?? {}) as Record<string, unknown>,
   );
 
-  const { data, error } = await admin
-    .from("ideas")
-    .update(row)
-    .eq("id", id)
-    .select("*")
-    .single<IdeaRow>();
+  const { data, error } = await writeToleratingMissingColumns<IdeaRow>(
+    row,
+    (r) =>
+      admin.from("ideas").update(r).eq("id", id).select("*").single<IdeaRow>(),
+  );
   if (error) throw new IdeaAccessError(error.message, 500);
+  if (!data) throw new IdeaAccessError("Update returned no row.", 500);
   return rowToIdea(data);
 }
 
