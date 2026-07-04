@@ -322,6 +322,26 @@ export default function SettingsPage() {
               <p className="text-xs text-zinc-500">
                 Analysis runs server-side — API keys never reach the browser.
               </p>
+              <label className="mt-3 flex cursor-pointer items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={settings.webSearch}
+                  onChange={(e) =>
+                    updateSettings({ webSearch: e.target.checked })
+                  }
+                  className="mt-0.5 h-4 w-4 accent-teal-600"
+                />
+                <span>
+                  <span className="block text-sm text-zinc-800">
+                    Web search during analysis
+                  </span>
+                  <span className="block text-xs text-zinc-500">
+                    Lets the model verify market size, competitors, and timing
+                    with a few live searches (up to 5 per analysis; Anthropic
+                    bills ~$10 per 1,000 searches on top of tokens).
+                  </span>
+                </span>
+              </label>
             </div>
           </div>
         </Section>

@@ -227,7 +227,7 @@ describe("acceptance test 5: stress test", () => {
 });
 
 describe("gateStatus", () => {
-  it("PASS only when all 10 are Y", () => {
+  it("PASS only when every gate is Y", () => {
     expect(gateStatus(allGates("Y"))).toBe("PASS");
     expect(gateStatus(allGates(null))).toBe("PENDING");
     const mixed = allGates("Y");

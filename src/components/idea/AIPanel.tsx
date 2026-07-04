@@ -43,6 +43,32 @@ export function AIPanel({
 
   const model = settings.models[settings.provider];
 
+  // Quick-add flow: /idea/[id]?analyze=1 starts the analysis automatically.
+  const autoRanRef = useRef(false);
+  useEffect(() => {
+    if (autoRanRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("analyze") !== "1") return;
+    autoRanRef.current = true;
+    params.delete("analyze");
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + (query ? `?${query}` : ""),
+    );
+    if (!idea.ai) void analyze();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const META_FIELDS = [
+    "name",
+    "domain",
+    "businessModel",
+    "buyerICP",
+    "initialWedge",
+  ] as const;
+
   async function analyze() {
     setError(null);
     setPending(true);
@@ -52,6 +78,10 @@ export function AIPanel({
       scores: { ...idea.scores },
       confidence: idea.confidence,
       validationTest30d: idea.validationTest30d,
+      meta: Object.fromEntries(META_FIELDS.map((f) => [f, idea[f]])) as Record<
+        (typeof META_FIELDS)[number],
+        string
+      >,
     };
     try {
       const res = await fetch("/api/analyze", {
@@ -69,6 +99,7 @@ export function AIPanel({
           founderBackground: settings.founderBackground,
           provider: settings.provider,
           model,
+          webSearch: settings.webSearch,
         }),
       });
 
@@ -124,7 +155,24 @@ export function AIPanel({
           ? latest.validationTest30d
           : data.validationTest30d;
 
+      // Metadata: only fill fields the founder left blank (and didn't touch
+      // while the request ran) — never rewrite what they typed themselves.
+      const metaPatch: Partial<
+        Record<(typeof META_FIELDS)[number], string>
+      > = {};
+      for (const f of META_FIELDS) {
+        const proposal = data.metadata?.[f]?.trim();
+        if (
+          proposal &&
+          !snapshot.meta[f].trim() &&
+          latest[f] === snapshot.meta[f]
+        ) {
+          metaPatch[f] = proposal;
+        }
+      }
+
       onPatch({
+        ...metaPatch,
         gates,
         scores,
         confidence,
@@ -138,6 +186,7 @@ export function AIPanel({
           provider: data.provider,
           model: data.model,
           analyzedAt: new Date().toISOString(),
+          webSearches: data.webSearches ?? 0,
         },
       });
     } catch (e) {
@@ -198,8 +247,11 @@ export function AIPanel({
         <div className="mt-3 space-y-2 border-t border-zinc-100 pt-3">
           <p className="text-sm text-zinc-700">{ai.summary}</p>
           <p className="text-xs text-zinc-400">
-            Analyzed with {ai.model} ·{" "}
-            {new Date(ai.analyzedAt).toLocaleString()}
+            Analyzed with {ai.model}
+            {ai.webSearches ? (
+              <> · {ai.webSearches} web search{ai.webSearches === 1 ? "" : "es"}</>
+            ) : null}{" "}
+            · {new Date(ai.analyzedAt).toLocaleString()}
           </p>
           {ai.needsFounderConfirmation?.length ? (
             <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">

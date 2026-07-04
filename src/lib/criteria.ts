@@ -185,13 +185,6 @@ export const GATES: GateDef[] = [
     founderPersonal: false,
   },
   {
-    id: "g_insight",
-    label: "Non-consensus founder insight",
-    yMeans: "You know something important most smart people are missing",
-    nMeans: "Idea is obvious, crowded, or trend-chasing",
-    founderPersonal: false,
-  },
-  {
     id: "g_dist",
     label: "Distribution edge identified",
     yMeans:

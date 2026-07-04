@@ -16,6 +16,7 @@ const FOUNDER_PERSONAL_GATES = GATES.filter((g) => g.founderPersonal).map(
 
 interface RawAnalysis {
   summary: string;
+  metadata?: Record<string, unknown>;
   gates: Record<string, { value: string; rationale: string }>;
   scores: Record<string, { score: number; rationale: string }>;
   confidence: string;
@@ -24,11 +25,21 @@ interface RawAnalysis {
   needsFounderConfirmation: string[];
 }
 
+interface ProviderResult {
+  raw: RawAnalysis;
+  webSearches: number;
+}
+
 function normalize(
-  raw: RawAnalysis,
+  { raw, webSearches }: ProviderResult,
   provider: Provider,
   model: string,
 ): AnalyzeResponse {
+  const meta = raw.metadata ?? {};
+  const metaStr = (key: string) => {
+    const v = meta[key];
+    return typeof v === "string" ? v.trim() : "";
+  };
   const gates = {} as AnalyzeResponse["gates"];
   for (const id of GATE_IDS) {
     const g = raw.gates?.[id];
@@ -61,6 +72,13 @@ function normalize(
 
   return {
     summary: raw.summary ?? "",
+    metadata: {
+      name: metaStr("name").slice(0, 80),
+      domain: metaStr("domain"),
+      businessModel: metaStr("businessModel"),
+      buyerICP: metaStr("buyerICP"),
+      initialWedge: metaStr("initialWedge"),
+    },
     gates,
     scores,
     confidence,
@@ -69,18 +87,51 @@ function normalize(
     needsFounderConfirmation: [...needsConfirmation],
     provider,
     model,
+    webSearches,
   };
 }
 
+// Claude 4.6+ models take adaptive thinking; on Fable 5 thinking is always on
+// and {type: "adaptive"} is the only accepted explicit value.
 const ADAPTIVE_THINKING_MODELS =
   /^claude-(opus-4-[678]|sonnet-5|sonnet-4-6|fable-5|mythos-5)/;
+// Models supporting web search with dynamic filtering (web_search_20260209+).
+const DYNAMIC_SEARCH_MODELS =
+  /^claude-(fable-5|mythos-5|opus-4-[678]|sonnet-5|sonnet-4-6)/;
+const FABLE_MODELS = /^claude-(fable-5|mythos-5)/;
+const MAX_WEB_SEARCHES = 5;
+const MAX_PAUSE_CONTINUATIONS = 5;
+
+function parseAnalysisText(text: string | undefined): RawAnalysis {
+  if (!text) throw new UserFacingError("The model returned no analysis text.");
+  return JSON.parse(text) as RawAnalysis;
+}
 
 async function analyzeWithAnthropic(
   model: string,
   userPrompt: string,
-): Promise<RawAnalysis> {
+  webSearch: boolean,
+): Promise<ProviderResult> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const response = await client.messages.create({
+  const isFable = FABLE_MODELS.test(model);
+
+  const tools: Anthropic.ToolUnion[] | undefined = webSearch
+    ? [
+        DYNAMIC_SEARCH_MODELS.test(model)
+          ? {
+              type: "web_search_20260209",
+              name: "web_search",
+              max_uses: MAX_WEB_SEARCHES,
+            }
+          : {
+              type: "web_search_20250305",
+              name: "web_search",
+              max_uses: MAX_WEB_SEARCHES,
+            },
+      ]
+    : undefined;
+
+  const baseParams = {
     model,
     max_tokens: 16000,
     ...(ADAPTIVE_THINKING_MODELS.test(model)
@@ -88,13 +139,46 @@ async function analyzeWithAnthropic(
       : {}),
     system: SYSTEM_PROMPT,
     output_config: {
+      // xhigh effort on Fable 5 per app policy; other models keep the default.
+      ...(isFable ? { effort: "xhigh" as const } : {}),
       format: {
-        type: "json_schema",
+        type: "json_schema" as const,
         schema: ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
       },
     },
-    messages: [{ role: "user", content: userPrompt }],
-  });
+    ...(tools ? { tools } : {}),
+  };
+
+  // Fable 5's safety classifiers can decline benign-adjacent requests; opt into
+  // the server-side fallback so a decline is transparently re-served by Opus.
+  async function createMessage(
+    messages: Anthropic.MessageParam[],
+  ): Promise<Anthropic.Message> {
+    if (isFable) {
+      return (await client.beta.messages.create({
+        ...(baseParams as unknown as Record<string, unknown>),
+        messages,
+        betas: ["server-side-fallback-2026-06-01"],
+        fallbacks: [{ model: "claude-opus-4-8" }],
+      } as unknown as Parameters<typeof client.beta.messages.create>[0])) as unknown as Anthropic.Message;
+    }
+    return client.messages.create({ ...baseParams, messages });
+  }
+
+  let messages: Anthropic.MessageParam[] = [
+    { role: "user", content: userPrompt },
+  ];
+  let response = await createMessage(messages);
+
+  // Long web-search turns can pause server-side; resend to continue.
+  let continuations = 0;
+  while (
+    response.stop_reason === "pause_turn" &&
+    continuations++ < MAX_PAUSE_CONTINUATIONS
+  ) {
+    messages = [...messages, { role: "assistant", content: response.content }];
+    response = await createMessage(messages);
+  }
 
   if (response.stop_reason === "refusal") {
     throw new UserFacingError(
@@ -106,25 +190,63 @@ async function analyzeWithAnthropic(
       "The analysis ran over the output limit. Try a shorter idea description or founder background.",
     );
   }
-  const text = response.content.find((b) => b.type === "text")?.text;
-  if (!text) throw new UserFacingError("The model returned no analysis text.");
-  return JSON.parse(text) as RawAnalysis;
+
+  // With server tools in play the response may hold several text blocks
+  // (search narration + final answer) — the structured JSON is the last one
+  // that parses.
+  const textBlocks = response.content.filter((b) => b.type === "text");
+  let raw: RawAnalysis | null = null;
+  for (let i = textBlocks.length - 1; i >= 0; i--) {
+    try {
+      raw = parseAnalysisText(textBlocks[i].text);
+      break;
+    } catch {
+      // Not the JSON block — keep walking backwards.
+    }
+  }
+  if (!raw) {
+    throw new UserFacingError(
+      "The model returned no parseable analysis. Try again or switch models.",
+    );
+  }
+
+  const usage = response.usage as unknown as {
+    server_tool_use?: { web_search_requests?: number };
+  };
+  return {
+    raw,
+    webSearches: usage?.server_tool_use?.web_search_requests ?? 0,
+  };
 }
+
+// Reasoning-capable OpenAI families (gpt-5*, o-series); gpt-4.x is not.
+const OPENAI_REASONING_MODELS = /^(gpt-5|o\d)/;
+// xhigh reasoning effort exists on models after gpt-5.1-codex-max (e.g. gpt-5.5).
+const OPENAI_XHIGH_MODELS = /^gpt-5\.[5-9]/;
 
 async function analyzeWithOpenAI(
   model: string,
   userPrompt: string,
-): Promise<RawAnalysis> {
+  webSearch: boolean,
+): Promise<ProviderResult> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const response = await client.chat.completions.create({
+  const response = await client.responses.create({
     model,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: userPrompt },
-    ],
-    response_format: {
-      type: "json_schema",
-      json_schema: {
+    instructions: SYSTEM_PROMPT,
+    input: userPrompt,
+    ...(webSearch ? { tools: [{ type: "web_search" as const }] } : {}),
+    ...(OPENAI_REASONING_MODELS.test(model)
+      ? {
+          reasoning: {
+            effort: OPENAI_XHIGH_MODELS.test(model)
+              ? ("xhigh" as const)
+              : ("high" as const),
+          },
+        }
+      : {}),
+    text: {
+      format: {
+        type: "json_schema",
         name: "idea_analysis",
         strict: true,
         schema: ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
@@ -132,16 +254,25 @@ async function analyzeWithOpenAI(
     },
   });
 
-  const message = response.choices[0]?.message;
-  if (message?.refusal) {
+  const refusal = response.output
+    ?.filter((item) => item.type === "message")
+    .flatMap((m) => m.content)
+    .find((c) => c.type === "refusal");
+  if (refusal) {
     throw new UserFacingError(
       "The model declined to analyze this input. Rephrase the idea description and try again.",
     );
   }
-  if (!message?.content) {
-    throw new UserFacingError("The model returned no analysis text.");
+  if (response.status === "incomplete") {
+    throw new UserFacingError(
+      `The analysis stopped early (${response.incomplete_details?.reason ?? "unknown reason"}). Try again.`,
+    );
   }
-  return JSON.parse(message.content) as RawAnalysis;
+
+  const webSearches =
+    response.output?.filter((item) => item.type === "web_search_call").length ??
+    0;
+  return { raw: parseAnalysisText(response.output_text), webSearches };
 }
 
 class UserFacingError extends Error {
@@ -230,7 +361,9 @@ export async function POST(request: Request) {
     founderBackground?: unknown;
     provider?: unknown;
     model?: unknown;
+    webSearch?: unknown;
   };
+  const webSearch = body.webSearch !== false;
 
   const provider: Provider = body.provider === "openai" ? "openai" : "anthropic";
   const model =
@@ -283,11 +416,11 @@ export async function POST(request: Request) {
   const userPrompt = buildUserPrompt(idea, founderBackground);
 
   try {
-    const raw =
+    const result =
       provider === "anthropic"
-        ? await analyzeWithAnthropic(model, userPrompt)
-        : await analyzeWithOpenAI(model, userPrompt);
-    return Response.json(normalize(raw, provider, model));
+        ? await analyzeWithAnthropic(model, userPrompt, webSearch)
+        : await analyzeWithOpenAI(model, userPrompt, webSearch);
+    return Response.json(normalize(result, provider, model));
   } catch (err) {
     if (err instanceof UserFacingError) {
       return Response.json({ error: err.message }, { status: err.status });

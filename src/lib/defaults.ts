@@ -11,12 +11,14 @@ import type {
 } from "./types";
 
 export const ANTHROPIC_MODELS = [
+  { id: "claude-fable-5", label: "Claude Fable 5 (most capable, xhigh effort)" },
   { id: "claude-opus-4-8", label: "Claude Opus 4.8 (recommended)" },
   { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
   { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
 ];
 
 export const OPENAI_MODELS = [
+  { id: "gpt-5.5", label: "GPT-5.5 (most capable, xhigh reasoning)" },
   { id: "gpt-5.1", label: "GPT-5.1 (recommended)" },
   { id: "gpt-5", label: "GPT-5" },
   { id: "gpt-5-mini", label: "GPT-5 mini" },
@@ -51,6 +53,7 @@ export function defaultSettings(): Settings {
     provider: "anthropic",
     models: { ...DEFAULT_MODELS },
     founderBackground: "",
+    webSearch: true,
   };
 }
 

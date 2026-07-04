@@ -36,7 +36,7 @@ function normalizeAI(value: unknown): AIAnalysis | null {
         (GATE_IDS as readonly string[]).includes(g as string),
       )
     : [];
-  return {
+  const ai: AIAnalysis = {
     summary: str(a.summary),
     gateRationales,
     scoreRationales,
@@ -46,6 +46,10 @@ function normalizeAI(value: unknown): AIAnalysis | null {
     model: str(a.model),
     analyzedAt: str(a.analyzedAt, new Date().toISOString()),
   };
+  if (typeof a.webSearches === "number" && Number.isFinite(a.webSearches)) {
+    ai.webSearches = a.webSearches;
+  }
+  return ai;
 }
 
 /** Coerce unknown persisted/imported JSON into a valid AppState. Throws on garbage. */
@@ -79,6 +83,7 @@ export function normalizeState(data: unknown): AppState {
     },
     founderBackground:
       typeof s.founderBackground === "string" ? s.founderBackground : "",
+    webSearch: s.webSearch !== false,
   };
   for (const id of CRITERION_IDS) {
     const w = s.weights?.[id];

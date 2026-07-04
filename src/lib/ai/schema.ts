@@ -55,6 +55,39 @@ export const ANALYSIS_SCHEMA = {
       description:
         "3–5 sentence overall assessment of the idea against a unicorn/IPO bar, referencing the founder's background where relevant.",
     },
+    metadata: {
+      type: "object",
+      description:
+        "Concise metadata inferred from the idea description. Always fill every field with your best inference — the app applies these only where the founder left a field blank.",
+      properties: {
+        name: {
+          type: "string",
+          description:
+            "Short, memorable working name for the idea (under 40 characters, no quotes, not a sentence).",
+        },
+        domain: {
+          type: "string",
+          description: 'Domain/sector, e.g. "AI", "Fintech", "AI + Bio".',
+        },
+        businessModel: {
+          type: "string",
+          description:
+            'Business model, e.g. "SaaS", "Marketplace", "Fintech/Payments", "Infra", "Consumer".',
+        },
+        buyerICP: {
+          type: "string",
+          description:
+            "Who pays: the ideal customer profile in one specific phrase.",
+        },
+        initialWedge: {
+          type: "string",
+          description:
+            "The narrow initial wedge plus the expansion direction, one sentence.",
+        },
+      },
+      required: ["name", "domain", "businessModel", "buyerICP", "initialWedge"],
+      additionalProperties: false,
+    },
     gates: {
       type: "object",
       properties: gateProperties,
@@ -88,6 +121,7 @@ export const ANALYSIS_SCHEMA = {
   },
   required: [
     "summary",
+    "metadata",
     "gates",
     "scores",
     "confidence",

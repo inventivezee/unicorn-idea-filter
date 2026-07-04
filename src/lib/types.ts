@@ -22,7 +22,6 @@ export const GATE_IDS = [
   "g_pain",
   "g_10b",
   "g_100m",
-  "g_insight",
   "g_dist",
   "g_moat",
   "g_reg",
@@ -57,6 +56,8 @@ export interface AIAnalysis {
   provider: Provider;
   model: string;
   analyzedAt: string;
+  /** Live web searches the model ran, when web search was enabled. */
+  webSearches?: number;
 }
 
 export interface Idea {
@@ -86,6 +87,8 @@ export interface Settings {
   /** Model id per provider, remembered independently. */
   models: Record<Provider, string>;
   founderBackground: string;
+  /** Let the model ground its analysis with live web searches. */
+  webSearch: boolean;
 }
 
 export interface AppState {
@@ -94,9 +97,19 @@ export interface AppState {
   settings: Settings;
 }
 
+/** Metadata the AI infers from a free-text idea description. */
+export interface IdeaMetadataProposal {
+  name: string;
+  domain: string;
+  businessModel: string;
+  buyerICP: string;
+  initialWedge: string;
+}
+
 /** Shape returned by POST /api/analyze (already normalized server-side). */
 export interface AnalyzeResponse {
   summary: string;
+  metadata: IdeaMetadataProposal;
   gates: Record<GateId, { value: "Y" | "N" | "UNSURE"; rationale: string }>;
   scores: Record<CriterionId, { score: number; rationale: string }>;
   confidence: 0.5 | 0.75 | 1.0;
@@ -105,4 +118,6 @@ export interface AnalyzeResponse {
   needsFounderConfirmation: GateId[];
   provider: Provider;
   model: string;
+  /** Number of live web searches the model ran during the analysis. */
+  webSearches: number;
 }
