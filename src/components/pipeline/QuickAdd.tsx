@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { getAnonKey } from "@/lib/anon";
 import { Button } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import type { ClarifyResponse } from "@/lib/types";
@@ -48,6 +49,7 @@ export function QuickAdd() {
           coFounders: teamPayload,
           provider: settings.provider,
           model: settings.models[settings.provider],
+          anonKey: getAnonKey(),
         }),
       });
       if (!res.ok) {

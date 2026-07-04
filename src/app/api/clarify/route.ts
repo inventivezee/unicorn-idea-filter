@@ -13,6 +13,14 @@ import {
   readJsonBody,
   MAX_BACKGROUND_CHARS,
 } from "@/lib/ai/server";
+import { isPremiumModel } from "@/lib/entitlements";
+import {
+  adminClient,
+  anonKeyFromBody,
+  cloudConfigured,
+  requestTelemetry,
+  resolveCaller,
+} from "@/lib/supabase/server";
 import type { ClarifyResponse } from "@/lib/types";
 
 // Question generation runs at low effort, but reasoning models still think.
@@ -46,6 +54,34 @@ export async function POST(request: Request) {
   const missing = keyMissingResponse(provider);
   if (missing) return missing;
 
+  let logClarify: (() => Promise<void>) | null = null;
+  if (cloudConfigured()) {
+    const caller = await resolveCaller();
+    if (isPremiumModel(model) && !caller.subscribed && !caller.isAdmin) {
+      return Response.json(
+        {
+          error:
+            "That model is available to subscribers — upgrade for $19/month in Settings, or pick a non-premium model.",
+          upgrade: true,
+        },
+        { status: 402 },
+      );
+    }
+    const admin = adminClient();
+    const telemetry = requestTelemetry(request);
+    const anonKey = anonKeyFromBody(body.anonKey);
+    logClarify = async () => {
+      await admin.from("submission_logs").insert({
+        user_id: caller.user?.id ?? null,
+        anon_key: caller.user ? null : anonKey,
+        action: "clarify",
+        ...telemetry,
+        provider,
+        model,
+      });
+    };
+  }
+
   try {
     const result = await callProviderJSON({
       provider,
@@ -63,6 +99,7 @@ export async function POST(request: Request) {
       .map((q) => q.trim())
       .slice(0, 5);
     const response: ClarifyResponse = { questions };
+    await logClarify?.();
     return Response.json(response);
   } catch (err) {
     return mapProviderError(err, model);

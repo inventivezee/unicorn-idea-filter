@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { getAnonKey } from "@/lib/anon";
 import { GATES_BY_ID } from "@/lib/criteria";
 import { CRITERION_IDS, GATE_IDS } from "@/lib/types";
 import { Button, Section } from "@/components/ui";
@@ -125,6 +126,8 @@ export function AIPanel({
           model,
           webSearch: settings.webSearch,
           mode,
+          ideaId: idea.id,
+          anonKey: getAnonKey(),
         }),
       });
 

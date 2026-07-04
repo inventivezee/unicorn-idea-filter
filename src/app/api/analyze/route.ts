@@ -19,6 +19,19 @@ import {
   readJsonBody,
   MAX_BACKGROUND_CHARS,
 } from "@/lib/ai/server";
+import { applyAnalysisToIdea } from "@/lib/db/ideas";
+import {
+  ANON_ANALYSES_PER_DAY,
+  FREE_ANALYSES_PER_MONTH,
+  isPremiumModel,
+} from "@/lib/entitlements";
+import {
+  adminClient,
+  anonKeyFromBody,
+  cloudConfigured,
+  requestTelemetry,
+  resolveCaller,
+} from "@/lib/supabase/server";
 import { CRITERION_IDS, GATE_IDS } from "@/lib/types";
 import type {
   AnalyzeMetadataResponse,
@@ -181,6 +194,102 @@ export async function POST(request: Request) {
   const missing = keyMissingResponse(provider);
   if (missing) return missing;
 
+  // Cloud enforcement: premium models, quotas, telemetry, persistence.
+  const anonKey = anonKeyFromBody(body.anonKey);
+  const ideaId = typeof body.ideaId === "string" ? body.ideaId : null;
+  let logAnalysis: ((webSearches: number) => Promise<void>) | null = null;
+  let persistTo: string | null = null;
+
+  if (cloudConfigured()) {
+    const caller = await resolveCaller();
+    const subscribed = caller.subscribed || caller.isAdmin;
+
+    if (isPremiumModel(model) && !subscribed) {
+      return Response.json(
+        {
+          error:
+            "That model is available to subscribers — upgrade for $19/month in Settings, or pick a non-premium model.",
+          upgrade: true,
+        },
+        { status: 402 },
+      );
+    }
+
+    if (mode === "full" && !subscribed) {
+      const admin = adminClient();
+      if (caller.user) {
+        const { data: allowed } = await admin.rpc("consume_free_analysis", {
+          p_user: caller.user.id,
+          p_limit: FREE_ANALYSES_PER_MONTH,
+        });
+        if (!allowed) {
+          return Response.json(
+            {
+              error: `You've used all ${FREE_ANALYSES_PER_MONTH} free analyses this month — upgrade for unlimited analyses and premium models.`,
+              upgrade: true,
+            },
+            { status: 402 },
+          );
+        }
+      } else {
+        if (!anonKey) {
+          return Response.json(
+            { error: "Missing device identity — reload and try again." },
+            { status: 400 },
+          );
+        }
+        const telemetry = requestTelemetry(request);
+        const { data: allowed } = await admin.rpc("consume_anon_analysis", {
+          p_ip: telemetry.ip,
+          p_device: anonKey,
+          p_limit: ANON_ANALYSES_PER_DAY,
+        });
+        if (!allowed) {
+          return Response.json(
+            {
+              error: `Anonymous visitors get ${ANON_ANALYSES_PER_DAY} analyses per day — sign in for ${FREE_ANALYSES_PER_MONTH} free per month, or subscribe for unlimited.`,
+              upgrade: true,
+            },
+            { status: 402 },
+          );
+        }
+      }
+    }
+
+    // Verify the idea row belongs to this caller before promising to persist.
+    if (ideaId) {
+      const admin = adminClient();
+      const { data: row } = await admin
+        .from("ideas")
+        .select("id, owner_id, anon_key")
+        .eq("id", ideaId)
+        .maybeSingle<{ id: string; owner_id: string | null; anon_key: string | null }>();
+      const owns =
+        row &&
+        (caller.isAdmin ||
+          (caller.user
+            ? row.owner_id === caller.user.id
+            : row.owner_id === null && row.anon_key === anonKey));
+      if (owns) persistTo = ideaId;
+    }
+
+    const admin = adminClient();
+    const telemetry = requestTelemetry(request);
+    logAnalysis = async (webSearches: number) => {
+      await admin.from("submission_logs").insert({
+        idea_id: persistTo,
+        user_id: caller.user?.id ?? null,
+        anon_key: caller.user ? null : anonKey,
+        action: mode === "metadata" ? "fill" : "analyze",
+        ...telemetry,
+        founder_background_snapshot: founderBackground || null,
+        provider,
+        model,
+        web_searches: webSearches,
+      });
+    };
+  }
+
   const userPrompt = buildUserPrompt(idea, founderBackground, coFounders);
 
   try {
@@ -205,6 +314,12 @@ export async function POST(request: Request) {
         provider,
         model,
       };
+      if (persistTo) {
+        await applyAnalysisToIdea(adminClient(), persistTo, {
+          metadata: response.metadata as unknown as Record<string, string>,
+        });
+      }
+      await logAnalysis?.(0);
       return Response.json(response);
     }
 
@@ -219,7 +334,34 @@ export async function POST(request: Request) {
       speed: "quality",
     });
     const raw = parseLastJSON<RawAnalysis>(result.texts);
-    return Response.json(normalize(raw, result.webSearches, provider, model));
+    const response = normalize(raw, result.webSearches, provider, model);
+    if (persistTo) {
+      await applyAnalysisToIdea(adminClient(), persistTo, {
+        metadata: response.metadata as unknown as Record<string, string>,
+        gates: response.gates,
+        scores: response.scores,
+        confidence: response.confidence,
+        validationTest30d: response.validationTest30d,
+        ai: {
+          summary: response.summary,
+          gateRationales: Object.fromEntries(
+            Object.entries(response.gates).map(([k, v]) => [k, v.rationale]),
+          ),
+          scoreRationales: Object.fromEntries(
+            Object.entries(response.scores).map(([k, v]) => [k, v.rationale]),
+          ),
+          confidenceRationale: response.confidenceRationale,
+          needsFounderConfirmation: response.needsFounderConfirmation,
+          provider: response.provider,
+          model: response.model,
+          analyzedAt: new Date().toISOString(),
+          webSearches: response.webSearches,
+        },
+        aiSummary: response.summary,
+      });
+    }
+    await logAnalysis?.(response.webSearches);
+    return Response.json(response);
   } catch (err) {
     return mapProviderError(err, model);
   }

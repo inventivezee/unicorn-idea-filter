@@ -76,6 +76,10 @@ export interface Idea {
   validationTest30d: string;
   ai?: AIAnalysis | null;
   isExample?: boolean;
+  /** Cloud mode: excluded from the public feed (subscriber feature). */
+  isPrivate?: boolean;
+  /** Cloud mode: visible in the public feed once scored (and not private). */
+  published?: boolean;
   createdAt: string;
   updatedAt: string;
 }
