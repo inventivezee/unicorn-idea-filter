@@ -378,11 +378,13 @@ export default function AdminPage() {
     }
   }, []);
 
-  /** Refetch page 0 and refresh any already-listed rows in place. */
-  const refreshRowsFromPageZero = useCallback(async () => {
+  /** Refresh one idea's row in place after an admin-triggered analysis. */
+  const refreshRowsFromPageZero = useCallback(async (ideaId?: string) => {
     try {
       const data = await fetchJSON<{ ideas: AdminIdea[] }>(
-        "/api/admin/ideas?page=0",
+        ideaId
+          ? `/api/admin/ideas?id=${encodeURIComponent(ideaId)}`
+          : "/api/admin/ideas?page=0",
       );
       setIdeas((prev) => {
         if (!prev) return data.ideas;
@@ -434,7 +436,7 @@ export default function AdminPage() {
           },
         );
         setAnalyzeState((prev) => ({ ...prev, [ideaId]: { status: "done" } }));
-        await refreshRowsFromPageZero();
+        await refreshRowsFromPageZero(ideaId);
       } catch (e) {
         setAnalyzeState((prev) => ({
           ...prev,

@@ -112,11 +112,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const idea = stateRef.current.ideas.find((i) => i.id === id);
       if (!idea) continue;
       try {
-        const res = await fetch(`/api/ideas/${id}`, {
+        let res = await fetch(`/api/ideas/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ patch: idea, anonKey: key }),
         });
+        if (res.status === 404) {
+          // Row never made it to the cloud (failed optimistic create, JSON
+          // restore, offline edit) — create it now instead of dropping it.
+          res = await fetch("/api/ideas", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ idea, anonKey: key }),
+          });
+        }
         if (!res.ok) {
           throw new Error(await readError(res, `Sync failed (${res.status})`));
         }
@@ -148,6 +157,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!res.ok) {
           throw new Error(await readError(res, `Sync failed (${res.status})`));
         }
+        setSyncError(null);
       } catch (e) {
         settingsDirty.current = true;
         setSyncError(e instanceof Error ? e.message : "Sync failed.");
@@ -182,26 +192,44 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setEntitlements(data.entitlements);
       signedInRef.current = data.entitlements.signedIn;
       if (data.profile) {
-        // Profile is authoritative for signed-in settings.
+        // Profile is authoritative when it has content; otherwise keep what
+        // was entered anonymously on this device and push it up to the
+        // profile (first sign-in must never wipe a locally written CV).
         const prefs = data.profile.prefs ?? {};
+        const profileBackground = data.profile.founderBackground ?? "";
+        const profileCoFounders = data.profile.coFounders ?? [];
+        let pushLocalUp = false;
         setState((s) => {
+          const keepLocalBackground =
+            !profileBackground.trim() && s.settings.founderBackground.trim();
+          const keepLocalCoFounders =
+            profileCoFounders.length === 0 && s.settings.coFounders.length > 0;
+          pushLocalUp = Boolean(keepLocalBackground || keepLocalCoFounders);
           const merged = normalizeState({
             version: 1,
             ideas: [],
             settings: {
               ...s.settings,
               ...((prefs as Record<string, unknown>) ?? {}),
-              founderBackground: data.profile!.founderBackground,
-              coFounders: data.profile!.coFounders,
+              founderBackground: keepLocalBackground
+                ? s.settings.founderBackground
+                : profileBackground,
+              coFounders: keepLocalCoFounders
+                ? s.settings.coFounders
+                : profileCoFounders,
             },
           }).settings;
           return { ...s, settings: merged };
         });
+        if (pushLocalUp) {
+          settingsDirty.current = true;
+          scheduleSync();
+        }
       }
     } catch {
       // Entitlement refresh is best-effort.
     }
-  }, [cloud]);
+  }, [cloud, scheduleSync]);
 
   const loadCloudIdeas = useCallback(async () => {
     const key = getAnonKey();
@@ -283,6 +311,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [state, hydrated, cloud]);
 
+  // Best-effort flush of pending edits when the tab is closed or hidden —
+  // keepalive requests survive page teardown for small payloads.
+  useEffect(() => {
+    if (!cloud) return;
+    function flushOnExit() {
+      const key = getAnonKey();
+      for (const id of dirtyIdeas.current) {
+        const idea = stateRef.current.ideas.find((i) => i.id === id);
+        if (!idea) continue;
+        void fetch(`/api/ideas/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ patch: idea, anonKey: key }),
+          keepalive: true,
+        }).catch(() => {});
+      }
+      dirtyIdeas.current.clear();
+    }
+    window.addEventListener("pagehide", flushOnExit);
+    return () => window.removeEventListener("pagehide", flushOnExit);
+  }, [cloud]);
+
   // Cross-tab sync (local mode only; cloud mode reloads from the API).
   useEffect(() => {
     if (cloud) return;
@@ -314,15 +364,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             idea: { ...idea },
             anonKey: getAnonKey(),
           }),
-        }).then(async (res) => {
-          if (!res.ok) {
-            setSyncError(await readError(res, "Couldn't save the new idea."));
-          }
-        });
+        })
+          .then(async (res) => {
+            if (!res.ok) {
+              setSyncError(await readError(res, "Couldn't save the new idea."));
+              dirtyIdeas.current.add(idea.id); // retried via PATCH-404→POST
+              scheduleSync();
+            }
+          })
+          .catch(() => {
+            setSyncError("Couldn't save the new idea — will retry.");
+            dirtyIdeas.current.add(idea.id);
+            scheduleSync();
+          });
       }
       return idea;
     },
-    [cloud],
+    [cloud, scheduleSync],
   );
 
   const updateIdea = useCallback(
@@ -378,7 +436,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ anonKey: getAnonKey() }),
-        });
+        })
+          .then(async (res) => {
+            if (!res.ok && res.status !== 404) {
+              setSyncError(
+                await readError(res, "Couldn't delete the idea in the cloud."),
+              );
+            }
+          })
+          .catch(() => setSyncError("Couldn't delete the idea in the cloud."));
       }
     },
     [cloud],
@@ -417,17 +483,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [cloud, scheduleSync],
   );
 
+  const importInFlight = useRef(false);
   const importLocalIdeas = useCallback(async () => {
-    if (!cloud) return;
+    if (!cloud || importInFlight.current) return;
+    importInFlight.current = true;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       const parsed = raw ? normalizeState(JSON.parse(raw)) : null;
       const ideas = parsed?.ideas.filter((i) => !i.isExample) ?? [];
-      if (ideas.length) {
+      // The endpoint caps batches at 100 — chunk instead of silently dropping.
+      for (let start = 0; start < ideas.length; start += 100) {
         const res = await fetch("/api/ideas/import", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ideas, anonKey: getAnonKey() }),
+          body: JSON.stringify({
+            ideas: ideas.slice(start, start + 100),
+            anonKey: getAnonKey(),
+          }),
         });
         if (!res.ok) {
           setSyncError(await readError(res, "Import failed."));
@@ -439,6 +511,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await loadCloudIdeas();
     } catch (e) {
       setSyncError(e instanceof Error ? e.message : "Import failed.");
+    } finally {
+      importInFlight.current = false;
     }
   }, [cloud, loadCloudIdeas]);
 
@@ -447,6 +521,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     await supabaseBrowser().auth.signOut();
     setEntitlements(signedOutEntitlements());
     signedInRef.current = false;
+    settingsDirty.current = false;
+    // Don't leave the signed-in user's CV/settings behind for the next
+    // (anonymous) person on this browser.
+    setState((s) => ({ ...s, settings: defaultSettings() }));
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ version: 1, ideas: [], settings: defaultSettings() }),
+      );
+    } catch {
+      // Cache wipe is best-effort.
+    }
     await loadCloudIdeas();
   }, [cloud, loadCloudIdeas]);
 

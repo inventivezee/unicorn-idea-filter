@@ -17,7 +17,8 @@ export function getAnonKey(): string {
     localStorage.setItem(ANON_KEY_STORAGE, key);
     return key;
   } catch {
-    // Storage unavailable (private mode) — session-scoped fallback.
-    return "anon-ephemeral";
+    // Storage unavailable (private mode) — session-scoped fallback (must
+    // satisfy the server's 16-64 char key format).
+    return "anon-ephemeral-fallback-key";
   }
 }

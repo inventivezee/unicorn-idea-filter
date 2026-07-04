@@ -8,10 +8,11 @@ import { adminClient, anonKeyFromBody, cloudConfigured } from "@/lib/supabase/se
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
+  const tokenHash = url.searchParams.get("token_hash");
   const anonKey = anonKeyFromBody(url.searchParams.get("anon_key"));
   const origin = url.origin;
 
-  if (!cloudConfigured() || !code) {
+  if (!cloudConfigured() || (!code && !tokenHash)) {
     return NextResponse.redirect(`${origin}/`);
   }
 
@@ -31,7 +32,11 @@ export async function GET(request: Request) {
     },
   );
 
-  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+  // PKCE code exchange needs the same browser that requested the link; the
+  // token_hash form works from any browser (e.g. email opened on the phone).
+  const { data, error } = code
+    ? await supabase.auth.exchangeCodeForSession(code)
+    : await supabase.auth.verifyOtp({ type: "email", token_hash: tokenHash! });
   if (error || !data.user) {
     return NextResponse.redirect(`${origin}/signin?error=auth`);
   }

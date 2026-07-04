@@ -23,8 +23,12 @@ export async function GET(request: Request) {
     .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
   query =
     sort === "top"
-      ? query.order("raw_score", { ascending: false, nullsFirst: false })
-      : query.order("created_at", { ascending: false });
+      ? query
+          .order("raw_score", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: false })
+      : query
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false });
 
   const { data, error, count } = await query;
   if (error) {

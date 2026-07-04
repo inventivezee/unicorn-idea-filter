@@ -111,7 +111,13 @@ export default function ExplorePage() {
           throw new Error(message);
         }
         const data = (await res.json()) as FeedResponse;
-        setIdeas((prev) => (page === 0 ? data.ideas : [...prev, ...data.ideas]));
+        setIdeas((prev) => {
+          if (page === 0) return data.ideas;
+          // Live feed: rows published between clicks shift offset ranges —
+          // dedupe by id so React keys stay unique.
+          const seen = new Set(prev.map((i) => i.id));
+          return [...prev, ...data.ideas.filter((i) => !seen.has(i.id))];
+        });
         setTotal(data.total);
         setLoading(false);
       } catch (e) {

@@ -4,11 +4,21 @@ import type { Provider } from "./types";
 
 export const SUBSCRIPTION_PRICE_LABEL = "$19 / month";
 
-/** Models that require an active subscription. */
+/**
+ * Premium gating is by model FAMILY (same patterns the provider dispatcher
+ * uses for capability selection), so "claude-mythos-5", dated snapshots, or
+ * "gpt-5.6" can't slip past the paywall via the custom-model input.
+ */
+export const PREMIUM_MODEL_PATTERNS: RegExp[] = [
+  /^claude-(fable-5|mythos-5)/,
+  /^gpt-5\.[5-9]/,
+];
+
+/** Canonical premium model ids, for UI labels. */
 export const PREMIUM_MODELS = new Set(["claude-fable-5", "gpt-5.5"]);
 
 export function isPremiumModel(model: string): boolean {
-  return PREMIUM_MODELS.has(model);
+  return PREMIUM_MODEL_PATTERNS.some((p) => p.test(model));
 }
 
 /** Anonymous visitors: full analyses per day (per IP and per device key). */

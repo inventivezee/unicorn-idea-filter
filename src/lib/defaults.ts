@@ -58,10 +58,19 @@ export function defaultSettings(): Settings {
   };
 }
 
-export function generateId(prefix: string): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+export function generateId(_prefix: string): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  // Non-secure-origin fallback: still emit a valid v4-shaped uuid so the
+  // server honors the client id (optimistic inserts depend on it).
+  let uuid = "";
+  for (const c of "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx") {
+    if (c === "x") uuid += Math.floor(Math.random() * 16).toString(16);
+    else if (c === "y") uuid += (8 + Math.floor(Math.random() * 4)).toString(16);
+    else uuid += c;
+  }
+  return uuid;
 }
 
 export function newIdea(partial?: Partial<Idea>): Idea {

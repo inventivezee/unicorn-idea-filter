@@ -29,6 +29,29 @@ export async function POST() {
 
   const s = stripe();
   let customerId = caller.profile.stripe_customer_id;
+  if (customerId) {
+    // The cached subscribed flag lags the webhook — ask Stripe directly so a
+    // race can't create a second subscription for the same customer.
+    const existing = await s.subscriptions.list({
+      customer: customerId,
+      status: "all",
+      limit: 10,
+    });
+    const blocking = existing.data.some((sub) =>
+      ["active", "trialing", "past_due", "unpaid", "incomplete"].includes(
+        sub.status,
+      ),
+    );
+    if (blocking) {
+      return Response.json(
+        {
+          error:
+            "You already have a subscription — manage it from the billing portal in Settings.",
+        },
+        { status: 400 },
+      );
+    }
+  }
   if (!customerId) {
     const customer = await s.customers.create({
       email: caller.user.email ?? undefined,
@@ -43,6 +66,8 @@ export async function POST() {
 
   const session = await s.checkout.sessions.create({
     mode: "subscription",
+    // Shrink the window in which a stale checkout link can double-subscribe.
+    expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
     customer: customerId,
     line_items: [{ price: process.env.STRIPE_PRICE_ID!, quantity: 1 }],
     success_url: `${appUrl()}/settings?upgraded=1`,

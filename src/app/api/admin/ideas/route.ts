@@ -12,14 +12,17 @@ export async function GET(request: Request) {
   }
   const url = new URL(request.url);
   const page = Math.max(0, Number(url.searchParams.get("page")) || 0);
+  const idFilter = url.searchParams.get("id");
   const pageSize = 50;
 
   const admin = adminClient();
-  const { data, error, count } = await admin
+  let query = admin
     .from("ideas")
     .select("*", { count: "exact" })
     .order("created_at", { ascending: false })
     .range(page * pageSize, page * pageSize + pageSize - 1);
+  if (idFilter) query = query.eq("id", idFilter);
+  const { data, error, count } = await query;
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
   const rows = (data ?? []) as IdeaRow[];

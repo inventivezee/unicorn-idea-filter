@@ -142,9 +142,11 @@ export function ideaToWritableRow(idea: Partial<Idea>): Record<string, unknown> 
   if ("topRiskOverride2" in idea) {
     row.top_risk_override_2 = idea.topRiskOverride2 ?? null;
   }
-  if (idea.ai !== undefined) {
+  // ai is only ever SET via a patch, never cleared: a stale client flushing
+  // its full local idea (ai: null) must not erase a server-persisted analysis.
+  if (idea.ai !== undefined && idea.ai !== null) {
     row.ai = idea.ai;
-    row.ai_summary = idea.ai?.summary ?? "";
+    row.ai_summary = idea.ai.summary ?? "";
   }
   return row;
 }

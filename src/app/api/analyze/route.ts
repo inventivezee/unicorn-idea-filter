@@ -204,6 +204,7 @@ export async function POST(request: Request) {
   const anonKey = anonKeyFromBody(body.anonKey);
   const ideaId = typeof body.ideaId === "string" ? body.ideaId : null;
   let logAnalysis: ((webSearches: number) => Promise<void>) | null = null;
+  let refundQuota: (() => Promise<void>) | null = null;
   let persistTo: string | null = null;
 
   if (cloudConfigured()) {
@@ -237,6 +238,10 @@ export async function POST(request: Request) {
             { status: 402 },
           );
         }
+        const userId = caller.user.id;
+        refundQuota = async () => {
+          await admin.rpc("refund_free_analysis", { p_user: userId });
+        };
       } else {
         if (!anonKey) {
           return Response.json(
@@ -259,24 +264,38 @@ export async function POST(request: Request) {
             { status: 402 },
           );
         }
+        refundQuota = async () => {
+          await admin.rpc("refund_anon_analysis", {
+            p_ip: telemetry.ip,
+            p_device: anonKey,
+          });
+        };
       }
     }
 
     // Verify the idea row belongs to this caller before promising to persist.
+    // The quick-add flow fires this request in parallel with the row's own
+    // POST insert, so retry briefly when the row hasn't landed yet.
     if (ideaId) {
       const admin = adminClient();
-      const { data: row } = await admin
-        .from("ideas")
-        .select("id, owner_id, anon_key")
-        .eq("id", ideaId)
-        .maybeSingle<{ id: string; owner_id: string | null; anon_key: string | null }>();
-      const owns =
-        row &&
-        (caller.isAdmin ||
+      for (let attempt = 0; attempt < 4 && !persistTo; attempt++) {
+        if (attempt > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 700));
+        }
+        const { data: row } = await admin
+          .from("ideas")
+          .select("id, owner_id, anon_key")
+          .eq("id", ideaId)
+          .maybeSingle<{ id: string; owner_id: string | null; anon_key: string | null }>();
+        if (!row) continue;
+        const owns =
+          caller.isAdmin ||
           (caller.user
             ? row.owner_id === caller.user.id
-            : row.owner_id === null && row.anon_key === anonKey));
-      if (owns) persistTo = ideaId;
+            : row.owner_id === null && row.anon_key === anonKey);
+        if (owns) persistTo = ideaId;
+        break;
+      }
     }
 
     const admin = adminClient();
@@ -373,8 +392,11 @@ export async function POST(request: Request) {
       });
     }
     await logAnalysis?.(response.webSearches);
+    refundQuota = null; // result delivered — the analysis is spent fairly
     return Response.json(response);
   } catch (err) {
+    // Don't burn free-tier quota on provider failures.
+    await refundQuota?.().catch(() => {});
     return mapProviderError(err, model);
   }
 }

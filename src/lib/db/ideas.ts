@@ -99,7 +99,19 @@ export async function insertIdea(
     .insert(row)
     .select("*")
     .single<IdeaRow>();
-  if (error) throw new IdeaAccessError(error.message, 500);
+  if (error) {
+    // 23505 = duplicate key: the row already exists (import retry or an
+    // optimistic create racing a sync) — treat as success for idempotency.
+    if (error.code === "23505" && typeof row.id === "string") {
+      const { data: existing } = await admin
+        .from("ideas")
+        .select("*")
+        .eq("id", row.id)
+        .maybeSingle<IdeaRow>();
+      if (existing) return rowToIdea(existing);
+    }
+    throw new IdeaAccessError(error.message, 500);
+  }
   return rowToIdea(data);
 }
 

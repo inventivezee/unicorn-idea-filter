@@ -51,7 +51,7 @@ for each row execute function public.handle_new_user();
 -- ---------------------------------------------------------------------------
 create table public.ideas (
   id uuid primary key default gen_random_uuid(),
-  owner_id uuid references auth.users (id) on delete set null,
+  owner_id uuid references auth.users (id) on delete cascade,
   -- Anonymous ownership: a random key held in the device's localStorage.
   anon_key text,
   name text not null default '',
@@ -142,6 +142,9 @@ declare
   v_ip_count integer;
   v_dev_count integer;
 begin
+  -- Opportunistic retention: only today's rows are ever read.
+  delete from anon_usage where day < current_date - 7;
+
   insert into anon_usage (scope, key, day, count) values ('ip', p_ip, current_date, 0)
     on conflict (scope, key, day) do nothing;
   insert into anon_usage (scope, key, day, count) values ('device', p_device, current_date, 0)
@@ -196,6 +199,37 @@ begin
 end;
 $$;
 
+-- Refund one consumed analysis after a provider failure (best-effort).
+create or replace function public.refund_anon_analysis(
+  p_ip text,
+  p_device text
+) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update anon_usage set count = greatest(count - 1, 0)
+    where scope = 'ip' and key = p_ip and day = current_date;
+  update anon_usage set count = greatest(count - 1, 0)
+    where scope = 'device' and key = p_device and day = current_date;
+end;
+$$;
+
+create or replace function public.refund_free_analysis(
+  p_user uuid
+) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update profiles set analyses_used = greatest(analyses_used - 1, 0)
+    where id = p_user
+      and date_trunc('month', analyses_reset_at) = date_trunc('month', now());
+end;
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Row-level security. All writes go through the app's API routes (service
 -- role); RLS is defense in depth for direct client access.
@@ -217,17 +251,28 @@ revoke update on public.profiles from authenticated;
 grant update (display_name, show_handle, founder_background, co_founders, prefs)
   on public.profiles to authenticated;
 
--- Ideas: owners get full CRUD on their own rows.
+-- Ideas: owners can READ their own rows directly; every write goes through
+-- the app's API routes (service role) so the subscriber-only private flag and
+-- server-computed columns (published, raw_score, ai) can't be bypassed via
+-- direct PostgREST access.
 create policy "ideas_select_own" on public.ideas
   for select using (auth.uid() = owner_id);
-create policy "ideas_insert_own" on public.ideas
-  for insert with check (auth.uid() = owner_id);
-create policy "ideas_update_own" on public.ideas
-  for update using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
-create policy "ideas_delete_own" on public.ideas
-  for delete using (auth.uid() = owner_id);
+revoke insert, update, delete on public.ideas from anon, authenticated;
 
 -- submission_logs / anon_usage: no policies — service role only.
+
+-- Quota + trigger functions are service-role-only; without this, anyone with
+-- the public anon key could call them via /rest/v1/rpc and corrupt counters.
+revoke execute on function public.consume_anon_analysis(text, text, integer)
+  from public, anon, authenticated;
+revoke execute on function public.consume_free_analysis(uuid, integer)
+  from public, anon, authenticated;
+revoke execute on function public.refund_anon_analysis(text, text)
+  from public, anon, authenticated;
+revoke execute on function public.refund_free_analysis(uuid)
+  from public, anon, authenticated;
+revoke execute on function public.handle_new_user()
+  from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- public_ideas — THE public surface. Safe columns only: no founder data, no

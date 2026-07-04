@@ -9,7 +9,7 @@ import { ANTHROPIC_MODELS, generateId, OPENAI_MODELS } from "@/lib/defaults";
 import { sumWeights } from "@/lib/engine";
 import {
   FREE_ANALYSES_PER_MONTH,
-  PREMIUM_MODELS,
+  isPremiumModel,
   SUBSCRIPTION_PRICE_LABEL,
 } from "@/lib/entitlements";
 import { extractTextFromFile } from "@/lib/extractText";
@@ -106,7 +106,11 @@ export default function SettingsPage() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("upgraded") === "1") {
       setUpgradeWelcome(true);
-      void refreshEntitlements();
+      // The Stripe webhook races the redirect back here — poll until the
+      // subscription lands (bounded at ~30s).
+      for (const ms of [0, 2000, 5000, 10_000, 30_000]) {
+        setTimeout(() => void refreshEntitlements(), ms);
+      }
       // Strip the flag so a reload doesn't repeat the welcome note.
       params.delete("upgraded");
       const qs = params.toString();
@@ -687,7 +691,7 @@ export default function SettingsPage() {
                     <option key={m.id} value={m.id}>
                       {cloud &&
                       !entitlements.subscribed &&
-                      PREMIUM_MODELS.has(m.id)
+                      isPremiumModel(m.id)
                         ? `${m.label} — subscribers`
                         : m.label}
                     </option>
@@ -708,7 +712,7 @@ export default function SettingsPage() {
               </div>
               {cloud &&
               !entitlements.subscribed &&
-              PREMIUM_MODELS.has(currentModel) ? (
+              isPremiumModel(currentModel) ? (
                 <p className="text-xs text-amber-600">
                   This model needs a subscription — analyses will ask you to
                   upgrade.
