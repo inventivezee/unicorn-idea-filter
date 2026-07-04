@@ -112,14 +112,15 @@ export async function POST(request: Request) {
             return {
               question: question.trim(),
               // Dedupe AFTER truncation so slice-collisions are caught too —
-              // duplicate options would make twin chips toggle together.
+              // duplicate options would make twin choices toggle together.
+              // 220 chars fits the ~22-word detailed options the prompt asks for.
               options: Array.from(
                 new Set(
                   (Array.isArray(options) ? options : [])
                     .filter(
                       (o): o is string => typeof o === "string" && !!o.trim(),
                     )
-                    .map((o) => o.trim().slice(0, 120)),
+                    .map((o) => o.trim().slice(0, 220)),
                 ),
               ).slice(0, 4),
             };

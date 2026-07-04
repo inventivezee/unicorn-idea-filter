@@ -235,13 +235,17 @@ export function QuickAdd() {
               custom: "",
               showCustom: true,
             };
-            const chip =
-              "rounded-full border px-3 py-1.5 text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600";
+            // Stacked, left-aligned rows: detailed options read like short
+            // answers, not tags, and wrap cleanly on mobile.
+            const rowBase =
+              "w-full rounded-lg border px-3 py-2 text-left text-xs leading-relaxed transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600";
             return (
               <div key={i}>
-                <p className="text-sm text-zinc-800">{q.question}</p>
+                <p className="text-sm font-medium text-zinc-800">
+                  {q.question}
+                </p>
                 <div
-                  className="mt-1.5 flex flex-wrap gap-1.5"
+                  className="mt-1.5 space-y-1.5"
                   role="group"
                   aria-label={q.question}
                 >
@@ -259,13 +263,27 @@ export function QuickAdd() {
                             showCustom: false,
                           })
                         }
-                        className={`${chip} ${
+                        className={`${rowBase} ${
                           selected
-                            ? "border-teal-600 bg-teal-600 font-medium text-white"
-                            : "border-zinc-300 bg-white text-zinc-700 hover:border-teal-600 hover:text-teal-700"
+                            ? "border-teal-600 bg-teal-50 text-teal-900 ring-1 ring-teal-600"
+                            : "border-zinc-200 bg-white text-zinc-700 hover:border-teal-500 hover:bg-teal-50/40"
                         }`}
                       >
-                        {opt}
+                        <span className="flex items-start gap-2">
+                          <span
+                            aria-hidden
+                            className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${
+                              selected
+                                ? "border-teal-600 bg-teal-600"
+                                : "border-zinc-300 bg-white"
+                            }`}
+                          >
+                            {selected ? (
+                              <span className="block h-1.5 w-1.5 rounded-full bg-white" />
+                            ) : null}
+                          </span>
+                          <span>{opt}</span>
+                        </span>
                       </button>
                     );
                   })}
@@ -279,13 +297,13 @@ export function QuickAdd() {
                           choice: null,
                         })
                       }
-                      className={`${chip} ${
+                      className={`${rowBase} ${
                         a.showCustom
-                          ? "border-teal-600 bg-teal-50 font-medium text-teal-700"
-                          : "border-dashed border-zinc-300 bg-white text-zinc-500 hover:border-teal-600 hover:text-teal-700"
+                          ? "border-teal-600 bg-teal-50 font-medium text-teal-900 ring-1 ring-teal-600"
+                          : "border-dashed border-zinc-300 bg-white text-zinc-500 hover:border-teal-500 hover:text-teal-700"
                       }`}
                     >
-                      Other…
+                      Other — write your own answer…
                     </button>
                   ) : null}
                 </div>
