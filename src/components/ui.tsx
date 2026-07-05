@@ -1,8 +1,73 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { GateStatus } from "@/lib/engine";
 import type { Decision } from "@/lib/types";
+import { useStore } from "@/lib/store";
+
+/**
+ * "Auto-saved" indicator. Watches `value`; after a real change it briefly
+ * shows "Saving…" then settles. Edits persist to local storage immediately, so
+ * the settled state is honest — but in cloud mode, if the background sync is
+ * currently failing it reads "Saved on this device" (amber) rather than the
+ * green "Auto-saved", so it never overstates that the cloud write succeeded.
+ * Silent until the first real change after mount (compares against the mount
+ * value, so React StrictMode's double effect invoke can't flash a false save).
+ */
+export function AutoSavedFlag({ value }: { value: string }) {
+  const { cloud, syncError } = useStore();
+  const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const prev = useRef(value);
+  useEffect(() => {
+    if (prev.current === value) return; // no real change (also covers StrictMode)
+    prev.current = value;
+    setStatus("saving");
+    const t = setTimeout(() => setStatus("saved"), 600);
+    return () => clearTimeout(t);
+  }, [value]);
+  if (status === "idle") return null;
+
+  if (status === "saving") {
+    return (
+      <span
+        className="flex items-center gap-1 whitespace-nowrap text-xs text-zinc-500"
+        aria-live="polite"
+      >
+        <span
+          aria-hidden
+          className="inline-block h-3 w-3 animate-spin rounded-full border border-zinc-200 border-t-teal-600"
+        />
+        Saving…
+      </span>
+    );
+  }
+
+  const syncFailing = cloud && syncError !== null;
+  return (
+    <span
+      className={`flex items-center gap-1 whitespace-nowrap text-xs ${
+        syncFailing ? "text-amber-700" : "text-teal-600"
+      }`}
+      aria-live="polite"
+      title={
+        syncFailing
+          ? "Saved on this device — cloud sync is currently retrying (see the banner above)."
+          : undefined
+      }
+    >
+      <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" aria-hidden>
+        <path
+          d="M3 8.5 6.5 12 13 4.5"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+      {syncFailing ? "Saved on this device" : "Auto-saved"}
+    </span>
+  );
+}
 
 /** Decision chip colors per spec: BUILD teal, VALIDATE blue, PARK grey,
  *  KILL/REFRAME red outline, KILL red, PENDING muted. */

@@ -79,7 +79,8 @@ export function normalizeClarifications(value: unknown): Clarification[] {
     if (typeof question !== "string" || !question.trim()) continue;
     out.push({
       question: question.trim().slice(0, 300),
-      answer: typeof answer === "string" ? answer.trim().slice(0, 600) : "",
+      // Multi-select answers concatenate several detailed options, so allow room.
+      answer: typeof answer === "string" ? answer.trim().slice(0, 1200) : "",
     });
     if (out.length >= 10) break;
   }

@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getAnonKey } from "@/lib/anon";
-import { Button } from "@/components/ui";
+import { AutoSavedFlag, Button } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import type { ClarifyQuestion } from "@/lib/types";
 
@@ -11,9 +11,9 @@ type Stage = "draft" | "clarify";
 /** "analyze" = full scoring after add; "add" = name + metadata + description only. */
 type AddMode = "analyze" | "add";
 
-/** Per-question answer: a clicked option, or free text behind the Other chip. */
+/** Per-question answer: any number of picked options, plus optional free text. */
 interface ClarifyAnswer {
-  choice: string | null;
+  choices: string[];
   custom: string;
   showCustom: boolean;
 }
@@ -62,16 +62,36 @@ export function QuickAdd() {
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // Inline founder-background capture (revealed when analysis is attempted
+  // without a background set).
+  const [showBgField, setShowBgField] = useState(false);
+  const bgRef = useRef<HTMLDivElement>(null);
+  const bgTextareaRef = useRef<HTMLTextAreaElement>(null);
+
   const settings = state.settings;
   const hasBackground = settings.founderBackground.trim().length > 0;
   const teamPayload = settings.coFounders
     .filter((c) => c.background.trim())
     .map((c) => ({ name: c.name, background: c.background }));
 
+  /** Reveal the inline background field, scroll to it, and focus it. */
+  function revealBackground() {
+    setShowBgField(true);
+    setError(null);
+    requestAnimationFrame(() => {
+      bgRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      bgTextareaRef.current?.focus();
+    });
+  }
+
   async function startClarify(chosenMode: AddMode) {
     const text = draft.trim();
     if (!text || loadingMode) return;
-    if (chosenMode === "analyze" && !hasBackground) return;
+    // Analysis needs a founder background — capture it inline instead of blocking.
+    if (chosenMode === "analyze" && !hasBackground) {
+      revealBackground();
+      return;
+    }
     // Toggle off → skip the clarifying step and add straight away.
     if (!settings.askClarifying) {
       finishAdd(chosenMode, text);
@@ -127,7 +147,7 @@ export function QuickAdd() {
       setQuestions(normalized);
       setAnswers(
         normalized.map((q) => ({
-          choice: null,
+          choices: [],
           custom: "",
           // No options to click → open the text field straight away.
           showCustom: q.options.length === 0,
@@ -141,10 +161,12 @@ export function QuickAdd() {
     }
   }
 
+  /** Combine picked options + optional free text into one answer string. */
   function answerText(a: ClarifyAnswer | undefined): string {
     if (!a) return "";
-    if (a.showCustom) return a.custom.trim();
-    return a.choice ?? "";
+    const parts = [...a.choices];
+    if (a.showCustom && a.custom.trim()) parts.push(a.custom.trim());
+    return parts.join("; ");
   }
 
   function composeNotes(): string {
@@ -161,8 +183,22 @@ export function QuickAdd() {
   }
 
   function patchAnswer(i: number, patch: Partial<ClarifyAnswer>) {
+    setAnswers((all) => all.map((a, j) => (j === i ? { ...a, ...patch } : a)));
+  }
+
+  /** Toggle one option in/out of a question's multi-select answer. */
+  function toggleChoice(i: number, opt: string) {
     setAnswers((all) =>
-      all.map((a, j) => (j === i ? { ...a, ...patch } : a)),
+      all.map((a, j) =>
+        j === i
+          ? {
+              ...a,
+              choices: a.choices.includes(opt)
+                ? a.choices.filter((c) => c !== opt)
+                : [...a.choices, opt],
+            }
+          : a,
+      ),
     );
   }
 
@@ -214,6 +250,49 @@ export function QuickAdd() {
     />
   );
 
+  /** Inline founder-background capture, shared by both stages. */
+  const backgroundField =
+    showBgField ? (
+      <div
+        ref={bgRef}
+        className="mt-3 rounded-lg border border-amber-300 bg-amber-50/60 p-3"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <label
+            htmlFor="inline-founder-bg"
+            className="text-sm font-medium text-zinc-900"
+          >
+            Your founder background{" "}
+            {hasBackground ? null : (
+              <span className="font-normal text-amber-700">
+                — required to analyze
+              </span>
+            )}
+          </label>
+          <AutoSavedFlag value={settings.founderBackground} />
+        </div>
+        <p className="mt-0.5 text-xs text-zinc-600">
+          The AI judges founder–market fit and the founder-personal gates from
+          this. It&apos;s saved for all your future ideas — refine it any time
+          in Settings (you can add co-founders there too).
+        </p>
+        <textarea
+          id="inline-founder-bg"
+          ref={bgTextareaRef}
+          rows={4}
+          value={settings.founderBackground}
+          onChange={(e) => updateSettings({ founderBackground: e.target.value })}
+          placeholder="Domain expertise, operating history, networks, capital access, distribution, credibility…"
+          className="mt-2 w-full rounded border border-zinc-300 bg-white p-2 font-mono text-xs text-zinc-900 placeholder:text-zinc-400 focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600"
+        />
+        {hasBackground ? (
+          <p className="mt-1.5 text-xs text-teal-700">
+            Saved — press “Add &amp; analyze with AI” to continue.
+          </p>
+        ) : null}
+      </div>
+    ) : null;
+
   if (stage === "clarify") {
     return (
       <div className="mb-6 rounded-lg border border-zinc-200 bg-white p-4">
@@ -221,9 +300,9 @@ export function QuickAdd() {
           A few clarifying questions
         </h2>
         <p className="mt-0.5 text-xs text-zinc-500">
-          Click an answer — or pick Other to type your own. All optional; skip
-          any you're not sure about. They sharpen the AI's naming, metadata,
-          and scoring.
+          Pick any answers that apply — you can choose more than one, or add
+          your own. All optional; skip any you&apos;re not sure about. They
+          sharpen the AI&apos;s naming, metadata, and scoring.
         </p>
         <blockquote className="mt-3 max-h-24 overflow-y-auto rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
           {draft.trim()}
@@ -231,7 +310,7 @@ export function QuickAdd() {
         <div className="mt-3 space-y-4">
           {questions.map((q, i) => {
             const a = answers[i] ?? {
-              choice: null,
+              choices: [],
               custom: "",
               showCustom: true,
             };
@@ -250,19 +329,13 @@ export function QuickAdd() {
                   aria-label={q.question}
                 >
                   {q.options.map((opt) => {
-                    const selected = !a.showCustom && a.choice === opt;
+                    const selected = a.choices.includes(opt);
                     return (
                       <button
                         key={opt}
                         type="button"
                         aria-pressed={selected}
-                        onClick={() =>
-                          patchAnswer(i, {
-                            // Click again to deselect.
-                            choice: selected ? null : opt,
-                            showCustom: false,
-                          })
-                        }
+                        onClick={() => toggleChoice(i, opt)}
                         className={`${rowBase} ${
                           selected
                             ? "border-teal-600 bg-teal-50 text-teal-900 ring-1 ring-teal-600"
@@ -272,14 +345,27 @@ export function QuickAdd() {
                         <span className="flex items-start gap-2">
                           <span
                             aria-hidden
-                            className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${
+                            className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${
                               selected
-                                ? "border-teal-600 bg-teal-600"
+                                ? "border-teal-600 bg-teal-600 text-white"
                                 : "border-zinc-300 bg-white"
                             }`}
                           >
                             {selected ? (
-                              <span className="block h-1.5 w-1.5 rounded-full bg-white" />
+                              <svg
+                                viewBox="0 0 16 16"
+                                className="h-2.5 w-2.5"
+                                fill="none"
+                                aria-hidden
+                              >
+                                <path
+                                  d="M3 8.5 6.5 12 13 4.5"
+                                  stroke="currentColor"
+                                  strokeWidth="2.5"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
                             ) : null}
                           </span>
                           <span>{opt}</span>
@@ -292,10 +378,7 @@ export function QuickAdd() {
                       type="button"
                       aria-pressed={a.showCustom}
                       onClick={() =>
-                        patchAnswer(i, {
-                          showCustom: !a.showCustom,
-                          choice: null,
-                        })
+                        patchAnswer(i, { showCustom: !a.showCustom })
                       }
                       className={`${rowBase} ${
                         a.showCustom
@@ -303,7 +386,7 @@ export function QuickAdd() {
                           : "border-dashed border-zinc-300 bg-white text-zinc-500 hover:border-teal-500 hover:text-teal-700"
                       }`}
                     >
-                      Other — write your own answer…
+                      Other — add your own answer…
                     </button>
                   ) : null}
                 </div>
@@ -322,16 +405,16 @@ export function QuickAdd() {
             );
           })}
         </div>
+        {/* Only prompt for a background here when it's still missing — once
+            filled, the "Add & analyze" button below works directly. */}
+        {hasBackground ? null : backgroundField}
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <Button
             variant={mode === "analyze" ? "primary" : "secondary"}
-            onClick={() => finishAdd("analyze")}
-            disabled={!hasBackground || submitting}
-            title={
-              hasBackground
-                ? undefined
-                : "Add your founder background in Settings first"
+            onClick={() =>
+              hasBackground ? finishAdd("analyze") : revealBackground()
             }
+            disabled={submitting}
           >
             Add &amp; analyze with AI
           </Button>
@@ -386,12 +469,7 @@ export function QuickAdd() {
         <Button
           variant="primary"
           onClick={() => void startClarify("analyze")}
-          disabled={!draft.trim() || loadingMode !== null || !hasBackground}
-          title={
-            hasBackground
-              ? undefined
-              : "Add your founder background in Settings first"
-          }
+          disabled={!draft.trim() || loadingMode !== null}
         >
           Add &amp; analyze with AI
         </Button>
@@ -443,10 +521,11 @@ export function QuickAdd() {
       <p className="mt-2 text-xs text-zinc-400">
         Add only skips the scoring: the AI just names and describes the idea.
       </p>
-      {!hasBackground ? (
-        <p className="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          Analysis needs your founder background — add it in Settings first.
-          Add only works without it.
+      {backgroundField}
+      {!hasBackground && !showBgField ? (
+        <p className="mt-2 text-xs text-zinc-400">
+          Analysis needs your founder background — press “Add &amp; analyze
+          with AI” and you can add it right here.
         </p>
       ) : null}
       {error ? (

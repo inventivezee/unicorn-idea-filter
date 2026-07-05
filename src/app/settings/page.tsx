@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Button, PageHeader, Section } from "@/components/ui";
+import { AutoSavedFlag, Button, PageHeader, Section } from "@/components/ui";
 import { CRITERIA } from "@/lib/criteria";
 import { getAnonKey } from "@/lib/anon";
 import { ANTHROPIC_MODELS, generateId, OPENAI_MODELS } from "@/lib/defaults";
@@ -543,6 +543,15 @@ export default function SettingsPage() {
         <Section
           title="Founding team"
           description="Used by the AI to judge founder–market fit, unfair advantages, and founder-personal gates. Upload a CV and the AI summarises it into a background for you. With co-founders, founder–market fit scores as the strongest founder's fit."
+          actions={
+            <AutoSavedFlag
+              value={
+                settings.founderBackground +
+                " " +
+                JSON.stringify(settings.coFounders)
+              }
+            />
+          }
         >
           <div className="space-y-4">
             <input
