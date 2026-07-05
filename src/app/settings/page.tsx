@@ -547,7 +547,7 @@ export default function SettingsPage() {
             <AutoSavedFlag
               value={
                 settings.founderBackground +
-                " " +
+                " " +
                 JSON.stringify(settings.coFounders)
               }
             />
@@ -979,15 +979,22 @@ export default function SettingsPage() {
             />
           </div>
           <p className="mt-2 text-xs text-zinc-500">
-            Perturbation trials for the dashboard&apos;s leader-robustness check
-            (weights ±20%, seeded).
+            On the Dashboard, the stress test re-ranks your ideas many times
+            with each criterion&apos;s weight randomly nudged ±20%, to check
+            whether your top idea genuinely leads or only wins because of your
+            exact weighting. This sets how many runs — more trials give a
+            steadier result but take a little longer.
           </p>
         </Section>
 
         {/* 5. Data */}
         <Section
           title="Data"
-          description="Everything lives in this browser's localStorage — export regularly."
+          description={
+            cloud
+              ? "Your ideas and settings sync to your account. Export a JSON backup any time, or import one from another browser."
+              : "Everything lives in this browser's localStorage — export regularly."
+          }
         >
           <div className="flex flex-wrap items-center gap-3">
             <Button onClick={handleExport}>Export JSON</Button>

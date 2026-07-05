@@ -8,6 +8,10 @@ import { FREE_ANALYSES_PER_MONTH } from "@/lib/entitlements";
 import { useStore } from "@/lib/store";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
+// Google OAuth is built and ready, but hidden until the Google OAuth app is
+// verified. Flip to true to re-enable the "Continue with Google" button.
+const GOOGLE_OAUTH_ENABLED = false;
+
 function authRedirectUrl(): string {
   return `${location.origin}/auth/callback?anon_key=${encodeURIComponent(getAnonKey())}`;
 }
@@ -143,19 +147,23 @@ export default function SignInPage() {
           </form>
         )}
 
-        <div className="my-4 flex items-center gap-3">
-          <div className="h-px flex-1 bg-zinc-200" />
-          <span className="text-xs text-zinc-400">or</span>
-          <div className="h-px flex-1 bg-zinc-200" />
-        </div>
+        {GOOGLE_OAUTH_ENABLED ? (
+          <>
+            <div className="my-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-zinc-200" />
+              <span className="text-xs text-zinc-400">or</span>
+              <div className="h-px flex-1 bg-zinc-200" />
+            </div>
 
-        <Button
-          variant="secondary"
-          className="w-full"
-          onClick={() => void continueWithGoogle()}
-        >
-          Continue with Google
-        </Button>
+            <Button
+              variant="secondary"
+              className="w-full"
+              onClick={() => void continueWithGoogle()}
+            >
+              Continue with Google
+            </Button>
+          </>
+        ) : null}
 
         <p className="mt-4 text-xs leading-relaxed text-zinc-500">
           Sign in to keep your ideas across devices, get{" "}
