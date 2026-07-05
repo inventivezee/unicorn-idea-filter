@@ -102,3 +102,25 @@ describe("cash cow engine", () => {
     expect(ccKillerFlags(scores)).toEqual(["cc_ebitda"]);
   });
 });
+
+describe("migration 006 cc_raw_score stays in sync with the engine", () => {
+  it("SQL weights match CC_CRITERIA", () => {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const sql = fs.readFileSync(
+      "supabase/migrations/006_public_cashcow.sql",
+      "utf8",
+    );
+    for (const c of CC_CRITERIA) {
+      const re = new RegExp(
+        `'${c.id}'\\)::numeric \\* (\\d+)`,
+      );
+      const m = sql.match(re);
+      expect(m, `weight term for ${c.id} missing in migration`).toBeTruthy();
+      expect(Number(m![1]), `weight for ${c.id}`).toBe(c.weight);
+    }
+    // Every criterion is also null-checked (full-scoring requirement).
+    for (const c of CC_CRITERIA) {
+      expect(sql).toContain(`'${c.id}') is distinct from 'number'`);
+    }
+  });
+});

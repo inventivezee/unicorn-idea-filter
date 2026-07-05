@@ -4,6 +4,8 @@ import { DEFAULT_WEIGHTS } from "../criteria";
 import { emptyGates, emptyScores, newIdea } from "../defaults";
 import { rawScore } from "../engine";
 import {
+  CC_CRITERION_IDS,
+  CC_GATE_IDS,
   CRITERION_IDS,
   GATE_IDS,
   normalizeCashCow,
@@ -57,6 +59,12 @@ export interface PublicIdeaRow {
   author_handle: string | null;
   created_at: string;
   updated_at: string;
+  /** Sanitized Cash Cow columns (migration 006) — absent pre-migration. */
+  cc_gates?: Record<string, unknown> | null;
+  cc_scores?: Record<string, unknown> | null;
+  cc_confidence?: number | null;
+  cc_summary?: string | null;
+  cc_raw_score?: number | null;
 }
 
 export interface ProfileRow {
@@ -191,11 +199,13 @@ export function computeDefaultRawScore(
   return rawScore(normalized, DEFAULT_WEIGHTS);
 }
 
-/** An idea publishes once it carries any score, any gate answer, or an AI analysis. */
+/** An idea publishes once it carries any score, any gate answer, or an AI
+ *  analysis — in EITHER instrument (cash-cow verdicts are public too). */
 export function computePublished(row: {
   gates: Record<string, unknown>;
   scores: Record<string, unknown>;
   ai: unknown;
+  cashcow?: unknown;
 }): boolean {
   const hasScore = CRITERION_IDS.some(
     (id) => typeof row.scores?.[id] === "number",
@@ -203,5 +213,12 @@ export function computePublished(row: {
   const hasGate = GATE_IDS.some(
     (id) => row.gates?.[id] === "Y" || row.gates?.[id] === "N",
   );
-  return hasScore || hasGate || Boolean(row.ai);
+  if (hasScore || hasGate || Boolean(row.ai)) return true;
+  const cc = normalizeCashCow(row.cashcow);
+  if (!cc) return false;
+  return (
+    Boolean(cc.ai) ||
+    CC_GATE_IDS.some((id) => cc.gates[id] === "Y" || cc.gates[id] === "N") ||
+    CC_CRITERION_IDS.some((id) => typeof cc.scores[id] === "number")
+  );
 }

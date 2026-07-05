@@ -12,6 +12,16 @@ import {
   Section,
   fmtScore,
 } from "@/components/ui";
+import { CC_CRITERIA } from "@/lib/cashcow/criteria";
+import {
+  ccDecision,
+  ccGateStatus,
+  ccKillerFlags,
+  ccRawScore,
+  type CcGates,
+  type CcScores,
+} from "@/lib/cashcow/engine";
+import { CcDecisionChip } from "@/components/cashcow/CcSections";
 import { CRITERIA, DEFAULT_WEIGHTS } from "@/lib/criteria";
 import type { PublicIdeaRow } from "@/lib/db/types";
 import {
@@ -23,7 +33,13 @@ import {
   type Scores,
 } from "@/lib/engine";
 import { useStore } from "@/lib/store";
-import { CRITERION_IDS, GATE_IDS, type Confidence } from "@/lib/types";
+import {
+  CC_CRITERION_IDS,
+  CC_GATE_IDS,
+  CRITERION_IDS,
+  GATE_IDS,
+  type Confidence,
+} from "@/lib/types";
 
 /** Normalize the view's loosely-typed JSON columns into engine shapes. */
 function toGates(raw: Record<string, unknown> | null | undefined): Gates {
@@ -51,6 +67,43 @@ function toConfidence(v: number | null): Confidence {
   return v === 0.5 || v === 0.75 || v === 1.0 ? v : null;
 }
 
+function toCcGates(raw: Record<string, unknown> | null | undefined): CcGates {
+  const gates = {} as CcGates;
+  for (const id of CC_GATE_IDS) {
+    const v = raw?.[id];
+    gates[id] = v === "Y" || v === "N" ? v : null;
+  }
+  return gates;
+}
+
+function toCcScores(raw: Record<string, unknown> | null | undefined): CcScores {
+  const scores = {} as CcScores;
+  for (const id of CC_CRITERION_IDS) {
+    const v = raw?.[id];
+    scores[id] =
+      typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 5
+        ? v
+        : null;
+  }
+  return scores;
+}
+
+function CcGateChip({ status }: { status: ReturnType<typeof ccGateStatus> }) {
+  const styles =
+    status === "PASS"
+      ? "border-amber-500 bg-amber-500 text-white"
+      : status === "FAIL"
+        ? "border-red-600 bg-red-600 text-white"
+        : "border-zinc-200 bg-zinc-100 text-zinc-500";
+  return (
+    <span
+      className={`inline-block whitespace-nowrap rounded border px-2 py-0.5 text-xs font-medium ${styles}`}
+    >
+      {status}
+    </span>
+  );
+}
+
 function fmtDate(iso: string): string {
   const d = new Date(iso);
   return isNaN(d.getTime())
@@ -73,7 +126,8 @@ function MetaCell({ label, value }: { label: string; value: string }) {
 
 export default function PublicIdeaPage() {
   const { id } = useParams<{ id: string }>();
-  const { hydrated, cloud } = useStore();
+  const { hydrated, cloud, state } = useStore();
+  const cashcowMode = state.settings.filterMode === "cashcow";
   const [idea, setIdea] = useState<PublicIdeaRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -171,6 +225,23 @@ export default function PublicIdeaPage() {
   });
   const flags = new Set(killerFlags(scores, DEFAULT_WEIGHTS));
 
+  const ccGates = toCcGates(idea.cc_gates);
+  const ccScores = toCcScores(idea.cc_scores);
+  const ccRaw =
+    typeof idea.cc_raw_score === "number"
+      ? idea.cc_raw_score
+      : ccRawScore(ccScores);
+  const ccDec = ccDecision({
+    gates: ccGates,
+    scores: ccScores,
+    confidence: toConfidence(idea.cc_confidence ?? null),
+  });
+  const ccFlags = new Set(ccKillerFlags(ccScores));
+  const hasCcData =
+    Boolean(idea.cc_summary) ||
+    CC_GATE_IDS.some((g) => ccGates[g] !== null) ||
+    CC_CRITERION_IDS.some((c) => typeof ccScores[c] === "number");
+
   return (
     <div>
       <div className="mb-6">
@@ -211,79 +282,179 @@ export default function PublicIdeaPage() {
             </Section>
           ) : null}
 
-          {idea.ai_summary ? (
-            <Section title="AI assessment">
-              <p className="whitespace-pre-wrap text-sm text-zinc-700">
-                {idea.ai_summary}
-              </p>
-            </Section>
-          ) : null}
+          {cashcowMode ? (
+            hasCcData ? (
+              <>
+                {idea.cc_summary ? (
+                  <Section title="AI assessment — Cash Cow Filter">
+                    <p className="whitespace-pre-wrap text-sm text-zinc-700">
+                      {idea.cc_summary}
+                    </p>
+                  </Section>
+                ) : null}
+                <Section
+                  title="Cash cow scores"
+                  description="0–5 per criterion; weights sum to 100 so each reads as a percentage."
+                >
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[420px] border-collapse text-sm">
+                      <thead>
+                        <tr className="text-xs text-zinc-500">
+                          <th className="px-2 py-1.5 text-left font-medium">
+                            Criterion
+                          </th>
+                          <th className="px-2 py-1.5 text-right font-medium">
+                            Score
+                          </th>
+                          <th className="w-10 px-2 py-1.5" aria-label="Flags" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {CC_CRITERIA.map((c) => (
+                          <tr key={c.id} className="border-t border-zinc-100">
+                            <td className="px-2 py-2 text-zinc-700">
+                              {c.label}
+                            </td>
+                            <td className="tnum px-2 py-2 text-right font-medium text-zinc-900">
+                              {ccScores[c.id] === null ? "—" : ccScores[c.id]}
+                            </td>
+                            <td className="px-2 py-2 text-center">
+                              {ccFlags.has(c.id) ? (
+                                <FlagIcon
+                                  title={`${c.label}: low score on a heavyweight cash criterion`}
+                                />
+                              ) : null}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Section>
+              </>
+            ) : (
+              <Section title="Cash Cow Filter">
+                <p className="text-sm text-zinc-600">
+                  This idea hasn&apos;t been scored with the Cash Cow Filter
+                  yet — switch to the Unicorn Idea Filter (top-left) to see its
+                  venture verdict.
+                </p>
+              </Section>
+            )
+          ) : (
+            <>
+              {idea.ai_summary ? (
+                <Section title="AI assessment">
+                  <p className="whitespace-pre-wrap text-sm text-zinc-700">
+                    {idea.ai_summary}
+                  </p>
+                </Section>
+              ) : null}
 
-          <Section
-            title="Scores"
-            description="0–5 per criterion, scored against default weights."
-          >
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[420px] border-collapse text-sm">
-                <thead>
-                  <tr className="text-xs text-zinc-500">
-                    <th className="px-2 py-1.5 text-left font-medium">
-                      Criterion
-                    </th>
-                    <th className="px-2 py-1.5 text-right font-medium">
-                      Score
-                    </th>
-                    <th className="w-10 px-2 py-1.5" aria-label="Flags" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {CRITERIA.map((c) => (
-                    <tr key={c.id} className="border-t border-zinc-100">
-                      <td className="px-2 py-2 text-zinc-700">{c.label}</td>
-                      <td className="tnum px-2 py-2 text-right font-medium text-zinc-900">
-                        {scores[c.id] === null ? "—" : scores[c.id]}
-                      </td>
-                      <td className="px-2 py-2 text-center">
-                        {flags.has(c.id) ? (
-                          <FlagIcon title={`${c.label}: ${KILLER_FLAG_COPY}`} />
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Section>
+              <Section
+                title="Scores"
+                description="0–5 per criterion, scored against default weights."
+              >
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[420px] border-collapse text-sm">
+                    <thead>
+                      <tr className="text-xs text-zinc-500">
+                        <th className="px-2 py-1.5 text-left font-medium">
+                          Criterion
+                        </th>
+                        <th className="px-2 py-1.5 text-right font-medium">
+                          Score
+                        </th>
+                        <th className="w-10 px-2 py-1.5" aria-label="Flags" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {CRITERIA.map((c) => (
+                        <tr key={c.id} className="border-t border-zinc-100">
+                          <td className="px-2 py-2 text-zinc-700">{c.label}</td>
+                          <td className="tnum px-2 py-2 text-right font-medium text-zinc-900">
+                            {scores[c.id] === null ? "—" : scores[c.id]}
+                          </td>
+                          <td className="px-2 py-2 text-center">
+                            {flags.has(c.id) ? (
+                              <FlagIcon
+                                title={`${c.label}: ${KILLER_FLAG_COPY}`}
+                              />
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Section>
+            </>
+          )}
         </div>
 
         <div>
-          <Section title="Computed">
-            <dl className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <dt className="text-xs font-medium text-zinc-500">Raw score</dt>
-                <dd className="tnum text-sm font-semibold text-zinc-900">
-                  {fmtScore(idea.raw_score)}
-                </dd>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <dt className="text-xs font-medium text-zinc-500">Gates</dt>
-                <dd>
-                  <GateStatusChip status={gateStatus(gates)} />
-                </dd>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <dt className="text-xs font-medium text-zinc-500">Decision</dt>
-                <dd>
-                  <DecisionChip decision={dec} />
-                </dd>
-              </div>
-            </dl>
-          </Section>
+          {cashcowMode ? (
+            hasCcData ? (
+              <Section title="Cash cow verdict">
+                <dl className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <dt className="text-xs font-medium text-zinc-500">
+                      Raw score
+                    </dt>
+                    <dd className="tnum text-sm font-semibold text-zinc-900">
+                      {fmtScore(ccRaw)}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <dt className="text-xs font-medium text-zinc-500">Gates</dt>
+                    <dd>
+                      <CcGateChip status={ccGateStatus(ccGates)} />
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <dt className="text-xs font-medium text-zinc-500">
+                      Decision
+                    </dt>
+                    <dd>
+                      <CcDecisionChip decision={ccDec} />
+                    </dd>
+                  </div>
+                </dl>
+              </Section>
+            ) : null
+          ) : (
+            <Section title="Computed">
+              <dl className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-xs font-medium text-zinc-500">
+                    Raw score
+                  </dt>
+                  <dd className="tnum text-sm font-semibold text-zinc-900">
+                    {fmtScore(idea.raw_score)}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-xs font-medium text-zinc-500">Gates</dt>
+                  <dd>
+                    <GateStatusChip status={gateStatus(gates)} />
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-xs font-medium text-zinc-500">Decision</dt>
+                  <dd>
+                    <DecisionChip decision={dec} />
+                  </dd>
+                </div>
+              </dl>
+            </Section>
+          )}
         </div>
       </div>
 
       <p className="mt-6 text-center text-xs text-zinc-500">
-        Scored with the Unicorn Idea Filter —{" "}
+        {cashcowMode
+          ? "Viewed through the Cash Cow Filter — "
+          : "Scored with the Unicorn Idea Filter — "}
         <Link href="/" className="font-medium text-teal-700 hover:underline">
           add your own idea
         </Link>

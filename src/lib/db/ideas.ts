@@ -128,6 +128,7 @@ export async function insertIdea(
     gates: (row.gates ?? {}) as Record<string, unknown>,
     scores: (row.scores ?? {}) as Record<string, unknown>,
     ai: row.ai ?? null,
+    cashcow: row.cashcow ?? null,
   });
   row.raw_score = computeDefaultRawScore(
     (row.scores ?? {}) as Record<string, unknown>,
@@ -195,6 +196,7 @@ export async function patchIdea(
     gates: (row.gates ?? existing.gates ?? {}) as Record<string, unknown>,
     scores: (row.scores ?? existing.scores ?? {}) as Record<string, unknown>,
     ai: row.ai !== undefined ? row.ai : existing.ai,
+    cashcow: "cashcow" in row ? row.cashcow : existing.cashcow,
   });
   row.raw_score = computeDefaultRawScore(
     (row.scores ?? existing.scores ?? {}) as Record<string, unknown>,
@@ -308,6 +310,7 @@ export async function applyAnalysisToIdea(
     gates: (row.gates ?? existing.gates ?? {}) as Record<string, unknown>,
     scores: (row.scores ?? existing.scores ?? {}) as Record<string, unknown>,
     ai: row.ai !== undefined ? row.ai : existing.ai,
+    cashcow: existing.cashcow,
   });
   row.raw_score = computeDefaultRawScore(
     (row.scores ?? existing.scores ?? {}) as Record<string, unknown>,
@@ -397,6 +400,13 @@ export async function applyCashCowToIdea(
     webSearches: analysis.webSearches,
   };
   row.cashcow = current;
+  // A cash-cow analysis publishes the idea, same as a unicorn one.
+  row.published = computePublished({
+    gates: (existing.gates ?? {}) as Record<string, unknown>,
+    scores: (existing.scores ?? {}) as Record<string, unknown>,
+    ai: existing.ai,
+    cashcow: current,
+  });
 
   // Migration-drift tolerant (like insertIdea/patchIdea): if the cashcow
   // column doesn't exist yet, strip it and still land the metadata fills.

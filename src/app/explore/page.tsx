@@ -11,10 +11,24 @@ import {
   fmtScore,
 } from "@/components/ui";
 import { DEFAULT_WEIGHTS } from "@/lib/criteria";
+import {
+  ccDecision,
+  ccGateStatus,
+  ccRawScore,
+  type CcGates,
+  type CcScores,
+} from "@/lib/cashcow/engine";
+import { CcDecisionChip } from "@/components/cashcow/CcSections";
 import type { PublicIdeaRow } from "@/lib/db/types";
 import { decision, gateStatus, type Gates, type Scores } from "@/lib/engine";
 import { useStore } from "@/lib/store";
-import { CRITERION_IDS, GATE_IDS, type Confidence } from "@/lib/types";
+import {
+  CC_CRITERION_IDS,
+  CC_GATE_IDS,
+  CRITERION_IDS,
+  GATE_IDS,
+  type Confidence,
+} from "@/lib/types";
 
 type FeedSort = "new" | "top";
 
@@ -51,6 +65,27 @@ function toConfidence(v: number | null): Confidence {
   return v === 0.5 || v === 0.75 || v === 1.0 ? v : null;
 }
 
+function toCcGates(raw: Record<string, unknown> | null | undefined): CcGates {
+  const gates = {} as CcGates;
+  for (const id of CC_GATE_IDS) {
+    const v = raw?.[id];
+    gates[id] = v === "Y" || v === "N" ? v : null;
+  }
+  return gates;
+}
+
+function toCcScores(raw: Record<string, unknown> | null | undefined): CcScores {
+  const scores = {} as CcScores;
+  for (const id of CC_CRITERION_IDS) {
+    const v = raw?.[id];
+    scores[id] =
+      typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 5
+        ? v
+        : null;
+  }
+  return scores;
+}
+
 function fmtDate(iso: string): string {
   const d = new Date(iso);
   return isNaN(d.getTime())
@@ -60,6 +95,26 @@ function fmtDate(iso: string): string {
         month: "short",
         day: "numeric",
       });
+}
+
+function CcGateChipInline({
+  status,
+}: {
+  status: ReturnType<typeof ccGateStatus>;
+}) {
+  const styles =
+    status === "PASS"
+      ? "border-amber-500 bg-amber-500 text-white"
+      : status === "FAIL"
+        ? "border-red-600 bg-red-600 text-white"
+        : "border-zinc-200 bg-zinc-100 text-zinc-500";
+  return (
+    <span
+      className={`inline-block whitespace-nowrap rounded border px-2 py-0.5 text-xs font-medium ${styles}`}
+    >
+      {status}
+    </span>
+  );
 }
 
 function SkeletonRows() {
@@ -79,7 +134,8 @@ function SkeletonRows() {
 }
 
 export default function ExplorePage() {
-  const { hydrated, cloud } = useStore();
+  const { hydrated, cloud, state } = useStore();
+  const cashcowMode = state.settings.filterMode === "cashcow";
   const [sort, setSort] = useState<FeedSort>("new");
   const [page, setPage] = useState(0);
   const [ideas, setIdeas] = useState<PublicIdeaRow[]>([]);
@@ -95,9 +151,10 @@ export default function ExplorePage() {
     setError(null);
     (async () => {
       try {
-        const res = await fetch(`/api/feed?page=${page}&sort=${sort}`, {
-          signal: controller.signal,
-        });
+        const res = await fetch(
+          `/api/feed?page=${page}&sort=${sort}&filter=${cashcowMode ? "cashcow" : "unicorn"}`,
+          { signal: controller.signal },
+        );
         if (!res.ok) {
           let message = `Couldn't load the feed (${res.status}).`;
           try {
@@ -127,14 +184,19 @@ export default function ExplorePage() {
       }
     })();
     return () => controller.abort();
-  }, [cloud, sort, page, reloadKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cloud, sort, page, reloadKey, cashcowMode]);
 
   if (!hydrated) return null;
 
   const header = (
     <PageHeader
       title="Explore"
-      description="Every scored idea in the public database — what founders are testing right now."
+      description={
+        cashcowMode
+          ? "The public database through the Cash Cow lens — verdicts against the $20M EBITDA bar."
+          : "Every scored idea in the public database — what founders are testing right now."
+      }
     />
   );
 
@@ -148,6 +210,14 @@ export default function ExplorePage() {
       </div>
     );
   }
+
+  // Mode changed → restart from page 0 so ranking matches the instrument.
+  useEffect(() => {
+    setPage(0);
+    setIdeas([]);
+    setTotal(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cashcowMode]);
 
   function changeSort(next: FeedSort) {
     if (next === sort) return;
@@ -245,6 +315,17 @@ export default function ExplorePage() {
                       confidence: toConfidence(row.confidence),
                       weights: DEFAULT_WEIGHTS,
                     });
+                    const ccGates = toCcGates(row.cc_gates);
+                    const ccScores = toCcScores(row.cc_scores);
+                    const ccRaw =
+                      typeof row.cc_raw_score === "number"
+                        ? row.cc_raw_score
+                        : ccRawScore(ccScores);
+                    const ccDec = ccDecision({
+                      gates: ccGates,
+                      scores: ccScores,
+                      confidence: toConfidence(row.cc_confidence ?? null),
+                    });
                     return (
                       <tr
                         key={row.id}
@@ -265,13 +346,21 @@ export default function ExplorePage() {
                           {row.business_model || "—"}
                         </td>
                         <td className="tnum px-3 py-2.5 text-right font-medium text-zinc-900">
-                          {fmtScore(row.raw_score)}
+                          {fmtScore(cashcowMode ? ccRaw : row.raw_score)}
                         </td>
                         <td className="px-3 py-2.5">
-                          <GateStatusChip status={gateStatus(gates)} />
+                          {cashcowMode ? (
+                            <CcGateChipInline status={ccGateStatus(ccGates)} />
+                          ) : (
+                            <GateStatusChip status={gateStatus(gates)} />
+                          )}
                         </td>
                         <td className="px-3 py-2.5">
-                          <DecisionChip decision={dec} />
+                          {cashcowMode ? (
+                            <CcDecisionChip decision={ccDec} />
+                          ) : (
+                            <DecisionChip decision={dec} />
+                          )}
                         </td>
                         <td className="max-w-[160px] truncate px-3 py-2.5 text-zinc-600">
                           {row.author_handle ?? "Anonymous founder"}
