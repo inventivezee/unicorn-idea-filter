@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import {
   Button,
   DecisionChip,
@@ -150,6 +150,81 @@ function MetaCell({ label, value }: { label: string; value: string }) {
     <div>
       <div className="text-xs font-medium text-zinc-500">{label}</div>
       <div className="mt-0.5 text-sm text-zinc-900">{value || "—"}</div>
+    </div>
+  );
+}
+
+/**
+ * "Run this instrument's analysis" call-to-action, shown when a public idea
+ * hasn't been scored in the active filter. Owners open their own idea and
+ * analyze in place; anyone else forks a copy into their pipeline and analyzes
+ * that — a stranger's published idea is never mutated. `label` names the
+ * filter ("Cash Cow" / "Unicorn"); accent picks the button color.
+ */
+function RunAnalysisCTA({
+  idea,
+  ownsIdea,
+  label,
+  accent,
+}: {
+  idea: PublicIdeaRow;
+  ownsIdea: boolean;
+  label: string;
+  accent: "teal" | "amber";
+}) {
+  const router = useRouter();
+  const { addIdea } = useStore();
+  const forkingRef = useRef(false);
+  const btn =
+    accent === "amber"
+      ? "bg-amber-500 hover:bg-amber-600"
+      : "bg-teal-600 hover:bg-teal-700";
+
+  if (ownsIdea) {
+    return (
+      <div className="mt-3">
+        <Link
+          href={`/idea/${idea.id}?analyze=1`}
+          className={`inline-block rounded px-3 py-1.5 text-sm font-medium text-white transition-colors ${btn}`}
+        >
+          Run the {label} analysis
+        </Link>
+        <span className="ml-2 text-xs text-zinc-400">
+          It&apos;s your idea — this opens it with the analysis running.
+        </span>
+      </div>
+    );
+  }
+
+  function fork() {
+    if (forkingRef.current) return;
+    forkingRef.current = true;
+    // A copy in the viewer's own pipeline — scored with THEIR background,
+    // leaving the original owner's published idea untouched.
+    const created = addIdea({
+      name: idea.name,
+      domain: idea.domain,
+      businessModel: idea.business_model,
+      buyerICP: idea.buyer_icp,
+      initialWedge: idea.initial_wedge,
+      thesisNotes: idea.thesis_notes,
+    });
+    router.push(`/idea/${created.id}?analyze=1`);
+  }
+
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        onClick={fork}
+        className={`inline-block rounded px-3 py-1.5 text-sm font-medium text-white transition-colors ${btn}`}
+      >
+        Analyze this idea in my pipeline
+      </button>
+      <span className="ml-2 text-xs text-zinc-400">
+        Adds a copy to your pipeline and runs the {label} analysis against your
+        own background.
+      </span>
     </div>
   );
 }
@@ -382,20 +457,12 @@ export default function PublicIdeaPage() {
                     ? " — switch to the Unicorn Idea Filter (top-left) to see its venture verdict."
                     : "."}
                 </p>
-                {ownsIdea ? (
-                  <div className="mt-3">
-                    <Link
-                      href={`/idea/${idea.id}?analyze=1`}
-                      className="inline-block rounded bg-amber-500 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-amber-600"
-                    >
-                      Run the Cash Cow analysis
-                    </Link>
-                    <span className="ml-2 text-xs text-zinc-400">
-                      It&apos;s your idea — this opens it with the analysis
-                      running.
-                    </span>
-                  </div>
-                ) : null}
+                <RunAnalysisCTA
+                  idea={idea}
+                  ownsIdea={ownsIdea}
+                  label="Cash Cow"
+                  accent="amber"
+                />
               </Section>
             )
           ) : (
@@ -408,20 +475,12 @@ export default function PublicIdeaPage() {
                     ? " — switch to the Cash Cow Filter (top-left) to see its EBITDA verdict."
                     : "."}
                 </p>
-                {ownsIdea ? (
-                  <div className="mt-3">
-                    <Link
-                      href={`/idea/${idea.id}?analyze=1`}
-                      className="inline-block rounded bg-teal-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-teal-700"
-                    >
-                      Run the Unicorn analysis
-                    </Link>
-                    <span className="ml-2 text-xs text-zinc-400">
-                      It&apos;s your idea — this opens it with the analysis
-                      running.
-                    </span>
-                  </div>
-                ) : null}
+                <RunAnalysisCTA
+                  idea={idea}
+                  ownsIdea={ownsIdea}
+                  label="Unicorn"
+                  accent="teal"
+                />
               </Section>
             ) : (
             <>
