@@ -15,6 +15,7 @@ import {
 } from "@/lib/engine";
 import { pipelineCSV } from "@/lib/persistence";
 import { useStore } from "@/lib/store";
+import { CcPipelineTable } from "@/components/cashcow/CcPipeline";
 import { QuickAdd } from "@/components/pipeline/QuickAdd";
 import { GATE_IDS } from "@/lib/types";
 import type { CriterionId, Decision, Idea } from "@/lib/types";
@@ -133,7 +134,7 @@ function HeaderCell({
 }
 
 /** Small inline "Analyzing…" badge shown while an idea has an AI request in flight. */
-function AnalyzingBadge({ mode }: { mode: "full" | "metadata" }) {
+function AnalyzingBadge({ kind }: { kind: string }) {
   return (
     <span
       className="inline-flex shrink-0 items-center gap-1 rounded-full border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[10px] font-medium text-teal-700"
@@ -143,7 +144,7 @@ function AnalyzingBadge({ mode }: { mode: "full" | "metadata" }) {
         aria-hidden
         className="inline-block h-2.5 w-2.5 animate-spin rounded-full border border-teal-300 border-t-teal-600"
       />
-      {mode === "metadata" ? "Filling…" : "Analyzing…"}
+      {kind.endsWith("metadata") ? "Filling…" : "Analyzing…"}
     </span>
   );
 }
@@ -201,6 +202,7 @@ export default function PipelinePage() {
 
   if (!hydrated) return null;
 
+  const cashcowMode = state.settings.filterMode === "cashcow";
   const fullyScored = state.ideas.filter((i) => isFullyScored(i.scores)).length;
   const analyzingCount = state.ideas.filter((i) => analyzing[i.id]).length;
 
@@ -228,17 +230,21 @@ export default function PipelinePage() {
 
   const header = (
     <PageHeader
-      title="Pipeline"
+      title={cashcowMode ? "Cash cow pipeline" : "Pipeline"}
       description={
         state.ideas.length === 0
           ? "No ideas yet."
-          : `${state.ideas.length} idea${state.ideas.length === 1 ? "" : "s"} · ${fullyScored} fully scored${
-              analyzingCount > 0 ? ` · ${analyzingCount} analyzing` : ""
-            }`
+          : cashcowMode
+            ? `${state.ideas.length} idea${state.ideas.length === 1 ? "" : "s"} · scored against the $20M EBITDA bar${
+                analyzingCount > 0 ? ` · ${analyzingCount} analyzing` : ""
+              }`
+            : `${state.ideas.length} idea${state.ideas.length === 1 ? "" : "s"} · ${fullyScored} fully scored${
+                analyzingCount > 0 ? ` · ${analyzingCount} analyzing` : ""
+              }`
       }
       actions={
         <>
-          {state.ideas.length > 0 ? (
+          {state.ideas.length > 0 && !cashcowMode ? (
             <Button variant="secondary" onClick={handleExportCSV}>
               Export CSV
             </Button>
@@ -256,6 +262,16 @@ export default function PipelinePage() {
         <EmptyState>
           No ideas in the pipeline — describe one above to start filtering.
         </EmptyState>
+      </div>
+    );
+  }
+
+  if (cashcowMode) {
+    return (
+      <div>
+        {header}
+        <QuickAdd />
+        <CcPipelineTable />
       </div>
     );
   }
@@ -306,7 +322,7 @@ export default function PipelinePage() {
                         </span>
                       ) : null}
                       {analyzing[row.idea.id] ? (
-                        <AnalyzingBadge mode={analyzing[row.idea.id]} />
+                        <AnalyzingBadge kind={analyzing[row.idea.id]} />
                       ) : null}
                     </span>
                   </td>

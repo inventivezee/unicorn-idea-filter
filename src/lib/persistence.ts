@@ -1,7 +1,7 @@
 import { DEFAULT_WEIGHTS, CRITERIA_BY_ID } from "./criteria";
 import { defaultSettings, emptyGates, emptyScores, generateId, newIdea } from "./defaults";
 import { adjustedScore, decision, gateStatus, killerFlags, rawScore } from "./engine";
-import { CRITERION_IDS, GATE_IDS, normalizeClarifications } from "./types";
+import { CRITERION_IDS, GATE_IDS, normalizeCashCow, normalizeClarifications } from "./types";
 import type {
   AIAnalysis,
   AppState,
@@ -100,6 +100,7 @@ export function normalizeState(data: unknown): AppState {
       }),
     webSearch: s.webSearch !== false,
     askClarifying: s.askClarifying !== false,
+    filterMode: s.filterMode === "cashcow" ? "cashcow" : "unicorn",
   };
   for (const id of CRITERION_IDS) {
     const w = s.weights?.[id];
@@ -137,6 +138,8 @@ export function normalizeState(data: unknown): AppState {
     if (i.isExample === true) idea.isExample = true;
     const clarifications = normalizeClarifications(i.clarifications);
     if (clarifications.length) idea.clarifications = clarifications;
+    const cashcow = normalizeCashCow(i.cashcow);
+    if (cashcow) idea.cashcow = cashcow;
     if (typeof i.topRiskOverride1 === "string") {
       idea.topRiskOverride1 = i.topRiskOverride1;
     }

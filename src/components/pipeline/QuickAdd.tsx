@@ -111,6 +111,7 @@ export function QuickAdd() {
           provider: settings.provider,
           model: settings.models[settings.provider],
           anonKey: getAnonKey(),
+          filter: settings.filterMode,
         }),
       });
       if (!res.ok) {

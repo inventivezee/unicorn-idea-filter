@@ -3,7 +3,7 @@
 import { DEFAULT_WEIGHTS } from "../criteria";
 import { emptyGates, emptyScores, newIdea } from "../defaults";
 import { rawScore } from "../engine";
-import { CRITERION_IDS, GATE_IDS, normalizeClarifications } from "../types";
+import { CRITERION_IDS, GATE_IDS, normalizeCashCow, normalizeClarifications } from "../types";
 import type { AIAnalysis, CoFounder, Idea } from "../types";
 
 export interface IdeaRow {
@@ -17,6 +17,7 @@ export interface IdeaRow {
   initial_wedge: string;
   thesis_notes: string;
   clarifications?: unknown;
+  cashcow?: unknown;
   gates: Record<string, unknown>;
   scores: Record<string, unknown>;
   confidence: number | null;
@@ -95,6 +96,8 @@ export function rowToIdea(row: IdeaRow): Idea & {
   });
   const clarifications = normalizeClarifications(row.clarifications);
   if (clarifications.length) idea.clarifications = clarifications;
+  const cashcow = normalizeCashCow(row.cashcow);
+  if (cashcow) idea.cashcow = cashcow;
   if (typeof row.top_risk_override_1 === "string") {
     idea.topRiskOverride1 = row.top_risk_override_1;
   }
@@ -132,6 +135,13 @@ export function ideaToWritableRow(idea: Partial<Idea>): Record<string, unknown> 
   if (idea.thesisNotes !== undefined) row.thesis_notes = idea.thesisNotes;
   if (idea.clarifications !== undefined) {
     row.clarifications = normalizeClarifications(idea.clarifications);
+  }
+  if (idea.cashcow !== undefined) {
+    // A present-but-empty block writes as null so CLEARING answers persists
+    // (otherwise the old values resurrect from the DB on reload). patchIdea
+    // reattaches a server-persisted cashcow.ai to empty/ai-less incoming
+    // blocks, so a paid-for analysis is still never erased by this.
+    row.cashcow = normalizeCashCow(idea.cashcow) ?? null;
   }
   if (idea.gates !== undefined) row.gates = idea.gates;
   if (idea.scores !== undefined) row.scores = idea.scores;

@@ -1,4 +1,4 @@
-import { buildClarifyPrompt, CLARIFY_SYSTEM_PROMPT } from "@/lib/ai/prompt";
+import { buildClarifyPrompt, buildClarifySystemPrompt } from "@/lib/ai/prompt";
 import { CLARIFY_SCHEMA } from "@/lib/ai/schema";
 import {
   callProviderJSON,
@@ -37,6 +37,8 @@ export async function POST(request: Request) {
 
   const provider = providerFromBody(body.provider);
   const model = modelFromBody(body.model);
+  // Frame the questions for the active scoring instrument.
+  const filter = body.filter === "cashcow" ? ("cashcow" as const) : ("unicorn" as const);
   const description = field(body.description).trim();
   const founderBackground = field(body.founderBackground, MAX_BACKGROUND_CHARS);
   const coFounders = coFoundersFromBody(body.coFounders);
@@ -86,7 +88,7 @@ export async function POST(request: Request) {
     const result = await callProviderJSON({
       provider,
       model,
-      system: CLARIFY_SYSTEM_PROMPT,
+      system: buildClarifySystemPrompt(filter),
       prompt: buildClarifyPrompt(description, founderBackground, coFounders),
       schemaName: "clarifying_questions",
       schema: CLARIFY_SCHEMA as unknown as Record<string, unknown>,

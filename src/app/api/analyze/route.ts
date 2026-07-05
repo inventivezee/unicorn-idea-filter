@@ -1,11 +1,17 @@
+import { CC_FOUNDER_PERSONAL_GATES } from "@/lib/cashcow/criteria";
 import { GATES } from "@/lib/criteria";
 import {
+  buildCashCowSystemPrompt,
   buildSystemPrompt,
   buildUserPrompt,
   METADATA_SYSTEM_PROMPT,
 } from "@/lib/ai/prompt";
 import type { AnalyzeRequestIdea } from "@/lib/ai/prompt";
-import { ANALYSIS_SCHEMA, METADATA_SCHEMA } from "@/lib/ai/schema";
+import {
+  ANALYSIS_SCHEMA,
+  CC_ANALYSIS_SCHEMA,
+  METADATA_SCHEMA,
+} from "@/lib/ai/schema";
 import {
   callProviderJSON,
   coFoundersFromBody,
@@ -19,7 +25,7 @@ import {
   readJsonBody,
   MAX_BACKGROUND_CHARS,
 } from "@/lib/ai/server";
-import { applyAnalysisToIdea } from "@/lib/db/ideas";
+import { applyAnalysisToIdea, applyCashCowToIdea } from "@/lib/db/ideas";
 import {
   ANON_ANALYSES_PER_DAY,
   FREE_ANALYSES_PER_MONTH,
@@ -33,10 +39,17 @@ import {
   requestTelemetry,
   resolveCaller,
 } from "@/lib/supabase/server";
-import { CRITERION_IDS, GATE_IDS } from "@/lib/types";
+import {
+  CC_CRITERION_IDS,
+  CC_GATE_IDS,
+  CRITERION_IDS,
+  GATE_IDS,
+} from "@/lib/types";
 import type {
   AnalyzeMetadataResponse,
   AnalyzeResponse,
+  CcAnalyzeResponse,
+  CcGateId,
   GateId,
   IdeaMetadataProposal,
   Provider,
@@ -138,6 +151,60 @@ function normalize(
   };
 }
 
+/** Normalize a raw cash-cow analysis (same RawAnalysis wire shape, cc ids). */
+function normalizeCc(
+  raw: RawAnalysis,
+  webSearches: number,
+  provider: Provider,
+  model: string,
+): CcAnalyzeResponse {
+  const gates = {} as CcAnalyzeResponse["gates"];
+  for (const id of CC_GATE_IDS) {
+    const g = raw.gates?.[id];
+    const value = g?.value === "Y" || g?.value === "N" ? g.value : "UNSURE";
+    gates[id] = { value, rationale: g?.rationale ?? "" };
+  }
+  const scores = {} as CcAnalyzeResponse["scores"];
+  for (const id of CC_CRITERION_IDS) {
+    const s = raw.scores?.[id];
+    scores[id] = {
+      score:
+        typeof s?.score === "number"
+          ? Math.min(5, Math.max(0, Math.round(s.score)))
+          : 0,
+      rationale: s?.rationale ?? "",
+    };
+  }
+  const confidence =
+    raw.confidence === "1.0" ? 1.0 : raw.confidence === "0.75" ? 0.75 : 0.5;
+  const needsConfirmation = new Set<CcGateId>(CC_FOUNDER_PERSONAL_GATES);
+  for (const id of raw.needsFounderConfirmation ?? []) {
+    if ((CC_GATE_IDS as readonly string[]).includes(id)) {
+      needsConfirmation.add(id as CcGateId);
+    }
+  }
+  for (const id of CC_GATE_IDS) {
+    if (gates[id].value === "UNSURE") needsConfirmation.add(id);
+  }
+  return {
+    summary: raw.summary ?? "",
+    metadata: normalizeMetadataBlock(raw.metadata),
+    founderProfile:
+      typeof raw.founderProfile === "string"
+        ? raw.founderProfile.trim().slice(0, 600)
+        : "",
+    gates,
+    scores,
+    confidence,
+    confidenceRationale: raw.confidenceRationale ?? "",
+    validationTest30d: raw.validationTest30d ?? "",
+    needsFounderConfirmation: [...needsConfirmation],
+    provider,
+    model,
+    webSearches,
+  };
+}
+
 function isIdeaEmpty(idea: AnalyzeRequestIdea): boolean {
   return ![
     idea.name,
@@ -159,6 +226,8 @@ export async function POST(request: Request) {
   }
 
   const mode = body.mode === "metadata" ? "metadata" : "full";
+  // Which scoring instrument: unicorn (venture-scale) or cashcow ($20M EBITDA).
+  const filter = body.filter === "cashcow" ? "cashcow" : "unicorn";
   const webSearch = mode === "full" && body.webSearch !== false;
   const provider = providerFromBody(body.provider);
   const model = modelFromBody(body.model);
@@ -309,7 +378,12 @@ export async function POST(request: Request) {
         idea_id: persistTo,
         user_id: caller.user?.id ?? null,
         anon_key: caller.user ? null : anonKey,
-        action: mode === "metadata" ? "fill" : "analyze",
+        action:
+          mode === "metadata"
+            ? "fill"
+            : filter === "cashcow"
+              ? "analyze_cashcow"
+              : "analyze",
         ...telemetry,
         founder_background_snapshot: founderBackground || null,
         provider,
@@ -360,6 +434,29 @@ export async function POST(request: Request) {
 
     // Subscribers/admins (premium) search uncapped; free tier is budgeted.
     const searchBudget = tier === "premium" ? null : STANDARD_WEB_SEARCH_CAP;
+
+    if (filter === "cashcow") {
+      const result = await callProviderJSON({
+        provider,
+        model,
+        system: buildCashCowSystemPrompt(searchBudget),
+        prompt: userPrompt,
+        schemaName: "cashcow_analysis",
+        schema: CC_ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
+        webSearch,
+        speed: "quality",
+        tier,
+      });
+      const raw = parseLastJSON<RawAnalysis>(result.texts);
+      const response = normalizeCc(raw, result.webSearches, provider, model);
+      if (persistTo) {
+        await applyCashCowToIdea(adminClient(), persistTo, response);
+      }
+      await logAnalysis?.(response.webSearches);
+      refundQuota = null; // result delivered — the analysis is spent fairly
+      return Response.json(response);
+    }
+
     const result = await callProviderJSON({
       provider,
       model,

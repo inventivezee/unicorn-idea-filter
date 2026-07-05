@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 
@@ -12,6 +12,139 @@ const LINKS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/settings", label: "Settings" },
 ];
+
+/** Compare/Dashboard read the unicorn instrument — hidden in cash-cow mode. */
+const CASHCOW_LINKS = LINKS.filter(
+  (l) => l.href !== "/compare" && l.href !== "/dashboard",
+);
+
+const FILTER_META = {
+  unicorn: {
+    label: "Unicorn Idea Filter",
+    question: "Venture-scale, category-defining, possibly public?",
+    dot: "bg-teal-600",
+  },
+  cashcow: {
+    label: "Cash Cow Filter",
+    question: "$20M+ EBITDA/year with durable enterprise value?",
+    dot: "bg-amber-500",
+  },
+} as const;
+
+/** Top-left brand — a dropdown that switches between the two instruments. */
+function FilterSwitcher() {
+  const { state, updateSettings, settingsHydrated } = useStore();
+  const router = useRouter();
+  const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const mode = state.settings.filterMode;
+  const meta = FILTER_META[mode];
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocMouseDown(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [open]);
+
+  // Before settings are readable render the static brand so SSR markup matches.
+  if (!settingsHydrated) {
+    return (
+      <span className="shrink-0 py-3 text-sm font-semibold tracking-tight text-zinc-900">
+        Unicorn Idea Filter
+      </span>
+    );
+  }
+
+  return (
+    <div ref={menuRef} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="flex items-center gap-1.5 py-3 text-sm font-semibold tracking-tight text-zinc-900"
+      >
+        <span aria-hidden className={`h-2 w-2 rounded-full ${meta.dot}`} />
+        {meta.label}
+        <svg
+          viewBox="0 0 16 16"
+          className={`h-3 w-3 text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`}
+          fill="none"
+          aria-hidden
+        >
+          <path
+            d="M4 6.5 8 10.5 12 6.5"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+      {open ? (
+        <div className="absolute left-0 top-full z-30 w-72 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg">
+          {(Object.keys(FILTER_META) as (keyof typeof FILTER_META)[]).map(
+            (key) => {
+              const m = FILTER_META[key];
+              const active = key === mode;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    if (active) return;
+                    updateSettings({ filterMode: key });
+                    // Compare/Dashboard are unicorn-only — don't strand the
+                    // user on a page whose nav link just disappeared.
+                    if (
+                      key === "cashcow" &&
+                      (pathname.startsWith("/compare") ||
+                        pathname.startsWith("/dashboard"))
+                    ) {
+                      router.push("/");
+                    }
+                  }}
+                  className={`block w-full px-3 py-2 text-left transition-colors ${
+                    active ? "bg-zinc-50" : "hover:bg-zinc-50"
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span
+                      aria-hidden
+                      className={`h-2 w-2 shrink-0 rounded-full ${m.dot}`}
+                    />
+                    <span className="text-sm font-medium text-zinc-900">
+                      {m.label}
+                    </span>
+                    {active ? (
+                      <span className="ml-auto text-[10px] font-medium text-zinc-400">
+                        current
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="mt-0.5 block pl-4 text-xs text-zinc-500">
+                    {m.question}
+                  </span>
+                </button>
+              );
+            },
+          )}
+          <p className="border-t border-zinc-100 px-3 pb-1 pt-1.5 text-[10px] text-zinc-400">
+            Same ideas, different instrument — each filter keeps its own gates,
+            scores, and AI analysis.
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const EXIT_HREF = "/exit-reference";
 const EXIT_LABEL = "Exit calculations & References";
@@ -194,7 +327,19 @@ function MenuIcon({ open }: { open: boolean }) {
 
 export function Nav() {
   const pathname = usePathname();
-  const { syncError, pendingLocalImport, importLocalIdeas } = useStore();
+  const {
+    state,
+    settingsHydrated,
+    syncError,
+    pendingLocalImport,
+    importLocalIdeas,
+  } = useStore();
+  const cashcowMode =
+    settingsHydrated && state.settings.filterMode === "cashcow";
+  const navLinks = cashcowMode ? CASHCOW_LINKS : LINKS;
+  const accent = cashcowMode
+    ? { border: "border-amber-500", text: "text-amber-700", bg: "bg-amber-50" }
+    : { border: "border-teal-600", text: "text-teal-700", bg: "bg-teal-50" };
   const [mobileOpen, setMobileOpen] = useState(false);
 
   // Close the drawer whenever the route changes.
@@ -215,23 +360,18 @@ export function Nav() {
   return (
     <header className="sticky top-0 z-20 border-b border-zinc-200 bg-white/90 backdrop-blur">
       <div className="mx-auto flex w-full max-w-6xl items-center gap-4 px-4 sm:px-6">
-        <Link
-          href="/"
-          className="shrink-0 py-3 text-sm font-semibold tracking-tight text-zinc-900"
-        >
-          Unicorn Idea Filter
-        </Link>
+        <FilterSwitcher />
 
         {/* Desktop nav — only once there's room for every item (see the long
             exit link); tablets and phones use the drawer. */}
         <nav className="-mb-px hidden flex-1 items-center gap-1 overflow-x-auto lg:flex">
-          {LINKS.map((link) => (
+          {navLinks.map((link) => (
             <Link
               key={link.href}
               href={link.href}
               className={`whitespace-nowrap border-b-2 px-3 py-3 text-sm transition-colors ${
                 isActive(link.href)
-                  ? "border-teal-600 font-medium text-teal-700"
+                  ? `${accent.border} font-medium ${accent.text}`
                   : "border-transparent text-zinc-500 hover:text-zinc-900"
               }`}
             >
@@ -276,14 +416,14 @@ export function Nav() {
       {mobileOpen ? (
         <nav className="border-t border-zinc-200 bg-white lg:hidden">
           <div className="mx-auto w-full max-w-6xl space-y-0.5 px-2 py-2">
-            {LINKS.map((link) => (
+            {navLinks.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
                 onClick={() => setMobileOpen(false)}
                 className={`block rounded-md px-3 py-2.5 text-sm transition-colors ${
                   isActive(link.href)
-                    ? "bg-teal-50 font-medium text-teal-700"
+                    ? `${accent.bg} font-medium ${accent.text}`
                     : "text-zinc-700 hover:bg-zinc-50"
                 }`}
               >

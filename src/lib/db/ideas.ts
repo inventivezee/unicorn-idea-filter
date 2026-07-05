@@ -4,7 +4,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeDefaultRawScore, computePublished, ideaToWritableRow, rowToIdea } from "./types";
 import type { IdeaRow } from "./types";
-import type { Idea } from "../types";
+import { CC_CRITERION_IDS, CC_GATE_IDS, normalizeCashCow } from "../types";
+import type { CashCowBlock, CcAnalyzeResponse, Idea } from "../types";
 
 export class IdeaAccessError extends Error {
   status: number;
@@ -162,6 +163,24 @@ export async function patchIdea(
   const existing = await fetchOwnedIdea(admin, actor, id);
 
   const row = ideaToWritableRow(patch);
+  // cashcow.ai never regresses: an incoming block without ai — including a
+  // fully-cleared (null) block — must not erase a server-persisted analysis
+  // (same guarantee as the unicorn ai). Gates/scores/confidence/validation
+  // are last-writer-wins, matching the unicorn fields.
+  if ("cashcow" in row) {
+    const incoming = row.cashcow as CashCowBlock | null;
+    if (!incoming?.ai) {
+      const existingCc = normalizeCashCow(existing.cashcow);
+      if (existingCc?.ai) {
+        if (incoming) {
+          incoming.ai = existingCc.ai;
+        } else {
+          // User cleared every answer but the analysis stays.
+          row.cashcow = { ...emptyCashCowBlock(), ai: existingCc.ai };
+        }
+      }
+    }
+  }
   if (isPrivate !== undefined) {
     if (isPrivate && !existing.is_private && !actor.subscribed && !actor.isAdmin) {
       throw new IdeaAccessError(
@@ -295,4 +314,107 @@ export async function applyAnalysisToIdea(
   );
 
   await admin.from("ideas").update(row).eq("id", ideaId);
+}
+
+/**
+ * Persist a Cash Cow analysis onto an idea row server-side (same guarantee as
+ * applyAnalysisToIdea: a closed tab can't lose a paid-for analysis). Fill-blanks
+ * merge within the cashcow block — synced manual edits win; the AI only fills
+ * what's empty. Shared metadata fields fill blanks exactly like the unicorn
+ * path. Does not touch unicorn gates/scores or the published flag (the public
+ * feed is driven by the unicorn instrument).
+ */
+export async function applyCashCowToIdea(
+  admin: SupabaseClient,
+  ideaId: string,
+  analysis: CcAnalyzeResponse,
+): Promise<void> {
+  const { data: existing } = await admin
+    .from("ideas")
+    .select("*")
+    .eq("id", ideaId)
+    .maybeSingle<IdeaRow>();
+  if (!existing) return;
+
+  const row: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+  };
+
+  const metaMap: Record<string, string> = {
+    name: "name",
+    domain: "domain",
+    businessModel: "business_model",
+    buyerICP: "buyer_icp",
+    initialWedge: "initial_wedge",
+  };
+  const metadata = analysis.metadata as unknown as Record<string, string>;
+  for (const [appField, column] of Object.entries(metaMap)) {
+    const proposal = metadata?.[appField]?.trim();
+    const current = (existing as unknown as Record<string, unknown>)[column];
+    if (proposal && (typeof current !== "string" || !current.trim())) {
+      row[column] = proposal;
+    }
+  }
+  if (
+    analysis.founderProfile?.trim() &&
+    !(existing.founder_profile ?? "").trim()
+  ) {
+    row.founder_profile = analysis.founderProfile.trim();
+  }
+
+  // Merge into the existing cashcow block, filling only what's blank.
+  const current: CashCowBlock =
+    normalizeCashCow(existing.cashcow) ?? emptyCashCowBlock();
+  for (const gid of CC_GATE_IDS) {
+    if (current.gates[gid] === null) {
+      const v = analysis.gates[gid]?.value;
+      current.gates[gid] = v === "Y" || v === "N" ? v : null;
+    }
+  }
+  for (const cid of CC_CRITERION_IDS) {
+    if (typeof current.scores[cid] !== "number") {
+      const s = analysis.scores[cid]?.score;
+      current.scores[cid] = typeof s === "number" ? s : null;
+    }
+  }
+  if (current.confidence === null) current.confidence = analysis.confidence;
+  if (!current.validationTest30d.trim()) {
+    current.validationTest30d = analysis.validationTest30d;
+  }
+  current.ai = {
+    summary: analysis.summary,
+    gateRationales: Object.fromEntries(
+      Object.entries(analysis.gates).map(([k, v]) => [k, v.rationale]),
+    ),
+    scoreRationales: Object.fromEntries(
+      Object.entries(analysis.scores).map(([k, v]) => [k, v.rationale]),
+    ),
+    confidenceRationale: analysis.confidenceRationale,
+    needsFounderConfirmation: analysis.needsFounderConfirmation,
+    provider: analysis.provider,
+    model: analysis.model,
+    analyzedAt: new Date().toISOString(),
+    webSearches: analysis.webSearches,
+  };
+  row.cashcow = current;
+
+  // Migration-drift tolerant (like insertIdea/patchIdea): if the cashcow
+  // column doesn't exist yet, strip it and still land the metadata fills.
+  const { error } = await writeToleratingMissingColumns<IdeaRow>(row, (r) =>
+    admin.from("ideas").update(r).eq("id", ideaId).select("*").single<IdeaRow>(),
+  );
+  if (error) console.error("cashcow analysis persist failed", error.message);
+}
+
+function emptyCashCowBlock(): CashCowBlock {
+  return {
+    gates: Object.fromEntries(
+      CC_GATE_IDS.map((id) => [id, null]),
+    ) as CashCowBlock["gates"],
+    scores: Object.fromEntries(
+      CC_CRITERION_IDS.map((id) => [id, null]),
+    ) as CashCowBlock["scores"],
+    confidence: null,
+    validationTest30d: "",
+  };
 }

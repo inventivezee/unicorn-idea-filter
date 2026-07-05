@@ -87,6 +87,76 @@ export function normalizeClarifications(value: unknown): Clarification[] {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Cash Cow Filter — a second scoring instrument on the same idea. It asks
+// "can this produce $20M+ EBITDA/year with durable enterprise value?" where
+// the unicorn filter asks "can this be venture-scale / category-defining?".
+// Ideas are shared between filters; gates/scores/AI are per-filter.
+// ---------------------------------------------------------------------------
+
+export const CC_CRITERION_IDS = [
+  "cc_pain",
+  "cc_wtp",
+  "cc_reach",
+  "cc_speed",
+  "cc_gm",
+  "cc_ebitda",
+  "cc_fcf",
+  "cc_control",
+  "cc_dist",
+  "cc_retention",
+  "cc_pricing",
+  "cc_ops",
+  "cc_capital",
+  "cc_moat",
+  "cc_exit",
+  "cc_fmf",
+  "cc_impact",
+  "cc_transfer",
+] as const;
+
+export type CcCriterionId = (typeof CC_CRITERION_IDS)[number];
+
+export const CC_GATE_IDS = [
+  "cg_pain",
+  "cg_buyer",
+  "cg_path20",
+  "cg_control",
+  "cg_margin",
+  "cg_fcf",
+  "cg_engine",
+  "cg_conc",
+  "cg_ai",
+  "cg_legal",
+  "cg_impact",
+] as const;
+
+export type CcGateId = (typeof CC_GATE_IDS)[number];
+
+/** Which scoring instrument the UI is currently showing. */
+export type FilterMode = "unicorn" | "cashcow";
+
+export interface CashCowAIAnalysis {
+  summary: string;
+  gateRationales: Partial<Record<CcGateId, string>>;
+  scoreRationales: Partial<Record<CcCriterionId, string>>;
+  confidenceRationale: string;
+  needsFounderConfirmation: CcGateId[];
+  provider: Provider;
+  model: string;
+  analyzedAt: string;
+  webSearches?: number;
+}
+
+/** The Cash Cow Filter's per-idea scoring block (absent until first used). */
+export interface CashCowBlock {
+  gates: Record<CcGateId, GateValue>;
+  scores: Record<CcCriterionId, number | null>;
+  confidence: Confidence;
+  validationTest30d: string;
+  ai?: CashCowAIAnalysis | null;
+}
+
 export interface Idea {
   id: string;
   name: string;
@@ -104,6 +174,8 @@ export interface Idea {
   topRiskOverride2?: string;
   validationTest30d: string;
   ai?: AIAnalysis | null;
+  /** Cash Cow Filter scoring (independent of the unicorn fields above). */
+  cashcow?: CashCowBlock;
   isExample?: boolean;
   /** Cloud mode: excluded from the public feed (subscriber feature). */
   isPrivate?: boolean;
@@ -135,6 +207,78 @@ export interface Settings {
   webSearch: boolean;
   /** Ask AI clarifying questions before adding an idea (more accurate scoring). */
   askClarifying: boolean;
+  /** Active scoring instrument (unicorn = venture-scale, cashcow = EBITDA). */
+  filterMode: FilterMode;
+}
+
+/** Coerce arbitrary input into a valid CashCowBlock, or undefined if empty. */
+export function normalizeCashCow(value: unknown): CashCowBlock | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const raw = value as Partial<CashCowBlock> & { ai?: unknown };
+  const gates = {} as Record<CcGateId, GateValue>;
+  for (const id of CC_GATE_IDS) {
+    const v = (raw.gates as Record<string, unknown> | undefined)?.[id];
+    gates[id] = v === "Y" || v === "N" ? v : null;
+  }
+  const scores = {} as Record<CcCriterionId, number | null>;
+  for (const id of CC_CRITERION_IDS) {
+    const v = (raw.scores as Record<string, unknown> | undefined)?.[id];
+    scores[id] =
+      typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 5
+        ? v
+        : null;
+  }
+  const confidence =
+    raw.confidence === 0.5 || raw.confidence === 0.75 || raw.confidence === 1.0
+      ? raw.confidence
+      : null;
+  const validationTest30d =
+    typeof raw.validationTest30d === "string" ? raw.validationTest30d : "";
+  let ai: CashCowAIAnalysis | null = null;
+  if (raw.ai && typeof raw.ai === "object" && !Array.isArray(raw.ai)) {
+    const a = raw.ai as Partial<CashCowAIAnalysis>;
+    if (typeof a.summary === "string") {
+      ai = {
+        summary: a.summary,
+        gateRationales:
+          a.gateRationales && typeof a.gateRationales === "object"
+            ? (a.gateRationales as Partial<Record<CcGateId, string>>)
+            : {},
+        scoreRationales:
+          a.scoreRationales && typeof a.scoreRationales === "object"
+            ? (a.scoreRationales as Partial<Record<CcCriterionId, string>>)
+            : {},
+        confidenceRationale:
+          typeof a.confidenceRationale === "string" ? a.confidenceRationale : "",
+        needsFounderConfirmation: Array.isArray(a.needsFounderConfirmation)
+          ? a.needsFounderConfirmation.filter((g): g is CcGateId =>
+              (CC_GATE_IDS as readonly string[]).includes(g as string),
+            )
+          : [],
+        provider: a.provider === "openai" ? "openai" : "anthropic",
+        model: typeof a.model === "string" ? a.model : "",
+        analyzedAt:
+          typeof a.analyzedAt === "string"
+            ? a.analyzedAt
+            : new Date().toISOString(),
+        ...(typeof a.webSearches === "number"
+          ? { webSearches: a.webSearches }
+          : {}),
+      };
+    }
+  }
+  const block: CashCowBlock = { gates, scores, confidence, validationTest30d };
+  if (ai) block.ai = ai;
+  // Treat a fully-empty block as absent so untouched ideas stay lean.
+  const hasContent =
+    ai !== null ||
+    confidence !== null ||
+    validationTest30d.trim() !== "" ||
+    CC_GATE_IDS.some((id) => gates[id] !== null) ||
+    CC_CRITERION_IDS.some((id) => scores[id] !== null);
+  return hasContent ? block : undefined;
 }
 
 export interface AppState {
@@ -167,6 +311,22 @@ export interface AnalyzeResponse {
   provider: Provider;
   model: string;
   /** Number of live web searches the model ran during the analysis. */
+  webSearches: number;
+}
+
+/** Shape returned by POST /api/analyze with filter "cashcow". */
+export interface CcAnalyzeResponse {
+  summary: string;
+  metadata: IdeaMetadataProposal;
+  founderProfile: string;
+  gates: Record<CcGateId, { value: "Y" | "N" | "UNSURE"; rationale: string }>;
+  scores: Record<CcCriterionId, { score: number; rationale: string }>;
+  confidence: 0.5 | 0.75 | 1.0;
+  confidenceRationale: string;
+  validationTest30d: string;
+  needsFounderConfirmation: CcGateId[];
+  provider: Provider;
+  model: string;
   webSearches: number;
 }
 

@@ -1,26 +1,32 @@
 "use client";
 
+// AI analysis runner for the Cash Cow Filter. Mirrors AIPanel's guarantees:
+// the request outlives navigation (pending state lives in the store), results
+// merge against the store's live idea, and user edits made mid-flight win.
+// Writes to idea.cashcow; shared metadata fields fill blanks only.
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { getAnonKey } from "@/lib/anon";
-import { GATES_BY_ID } from "@/lib/criteria";
+import { CC_GATES_BY_ID } from "@/lib/cashcow/criteria";
+import { emptyCashCowBlock } from "@/lib/cashcow/engine";
 import { isPremiumModel } from "@/lib/entitlements";
 import { useStore } from "@/lib/store";
-import { CRITERION_IDS, GATE_IDS } from "@/lib/types";
+import { CC_CRITERION_IDS, CC_GATE_IDS } from "@/lib/types";
 import { Button, Section } from "@/components/ui";
 import type {
   AnalyzeMetadataResponse,
-  AnalyzeResponse,
+  CashCowBlock,
+  CcAnalyzeResponse,
+  CcCriterionId,
+  CcGateId,
   Confidence,
-  CriterionId,
-  GateId,
   GateValue,
   Idea,
   Settings,
 } from "@/lib/types";
 
-export function AIPanel({
+export function CcAIPanel({
   idea,
   settings,
   onPatch,
@@ -31,22 +37,14 @@ export function AIPanel({
 }) {
   const router = useRouter();
   const { analyzing, beginAnalysis, endAnalysis } = useStore();
-  // Pending state lives in the store (keyed by idea id), so it survives
-  // navigating away and is reflected if the user returns to this idea while
-  // the request is still running. Entries are instrument-tagged: this panel
-  // owns "full"/"metadata"; "cc_*" belongs to the Cash Cow panel.
+  // Instrument-tagged pending state: this panel owns "cc_full"/"cc_metadata";
+  // bare "full"/"metadata" belongs to the unicorn panel.
   const activeKind = analyzing[idea.id] ?? null;
-  const mine = activeKind === "full" || activeKind === "metadata";
+  const mine = activeKind === "cc_full" || activeKind === "cc_metadata";
   const pending = activeKind !== null;
-  const pendingMode = mine ? activeKind : "full";
+  const pendingMode = activeKind === "cc_metadata" ? "metadata" : "full";
   const otherInstrumentRunning = pending && !mine;
   const [error, setError] = useState<string | null>(null);
-  const [failedMode, setFailedMode] = useState<"full" | "metadata" | null>(
-    null,
-  );
-  // The request may outlive this component (user navigates away mid-analysis).
-  // The result is still applied through the store, which survives; only local
-  // setState calls must stop after unmount.
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -60,8 +58,8 @@ export function AIPanel({
     .filter((c) => c.background.trim())
     .map((c) => ({ name: c.name, background: c.background }));
 
-  // Quick-add flow: /idea/[id]?analyze=1 auto-runs the full analysis;
-  // ?fill=1 ("Add only") just names and describes the idea, no scoring.
+  // Quick-add flow: ?analyze=1 runs the full cash-cow analysis; ?fill=1 just
+  // names and describes the idea (shared metadata mode, no scoring).
   const autoRanRef = useRef(false);
   useEffect(() => {
     if (autoRanRef.current) return;
@@ -78,7 +76,7 @@ export function AIPanel({
       "",
       window.location.pathname + (query ? `?${query}` : ""),
     );
-    if (wantsFull && !idea.ai) {
+    if (wantsFull && !idea.cashcow?.ai) {
       if (settings.founderBackground.trim()) void analyze("full");
       else
         setError(
@@ -97,7 +95,7 @@ export function AIPanel({
   ] as const;
 
   async function analyze(mode: "full" | "metadata" = "full") {
-    if (analyzing[idea.id]) return; // already running for this idea
+    if (analyzing[idea.id]) return;
     if (mode === "full" && !settings.founderBackground.trim()) {
       setError(
         "Analysis needs your founder background — add it in Settings first.",
@@ -105,14 +103,14 @@ export function AIPanel({
       return;
     }
     setError(null);
-    setFailedMode(null);
-    beginAnalysis(idea.id, mode);
+    beginAnalysis(idea.id, mode === "full" ? "cc_full" : "cc_metadata");
+    const cc = idea.cashcow ?? emptyCashCowBlock();
     // Snapshot at click time: fields the user later touches win over the AI.
     const snapshot = {
-      gates: { ...idea.gates },
-      scores: { ...idea.scores },
-      confidence: idea.confidence,
-      validationTest30d: idea.validationTest30d,
+      gates: { ...cc.gates },
+      scores: { ...cc.scores },
+      confidence: cc.confidence,
+      validationTest30d: cc.validationTest30d,
       thesisNotes: idea.thesisNotes,
       founderProfile: idea.founderProfile ?? "",
       meta: Object.fromEntries(META_FIELDS.map((f) => [f, idea[f]])) as Record<
@@ -139,6 +137,7 @@ export function AIPanel({
           model,
           webSearch: settings.webSearch,
           mode,
+          filter: "cashcow",
           ideaId: idea.id,
           anonKey: getAnonKey(),
         }),
@@ -159,23 +158,17 @@ export function AIPanel({
         } catch {
           // Non-JSON error body — keep the generic message.
         }
-        // Free tier exceeded / premium model → send them to the plan page.
         if (upgrade || res.status === 402) {
           const reason = isPremiumModel(model) ? "premium" : "quota";
           router.push(`/upgrade?reason=${reason}`);
           return;
         }
-        if (mountedRef.current) {
-          setError(message);
-          setFailedMode(mode);
-        }
+        if (mountedRef.current) setError(message);
         return;
       }
 
       if (mode === "metadata") {
         const data = (await res.json()) as AnalyzeMetadataResponse;
-        // Merge against the store's live idea at apply time — a component
-        // ref would freeze at unmount and clobber edits made after remount.
         onPatch((latest) => {
           const patch: Partial<Idea> = {};
           for (const f of META_FIELDS) {
@@ -206,15 +199,15 @@ export function AIPanel({
         return;
       }
 
-      const data = (await res.json()) as AnalyzeResponse;
+      const data = (await res.json()) as CcAnalyzeResponse;
 
-      // Merge against the store's live idea at apply time (see above).
       onPatch((latest) => {
-        const gates = {} as Record<GateId, GateValue>;
-        const gateRationales: Partial<Record<GateId, string>> = {};
-        for (const gid of GATE_IDS) {
-          if (latest.gates[gid] !== snapshot.gates[gid]) {
-            gates[gid] = latest.gates[gid]; // user answered this gate mid-flight
+        const latestCc = latest.cashcow ?? emptyCashCowBlock();
+        const gates = {} as Record<CcGateId, GateValue>;
+        const gateRationales: Partial<Record<CcGateId, string>> = {};
+        for (const gid of CC_GATE_IDS) {
+          if (latestCc.gates[gid] !== snapshot.gates[gid]) {
+            gates[gid] = latestCc.gates[gid]; // user answered mid-flight
           } else {
             const g = data.gates?.[gid];
             gates[gid] = g ? (g.value === "UNSURE" ? null : g.value) : null;
@@ -223,11 +216,11 @@ export function AIPanel({
           if (g?.rationale) gateRationales[gid] = g.rationale;
         }
 
-        const scores = {} as Record<CriterionId, number | null>;
-        const scoreRationales: Partial<Record<CriterionId, string>> = {};
-        for (const cid of CRITERION_IDS) {
-          if (latest.scores[cid] !== snapshot.scores[cid]) {
-            scores[cid] = latest.scores[cid]; // user scored this one mid-flight
+        const scores = {} as Record<CcCriterionId, number | null>;
+        const scoreRationales: Partial<Record<CcCriterionId, string>> = {};
+        for (const cid of CC_CRITERION_IDS) {
+          if (latestCc.scores[cid] !== snapshot.scores[cid]) {
+            scores[cid] = latestCc.scores[cid]; // user scored mid-flight
           } else {
             const s = data.scores?.[cid];
             scores[cid] = s ? s.score : null;
@@ -237,16 +230,14 @@ export function AIPanel({
         }
 
         const confidence: Confidence =
-          latest.confidence !== snapshot.confidence
-            ? latest.confidence
+          latestCc.confidence !== snapshot.confidence
+            ? latestCc.confidence
             : data.confidence;
         const validationTest30d =
-          latest.validationTest30d !== snapshot.validationTest30d
-            ? latest.validationTest30d
+          latestCc.validationTest30d !== snapshot.validationTest30d
+            ? latestCc.validationTest30d
             : data.validationTest30d;
 
-        // Metadata: only fill fields the founder left blank (and didn't touch
-        // while the request ran) — never rewrite what they typed themselves.
         const metaPatch: Partial<
           Record<(typeof META_FIELDS)[number], string>
         > = {};
@@ -270,9 +261,7 @@ export function AIPanel({
           profilePatch.founderProfile = data.founderProfile;
         }
 
-        return {
-          ...metaPatch,
-          ...profilePatch,
+        const cashcow: CashCowBlock = {
           gates,
           scores,
           confidence,
@@ -289,24 +278,23 @@ export function AIPanel({
             webSearches: data.webSearches ?? 0,
           },
         };
+        return { ...metaPatch, ...profilePatch, cashcow };
       });
     } catch (e) {
       if (mountedRef.current) {
         setError(e instanceof Error ? e.message : "Network error.");
-        setFailedMode(mode);
       }
     } finally {
-      // Store update — safe after unmount, and clears the app-wide indicator.
       endAnalysis(idea.id);
     }
   }
 
-  const ai = idea.ai;
+  const ai = idea.cashcow?.ai;
 
   return (
     <Section
-      title="AI analysis"
-      description="Fills gates, scores, confidence and the 30-day test from your idea + founder background — everything stays editable."
+      title="AI analysis — cash cow"
+      description="Judges the idea like a buyout investor: margins, cash conversion, founder control, durability. Everything stays editable."
       actions={
         <span className="text-xs text-zinc-500">
           {settings.provider} · {model}
@@ -316,7 +304,7 @@ export function AIPanel({
       {!hasBackground ? (
         <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           Founder background is required before analysis — the AI judges
-          founder–market fit and founder-personal gates from it. Add yours in{" "}
+          founder–market fit and the founder-control gate from it. Add yours in{" "}
           <Link href="/settings" className="underline">
             Settings
           </Link>
@@ -341,21 +329,21 @@ export function AIPanel({
           <span className="flex items-center gap-2 text-xs text-zinc-500">
             <span
               aria-hidden
-              className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-200 border-t-teal-600"
+              className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-200 border-t-amber-500"
             />
             {pendingMode === "metadata"
               ? "Naming and describing the idea…"
-              : "Analyzing — thinking models can take a minute or two. The result is applied even if you navigate elsewhere."}
+              : "Analyzing against the $20M EBITDA bar — thinking models can take a minute or two. The result is applied even if you navigate elsewhere."}
           </span>
         ) : null}
         {otherInstrumentRunning ? (
           <span className="flex items-center gap-2 text-xs text-zinc-500">
             <span
               aria-hidden
-              className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-200 border-t-amber-500"
+              className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-200 border-t-teal-600"
             />
-            A Cash Cow analysis is running for this idea — its result lands in
-            the Cash Cow Filter.
+            A Unicorn analysis is running for this idea — its result lands in
+            the Unicorn Idea Filter.
           </span>
         ) : null}
       </div>
@@ -363,16 +351,6 @@ export function AIPanel({
       {error ? (
         <div className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
           <p>{error}</p>
-          {failedMode === "metadata" ? (
-            <button
-              type="button"
-              onClick={() => void analyze("metadata")}
-              disabled={pending}
-              className="mt-2 font-medium underline underline-offset-2 disabled:opacity-50"
-            >
-              Retry naming &amp; description
-            </button>
-          ) : null}
         </div>
       ) : null}
 
@@ -390,7 +368,7 @@ export function AIPanel({
             <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
               Confirm these gates yourself:{" "}
               {ai.needsFounderConfirmation
-                .map((g) => GATES_BY_ID[g]?.label ?? g)
+                .map((g) => CC_GATES_BY_ID[g]?.label ?? g)
                 .join(", ")}
             </div>
           ) : null}

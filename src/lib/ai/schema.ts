@@ -6,6 +6,7 @@
 // schema only pins the shape. Both providers also require
 // additionalProperties:false with every property required, and neither
 // supports minimum/maximum (hence integer enums).
+import { CC_CRITERIA, CC_GATES } from "../cashcow/criteria";
 import { CRITERIA, GATES } from "../criteria";
 
 const GATE_VALUE = {
@@ -65,6 +66,50 @@ export const ANALYSIS_SCHEMA = {
     needsFounderConfirmation: {
       type: "array",
       items: { type: "string", enum: GATES.map((g) => g.id) },
+    },
+  },
+  required: [
+    "summary",
+    "metadata",
+    "founderProfile",
+    "gates",
+    "scores",
+    "confidence",
+    "confidenceRationale",
+    "validationTest30d",
+    "needsFounderConfirmation",
+  ],
+  additionalProperties: false,
+} as const;
+
+/** Cash Cow Filter analysis — same shape as ANALYSIS_SCHEMA over the 11
+ *  cash-cow gates and 18 criteria. Shape only; semantics live in the prompt. */
+export const CC_ANALYSIS_SCHEMA = {
+  type: "object",
+  properties: {
+    summary: { type: "string" },
+    metadata: METADATA_OBJECT,
+    founderProfile: { type: "string" },
+    gates: {
+      type: "object",
+      properties: Object.fromEntries(CC_GATES.map((g) => [g.id, GATE_VALUE])),
+      required: CC_GATES.map((g) => g.id),
+      additionalProperties: false,
+    },
+    scores: {
+      type: "object",
+      properties: Object.fromEntries(
+        CC_CRITERIA.map((c) => [c.id, SCORE_VALUE]),
+      ),
+      required: CC_CRITERIA.map((c) => c.id),
+      additionalProperties: false,
+    },
+    confidence: { type: "string", enum: ["0.5", "0.75", "1.0"] },
+    confidenceRationale: { type: "string" },
+    validationTest30d: { type: "string" },
+    needsFounderConfirmation: {
+      type: "array",
+      items: { type: "string", enum: CC_GATES.map((g) => g.id) },
     },
   },
   required: [

@@ -59,6 +59,7 @@ export function defaultSettings(): Settings {
     coFounders: [],
     webSearch: true,
     askClarifying: true,
+    filterMode: "unicorn",
   };
 }
 

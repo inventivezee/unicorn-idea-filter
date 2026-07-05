@@ -64,14 +64,23 @@ interface StoreContextValue {
   exportJSON: () => string;
   importJSON: (json: string) => void;
   /**
-   * Ideas with an AI request in flight, keyed by id → mode. Ephemeral (never
-   * persisted or synced): lets the UI show progress app-wide and survive
-   * navigating away from the idea while it runs.
+   * Ideas with an AI request in flight, keyed by id → kind (instrument +
+   * mode). Ephemeral (never persisted or synced): lets the UI show progress
+   * app-wide and survive navigating away from the idea while it runs.
    */
-  analyzing: Record<string, "full" | "metadata">;
-  beginAnalysis: (id: string, mode: "full" | "metadata") => void;
+  analyzing: Record<string, AnalysisKind>;
+  beginAnalysis: (id: string, kind: AnalysisKind) => void;
   endAnalysis: (id: string) => void;
+  /**
+   * True once settings are readable (synchronous localStorage read) — flips
+   * long before the network-bound `hydrated`, so mode-dependent chrome (nav,
+   * brand) paints correctly for returning users without a flash.
+   */
+  settingsHydrated: boolean;
 }
+
+/** What kind of AI request is running: instrument + mode. */
+export type AnalysisKind = "full" | "metadata" | "cc_full" | "cc_metadata";
 
 const StoreContext = createContext<StoreContextValue | null>(null);
 
@@ -99,9 +108,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [pendingLocalImport, setPendingLocalImport] = useState(0);
   const [anonKey, setAnonKey] = useState<string | null>(null);
-  const [analyzing, setAnalyzing] = useState<
-    Record<string, "full" | "metadata">
-  >({});
+  const [analyzing, setAnalyzing] = useState<Record<string, AnalysisKind>>(
+    {},
+  );
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
   const skipNextSave = useRef(true);
   const signedInRef = useRef(false);
 
@@ -161,6 +171,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               models: s.models,
               webSearch: s.webSearch,
               askClarifying: s.askClarifying,
+              filterMode: s.filterMode,
               weights: s.weights,
               trials: s.trials,
             },
@@ -268,6 +279,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       } catch {
         // Corrupt storage — keep seed state rather than crashing.
       }
+      setSettingsHydrated(true);
       setHydrated(true);
       return;
     }
@@ -288,6 +300,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } catch {
       // Ignore corrupt local cache.
     }
+    setSettingsHydrated(true);
     void Promise.all([loadCloudIdeas(), refreshEntitlements()]).finally(() =>
       setHydrated(true),
     );
@@ -548,12 +561,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     await loadCloudIdeas();
   }, [cloud, loadCloudIdeas]);
 
-  const beginAnalysis = useCallback(
-    (id: string, mode: "full" | "metadata") => {
-      setAnalyzing((a) => ({ ...a, [id]: mode }));
-    },
-    [],
-  );
+  const beginAnalysis = useCallback((id: string, kind: AnalysisKind) => {
+    setAnalyzing((a) => ({ ...a, [id]: kind }));
+  }, []);
   const endAnalysis = useCallback((id: string) => {
     setAnalyzing((a) => {
       if (!(id in a)) return a;
@@ -586,6 +596,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       analyzing,
       beginAnalysis,
       endAnalysis,
+      settingsHydrated,
     }),
     [
       state,
@@ -609,6 +620,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       analyzing,
       beginAnalysis,
       endAnalysis,
+      settingsHydrated,
     ],
   );
 

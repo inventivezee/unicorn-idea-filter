@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeDefaultRawScore,
   computePublished,
+  ideaToWritableRow,
   rowToIdea,
   type IdeaRow,
 } from "./types";
@@ -105,5 +106,37 @@ describe("rowToIdea", () => {
     expect(idea.published).toBe(true);
     expect(idea.topRiskOverride1).toBe("override");
     expect(idea.id).toBe("11111111-1111-4111-8111-111111111111");
+  });
+});
+
+describe("ideaToWritableRow — cashcow block semantics", () => {
+  it("omits the column when the idea never touched cashcow", () => {
+    expect(ideaToWritableRow({ name: "x" })).not.toHaveProperty("cashcow");
+  });
+
+  it("writes null for a present-but-empty block so clears persist", () => {
+    const row = ideaToWritableRow({
+      name: "x",
+      cashcow: {
+        gates: {} as never,
+        scores: {} as never,
+        confidence: null,
+        validationTest30d: "",
+      },
+    });
+    expect(row.cashcow).toBeNull();
+  });
+
+  it("writes a normalized block when it has content", () => {
+    const row = ideaToWritableRow({
+      name: "x",
+      cashcow: {
+        gates: { cg_pain: "Y" } as never,
+        scores: {} as never,
+        confidence: null,
+        validationTest30d: "",
+      },
+    });
+    expect((row.cashcow as { gates: Record<string, unknown> }).gates.cg_pain).toBe("Y");
   });
 });

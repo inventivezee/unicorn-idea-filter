@@ -11,6 +11,15 @@ import { AIPanel } from "@/components/idea/AIPanel";
 import { ComputedPanel } from "@/components/idea/ComputedPanel";
 import { CriteriaSection } from "@/components/idea/CriteriaSection";
 import { GatesSection } from "@/components/idea/GatesSection";
+import { CcAIPanel } from "@/components/cashcow/CcAIPanel";
+import {
+  CcComputedPanel,
+  CcConfidenceSection,
+  CcCriteriaSection,
+  CcGatesSection,
+  CcValidationSection,
+  makeCcPatch,
+} from "@/components/cashcow/CcSections";
 import type { Idea } from "@/lib/types";
 
 const inputCls =
@@ -91,8 +100,10 @@ export default function IdeaDetailPage() {
   }
 
   const weights = state.settings.weights;
+  const cashcowMode = state.settings.filterMode === "cashcow";
   const patch = (p: Partial<Idea> | ((latest: Idea) => Partial<Idea>)) =>
     updateIdea(idea.id, p);
+  const ccPatch = makeCcPatch(patch);
 
   function handleDelete() {
     if (!idea) return;
@@ -138,7 +149,11 @@ export default function IdeaDetailPage() {
                       : "border-zinc-200 bg-zinc-50 text-zinc-500"
                   }`}
                 >
-                  {idea.isPrivate ? "Private" : "Public once scored"}
+                  {idea.isPrivate
+                    ? "Private"
+                    : cashcowMode
+                      ? "Public once scored in the Unicorn filter"
+                      : "Public once scored"}
                 </span>
                 <Button
                   className="px-2 py-1 text-xs!"
@@ -274,6 +289,20 @@ export default function IdeaDetailPage() {
             ) : null}
           </Section>
 
+          {cashcowMode ? (
+            <>
+              <CcAIPanel
+                idea={idea}
+                settings={state.settings}
+                onPatch={patch}
+              />
+              <CcGatesSection idea={idea} ccPatch={ccPatch} />
+              <CcCriteriaSection idea={idea} ccPatch={ccPatch} />
+              <CcConfidenceSection idea={idea} ccPatch={ccPatch} />
+              <CcValidationSection idea={idea} ccPatch={ccPatch} />
+            </>
+          ) : (
+            <>
           <AIPanel idea={idea} settings={state.settings} onPatch={patch} />
 
           <GatesSection idea={idea} onPatch={patch} />
@@ -331,10 +360,16 @@ export default function IdeaDetailPage() {
               placeholder="The single cheapest test that attacks the biggest risk in the next 30 days — with a numeric pass/fail bar."
             />
           </Section>
+            </>
+          )}
         </div>
 
         <aside className="min-w-0 self-start lg:sticky lg:top-16">
-          <ComputedPanel idea={idea} weights={weights} onPatch={patch} />
+          {cashcowMode ? (
+            <CcComputedPanel idea={idea} />
+          ) : (
+            <ComputedPanel idea={idea} weights={weights} onPatch={patch} />
+          )}
         </aside>
       </div>
     </div>

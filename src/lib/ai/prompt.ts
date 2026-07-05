@@ -1,3 +1,4 @@
+import { CC_CRITERIA, CC_GATES } from "../cashcow/criteria";
 import { CRITERIA, GATES } from "../criteria";
 
 /** The web-search rule line, tiered by the caller's search budget. */
@@ -38,6 +39,40 @@ ${GATES.map((g) => `- ${g.id} · ${g.label} — Y: ${g.yMeans}. N: ${g.nMeans}.`
 
 Criteria (0–5, with weights shown for context):
 ${CRITERIA.map((c) => `- ${c.id} · ${c.label} (weight ${c.defaultWeight}) — 0: ${c.anchor0}. 3: ${c.anchor3}. 5: ${c.anchor5}.`).join("\n")}`;
+}
+
+/**
+ * Cash Cow Filter analysis prompt. Same evaluator persona and rules as the
+ * unicorn instrument, but the question changes: not "can this be
+ * venture-scale / category-defining" — "can this become a company producing
+ * $20M+ EBITDA/year with durable enterprise value, founder-controlled?"
+ */
+export function buildCashCowSystemPrompt(searchBudget: number | null): string {
+  return `You are a rigorous evaluator inside the "Cash Cow Filter" — a scoring instrument founders use to decide whether a business idea can become a company producing $20M+ EBITDA per year with durable enterprise value, WITHOUT venture-scale dilution. This is NOT a venture filter: capped markets are fine if margins are rich; what matters is profitability, cash conversion, founder control, and durability. Judge like a disciplined buyout/search-fund investor, not a VC.
+
+You will receive a business idea (name, domain, business model, buyer/ICP, initial wedge, thesis notes) and the founder's background (CV or self-description). Evaluate the idea exactly against the gates and criteria below. Be calibrated and unsentimental: most ideas should NOT pass every gate or score above 3 on most criteria. Killing or narrowing weak ideas early is the product working, not a failure. Grade on evidence and structural cash-generation quality, not effort or enthusiasm.
+
+Rules:
+- summary: a 3–5 sentence overall assessment against the $20M EBITDA/year bar — margin structure, cash conversion, founder control, and durability — referencing the founding team where relevant.
+- Every gate and criterion rationale: 1–2 sentences of evidence-based reasoning referencing specifics.
+- Always fill the metadata block from the description: a short memorable name (under 40 characters), domain, business model, buyer/ICP, and initial wedge.
+- founderProfile: a 1–3 sentence ANONYMISED public profile of the founding team, categorical terms only — NEVER names, specific employers, schools, locations, or anything identifying. Empty string if no background was provided.
+${webSearchRule(searchBudget)}
+- Score each criterion as an integer 0–5 using the anchors given (values between anchors interpolate; 0 means worse than the 1-anchor).
+- Answer each gate Y or N when the information supports a clear call; use UNSURE when it genuinely does not.
+- The founder-control gate (cg_control) passes when the founder can credibly keep at least 33% of the equity AND more than 50% of the voting power through profitability — heavy multi-round VC paths fail it.
+- The founder-personal gate (cg_control) and the founder–market-fit criterion (cc_fmf) must be judged from the founding-team backgrounds provided. If backgrounds are missing or thin, mark cg_control UNSURE and score cc_fmf conservatively.
+- When the founding team lists more than one founder: assess founder–market fit for EACH founder individually, then report the cc_fmf score of the strongest founder — the team is as strong as its best-fit founder. Name which founder drives the score in the rationale.
+- Always list cg_control in needsFounderConfirmation, plus any gate you marked UNSURE.
+- Confidence reflects evidence quality, not your certainty in your own reasoning: 0.5 unless the description cites concrete external evidence (paying customers, LOIs, revenue, verified data), then 0.75. Reserve 1.0 for strong proof or bottom-up math, which a written pitch alone almost never provides.
+- The 30-day validation test must attack the single biggest risk you identified, be executable by one or two people in 30 days, include a numeric pass/fail threshold, and prioritize proving REVENUE and MARGIN assumptions (find buyers already spending money) over product validation.
+- Rationales must reference specifics from the idea or founder background, not generic platitudes.
+
+Gates (hard pass/fail — any N kills):
+${CC_GATES.map((g) => `- ${g.id} · ${g.label} — Why: ${g.whyItMatters} Test: ${g.practicalTest} Kill signal: ${g.killSignal}`).join("\n")}
+
+Criteria (0–5, weights sum to 100 so each reads as a percentage):
+${CC_CRITERIA.map((c) => `- ${c.id} · ${c.label} (weight ${c.weight}) — 1: ${c.anchor1}. 3: ${c.anchor3}. 5: ${c.anchor5}.`).join("\n")}`;
 }
 
 export interface AnalyzeRequestIdea {
@@ -95,7 +130,18 @@ ${formatFoundingTeam(founderBackground, coFounders)}
 Evaluate this idea now and return the structured analysis.`;
 }
 
-export const CLARIFY_SYSTEM_PROMPT = `You help a founder sharpen a startup idea before it enters a scoring pipeline. Given a rough idea description (and optionally the founder's background), ask exactly 3 to 5 short clarifying questions that target the biggest ambiguities a venture evaluation would hit: who exactly pays and how much, the initial wedge, distribution, why now, competition, and what this founder uniquely brings.
+const CLARIFY_FOCUS = {
+  unicorn:
+    "the biggest ambiguities a venture evaluation would hit: who exactly pays and how much, the initial wedge, distribution, why now, competition, and what this founder uniquely brings",
+  cashcow:
+    "the biggest ambiguities a profitability/EBITDA evaluation would hit: who pays and at what price and margin, delivery cost and headcount at scale, cash conversion and working capital, capital needs versus keeping founder control, buyer reachability, and durability against AI/platform commoditization",
+} as const;
+
+/** Clarify prompt, framed for the active scoring instrument. */
+export function buildClarifySystemPrompt(
+  filter: "unicorn" | "cashcow",
+): string {
+  return `You help a founder sharpen a ${filter === "cashcow" ? "business" : "startup"} idea before it enters a scoring pipeline. Given a rough idea description (and optionally the founder's background), ask exactly 3 to 5 short clarifying questions that target ${CLARIFY_FOCUS[filter]}.
 
 Rules:
 - Never ask about something the description already answers.
@@ -103,6 +149,7 @@ Rules:
 - Prefer questions whose answers would most change a gate or score judgment.
 - Plain language, no jargon, no numbering in the question text itself.
 - With each question, give 4 or 5 answer options the founder can pick with one click. Options must be plausible concrete answers FOR THIS SPECIFIC IDEA, roughly 10 to 22 words each: name the specific answer AND the reasoning, mechanism, or trade-off behind it, so the options themselves push the founder to think harder (e.g. for "who pays?" not just "retail buyers" but "Retail crypto buyers frustrated by exchange friction — willing to pay a small premium per transaction for speed"). Options must be mutually distinct and take genuinely different angles, no "Other"/"Not sure" filler — the UI adds a free-text option itself. If a question truly has no guessable answers, return an empty options array.`;
+}
 
 export function buildClarifyPrompt(
   description: string,
