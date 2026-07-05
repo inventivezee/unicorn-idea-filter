@@ -181,3 +181,61 @@ export const PROFILE_LOOKUP_SCHEMA = {
   required: ["found", "background", "sources"],
   additionalProperties: false,
 } as const;
+
+/** One generated idea (the "Help me generate" feature). Lean: shape only. */
+const GENERATED_IDEA = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    pitch: { type: "string" },
+    domain: { type: "string" },
+    businessModel: { type: "string" },
+    buyerICP: { type: "string" },
+    initialWedge: { type: "string" },
+    whyNow: { type: "string" },
+    whyYou: { type: "string" },
+  },
+  required: [
+    "name",
+    "pitch",
+    "domain",
+    "businessModel",
+    "buyerICP",
+    "initialWedge",
+    "whyNow",
+    "whyYou",
+  ],
+  additionalProperties: false,
+} as const;
+
+export const IDEAS_GEN_SCHEMA = {
+  type: "object",
+  properties: {
+    ideas: { type: "array", items: GENERATED_IDEA },
+  },
+  required: ["ideas"],
+  additionalProperties: false,
+} as const;
+
+/** Reframes of a weak idea: substantive mutations that attack its weaknesses. */
+export const REFRAME_SCHEMA = {
+  type: "object",
+  properties: {
+    reframes: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          pitch: { type: "string" },
+          whatChanged: { type: "string" },
+          risksAddressed: { type: "string" },
+        },
+        required: ["name", "pitch", "whatChanged", "risksAddressed"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["reframes"],
+  additionalProperties: false,
+} as const;

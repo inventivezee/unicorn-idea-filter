@@ -12,6 +12,7 @@ import { ClarificationsEditor } from "@/components/idea/ClarificationsEditor";
 import { ComputedPanel } from "@/components/idea/ComputedPanel";
 import { CriteriaSection } from "@/components/idea/CriteriaSection";
 import { GatesSection } from "@/components/idea/GatesSection";
+import { ReframePanel } from "@/components/idea/ReframePanel";
 import { CcAIPanel } from "@/components/cashcow/CcAIPanel";
 import {
   CcComputedPanel,
@@ -278,6 +279,11 @@ export default function IdeaDetailPage() {
                 settings={state.settings}
                 onPatch={patch}
               />
+              <ReframePanel
+                idea={idea}
+                settings={state.settings}
+                filter="cashcow"
+              />
               <CcGatesSection idea={idea} ccPatch={ccPatch} />
               <CcCriteriaSection idea={idea} ccPatch={ccPatch} />
               <CcConfidenceSection idea={idea} ccPatch={ccPatch} />
@@ -286,6 +292,12 @@ export default function IdeaDetailPage() {
           ) : (
             <>
           <AIPanel idea={idea} settings={state.settings} onPatch={patch} />
+
+          <ReframePanel
+            idea={idea}
+            settings={state.settings}
+            filter="unicorn"
+          />
 
           <GatesSection idea={idea} onPatch={patch} />
 

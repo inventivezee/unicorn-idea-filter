@@ -3,7 +3,9 @@ import {
   ANALYSIS_SCHEMA,
   CC_ANALYSIS_SCHEMA,
   CLARIFY_SCHEMA,
+  IDEAS_GEN_SCHEMA,
   METADATA_SCHEMA,
+  REFRAME_SCHEMA,
 } from "./schema";
 
 // Anthropic's constrained-decoding grammar compiler rejects oversized schemas
@@ -21,5 +23,7 @@ describe("AI schema size budget", () => {
     expect(ccSize).toBeLessThan(7500);
     expect(JSON.stringify(METADATA_SCHEMA).length).toBeLessThan(2500);
     expect(JSON.stringify(CLARIFY_SCHEMA).length).toBeLessThan(600);
+    expect(JSON.stringify(IDEAS_GEN_SCHEMA).length).toBeLessThan(1200);
+    expect(JSON.stringify(REFRAME_SCHEMA).length).toBeLessThan(800);
   });
 });

@@ -250,3 +250,125 @@ Set "found": false when you cannot confidently identify the person or find subst
 export function buildProfileLookupPrompt(url: string): string {
   return `## Founder profile URL\n\n${url}\n\nResearch this founder via web search and return the structured background now.`;
 }
+
+// ---------------------------------------------------------------------------
+// Idea generation ("Help me generate") — filter-aware ideation.
+// ---------------------------------------------------------------------------
+
+const GEN_BAR = {
+  unicorn:
+    "venture-scale, VC-style startup ideas that could plausibly clear the Unicorn bar: $10B+ category potential (big TAM), a credible bottom-up wedge to $100M revenue within 7-10 years, a 10x product or technical angle, a real timing inflection (why now), and a path to defensible moats. Category-defining, growth-first, possibly public companies",
+  cashcow:
+    "profitable, PE-style business ideas that could plausibly clear the Cash Cow bar: a realistic path to $20M+ EBITDA/year, 25%+ mature EBITDA margins, high free-cash-flow conversion with low working-capital drag, customer-funded or lightly financed so the founder keeps 33%+ equity and voting control, a repeatable sales engine, and durability against AI/platform commoditization. Boring-but-rich niches with expensive recurring pain beat glamorous crowded spaces",
+} as const;
+
+/** System prompt for idea generation, framed for the active instrument. */
+export function buildGenerateSystemPrompt(
+  filter: "unicorn" | "cashcow",
+  searchBudget: number | null,
+): string {
+  return `You are an elite ideation partner inside the ${filter === "cashcow" ? "Cash Cow Filter" : "Unicorn Idea Filter"}. Generate exactly 5 ${GEN_BAR[filter]}.
+
+Rules:
+- Grounding order: if an industry brief is provided, every idea anchors in it (interpreted honestly, not stretched). Otherwise derive ideas from the founder's background — their unfair advantages, networks, and scar tissue. If neither is available, work purely from current timing inflections found via web research.
+- ${searchBudget === null ? "Use the web search tool as much as genuinely needed" : `Use the web search tool (at most roughly ${searchBudget} searches)`} to ground the ideas in what is happening NOW: regulation changes, cost-curve shifts, new platform capabilities, funding waves, market gaps. Do not propose ideas whose timing claim you could not support.
+- The 5 ideas must take genuinely different angles — different buyers, mechanisms, or wedges — never five flavors of one theme.
+- Avoid anything that substantially duplicates the founder's existing pipeline ideas (listed in the request, when present).
+- name: memorable, under 40 characters.
+- pitch: 3-6 sentences, fully self-contained and specific — a stranger could evaluate it. Name the pain, the buyer, the mechanism, and the money.
+- domain / businessModel / buyerICP / initialWedge: short and concrete (the exact first buyer and the narrow first wedge, not categories).
+- whyNow: the specific timing inflection, referencing what you found in research.
+- whyYou: how THIS founder's background gives an edge — empty string if no background was provided. Never invent founder facts.
+- Be honest: if the industry brief is a poor fit for the ${filter === "cashcow" ? "EBITDA" : "venture"} bar, still give your best 5 but let the pitches reflect realistic scope.`;
+}
+
+export function buildGeneratePrompt(
+  industry: string,
+  founderBackground: string,
+  coFounders: CoFounderInput[] = [],
+  existingNames: string[] = [],
+): string {
+  const team = formatFoundingTeam(founderBackground, coFounders);
+  const dedupe = existingNames.length
+    ? `\n## Already in the founder's pipeline (do not duplicate)\n\n${existingNames
+        .map((n) => `- ${n}`)
+        .join("\n")}\n`
+    : "";
+  return `## Industry brief
+
+${industry.trim() || "(none — use the founder's background and current-trend research)"}
+
+## Founding team background
+
+${team}
+${dedupe}
+Research, then generate the 5 ideas now.`;
+}
+
+// ---------------------------------------------------------------------------
+// Reframes — rescue an idea that scored poorly by attacking its weaknesses.
+// ---------------------------------------------------------------------------
+
+/** System prompt for reframing a weak idea, framed for the active instrument. */
+export function buildReframeSystemPrompt(
+  filter: "unicorn" | "cashcow",
+): string {
+  return `You help a founder rescue a ${filter === "cashcow" ? "business" : "startup"} idea that scored poorly on the ${filter === "cashcow" ? "Cash Cow Filter ($20M+ EBITDA/year with durable enterprise value)" : "Unicorn Idea Filter (venture-scale, category-defining)"}. You get the idea, its gate answers and scores, the evaluator's rationales, and a distilled list of its weakest points.
+
+Propose exactly 3 to 5 REFRAMES. A reframe is a substantive mutation — change the buyer, the wedge, the business model, the delivery mechanism, the geography, or the scope — so that the SPECIFIC weaknesses are structurally fixed, not reworded away. Preserve what already works, especially anything that leans on the founder's own edge.
+
+Rules:
+- Each reframe attacks at least one named weakness head-on; say which.
+- Reframes must be meaningfully different from each other (not one change in five outfits).
+- name: memorable, under 40 characters, distinct from the original.
+- pitch: 3-6 sentences, fully self-contained — it becomes a brand-new idea description that a stranger could evaluate without seeing the original.
+- whatChanged: 1-2 sentences, the delta from the original idea.
+- risksAddressed: the specific criteria or gates this reframe fixes, as a short comma-separated list of plain-language labels.
+- Do not inflate: if a weakness is structural to the whole space (e.g. the market is genuinely small), the honest reframe changes markets rather than pretending.`;
+}
+
+export interface ReframeWeakness {
+  label: string;
+  detail: string;
+}
+
+export function buildReframePrompt(
+  idea: AnalyzeRequestIdea,
+  weaknesses: ReframeWeakness[],
+  founderBackground: string,
+  coFounders: CoFounderInput[] = [],
+  clarifications: ClarificationInput[] = [],
+  aiSummary = "",
+): string {
+  const team = formatFoundingTeam(founderBackground, coFounders);
+  const hasTeam = !team.startsWith("(none provided");
+  return `## The idea as scored
+
+Name: ${idea.name || "(unnamed)"}
+Domain: ${idea.domain || "(not specified)"}
+Business model: ${idea.businessModel || "(not specified)"}
+Buyer / ICP: ${idea.buyerICP || "(not specified)"}
+Initial wedge: ${idea.initialWedge || "(not specified)"}
+
+Description:
+${idea.thesisNotes || "(none provided)"}
+${aiSummary ? `
+## Evaluator's overall assessment
+
+${aiSummary}
+` : ""}
+## Weakest points (attack these)
+
+${
+    weaknesses.length
+      ? weaknesses.map((w) => `- ${w.label}: ${w.detail}`).join("\n")
+      : "(no structured weaknesses supplied — infer them from the idea itself)"
+  }
+${hasTeam ? `
+## Founding team background (preserve this edge)
+
+${team}
+` : ""}${formatClarifications(clarifications)}
+
+Generate the reframes now.`;
+}

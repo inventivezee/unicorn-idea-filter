@@ -16,6 +16,7 @@ import {
 import { pipelineCSV } from "@/lib/persistence";
 import { useStore } from "@/lib/store";
 import { CcPipelineTable } from "@/components/cashcow/CcPipeline";
+import { IdeaGenerator } from "@/components/pipeline/IdeaGenerator";
 import { QuickAdd } from "@/components/pipeline/QuickAdd";
 import { GATE_IDS } from "@/lib/types";
 import type { CriterionId, Decision, Idea } from "@/lib/types";
@@ -259,6 +260,7 @@ export default function PipelinePage() {
       <div>
         {header}
         <QuickAdd />
+        <IdeaGenerator />
         <EmptyState>
           No ideas in the pipeline — describe one above to start filtering.
         </EmptyState>
@@ -271,6 +273,7 @@ export default function PipelinePage() {
       <div>
         {header}
         <QuickAdd />
+        <IdeaGenerator />
         <CcPipelineTable />
       </div>
     );
@@ -280,6 +283,7 @@ export default function PipelinePage() {
     <div>
       {header}
       <QuickAdd />
+        <IdeaGenerator />
       <div className="rounded-lg border border-zinc-200 bg-white">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] border-collapse text-sm">
