@@ -4,48 +4,20 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getAnonKey } from "@/lib/anon";
 import { AutoSavedFlag, Button } from "@/components/ui";
+import {
+  ClarifyQuestionList,
+  composeClarifications,
+  emptyAnswersFor,
+  markClarifyAsked,
+  normalizeClarifyQuestions,
+  type ClarifyAnswer,
+} from "@/components/clarify/ClarifyForm";
 import { useStore } from "@/lib/store";
 import type { ClarifyQuestion } from "@/lib/types";
 
 type Stage = "draft" | "clarify";
 /** "analyze" = full scoring after add; "add" = name + metadata + description only. */
 type AddMode = "analyze" | "add";
-
-/** Per-question answer: any number of picked options, plus optional free text. */
-interface ClarifyAnswer {
-  choices: string[];
-  custom: string;
-  showCustom: boolean;
-}
-
-/** Coerce the /api/clarify payload into valid ClarifyQuestion[] (dedupes options). */
-function normalizeClarifyQuestions(value: unknown): ClarifyQuestion[] {
-  if (!Array.isArray(value)) return [];
-  const out: ClarifyQuestion[] = [];
-  for (const q of value) {
-    if (typeof q === "string") {
-      if (q.trim()) out.push({ question: q.trim(), options: [] });
-      continue;
-    }
-    if (q && typeof q === "object") {
-      const { question, options } = q as {
-        question?: unknown;
-        options?: unknown;
-      };
-      if (typeof question === "string" && question.trim()) {
-        const opts = Array.from(
-          new Set(
-            (Array.isArray(options) ? options : [])
-              .filter((o): o is string => typeof o === "string" && !!o.trim())
-              .map((o) => o.trim()),
-          ),
-        ).slice(0, 5);
-        out.push({ question: question.trim(), options: opts });
-      }
-    }
-  }
-  return out.slice(0, 5);
-}
 
 export function QuickAdd() {
   const { state, addIdea, updateSettings } = useStore();
@@ -69,6 +41,11 @@ export function QuickAdd() {
   const bgTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const settings = state.settings;
+  // Which filter the clarify questions were fetched under (the global toggle
+  // can change while the wizard is open), and whether the step actually ran —
+  // used to tag answers correctly and to not re-ask right after the add.
+  const clarifyFilterRef = useRef(settings.filterMode);
+  const clarifyRanRef = useRef(false);
   const hasBackground = settings.founderBackground.trim().length > 0;
   const teamPayload = settings.coFounders
     .filter((c) => c.background.trim())
@@ -100,6 +77,7 @@ export function QuickAdd() {
     setError(null);
     setMode(chosenMode);
     setLoadingMode(chosenMode);
+    clarifyFilterRef.current = settings.filterMode;
     try {
       const res = await fetch("/api/clarify", {
         method: "POST",
@@ -140,34 +118,20 @@ export function QuickAdd() {
       // Normalize defensively: tolerate bare strings (an older server bundle)
       // and drop malformed entries, so the render never sees a non-object.
       const normalized = normalizeClarifyQuestions(data.questions);
+      clarifyRanRef.current = true;
       if (normalized.length === 0) {
         // Nothing worth asking — go straight to the add.
         finishAdd(chosenMode, text);
         return;
       }
       setQuestions(normalized);
-      setAnswers(
-        normalized.map((q) => ({
-          choices: [],
-          custom: "",
-          // No options to click → open the text field straight away.
-          showCustom: q.options.length === 0,
-        })),
-      );
+      setAnswers(emptyAnswersFor(normalized));
       setStage("clarify");
     } catch {
       setError("Network error while fetching clarifying questions.");
     } finally {
       setLoadingMode(null);
     }
-  }
-
-  /** Combine picked options + optional free text into one answer string. */
-  function answerText(a: ClarifyAnswer | undefined): string {
-    if (!a) return "";
-    const parts = [...a.choices];
-    if (a.showCustom && a.custom.trim()) parts.push(a.custom.trim());
-    return parts.join("; ");
   }
 
   // The description stays the founder's raw text; the clarifying Q&A is kept
@@ -181,7 +145,6 @@ export function QuickAdd() {
     setAnswers((all) => all.map((a, j) => (j === i ? { ...a, ...patch } : a)));
   }
 
-  /** Toggle one option in/out of a question's multi-select answer. */
   function toggleChoice(i: number, opt: string) {
     setAnswers((all) =>
       all.map((a, j) =>
@@ -197,13 +160,6 @@ export function QuickAdd() {
     );
   }
 
-  /** Structured Q&A to persist with the idea (answered questions only). */
-  function composeClarifications() {
-    return questions
-      .map((q, i) => ({ question: q.question, answer: answerText(answers[i]) }))
-      .filter((c) => c.answer);
-  }
-
   /** Create the idea and hand off: full analysis, metadata-only fill, or nothing. */
   function finishAdd(chosenMode: AddMode | "plain", notes?: string) {
     if (submittingRef.current) return;
@@ -211,11 +167,20 @@ export function QuickAdd() {
     if (!text) return;
     submittingRef.current = true;
     setSubmitting(true);
-    const clarifications = composeClarifications();
+    const clarifications = composeClarifications(
+      questions,
+      answers,
+      clarifyFilterRef.current,
+    );
     const idea = addIdea({
       thesisNotes: text,
       ...(clarifications.length ? { clarifications } : {}),
     });
+    // The clarify step already ran for this filter (even if every question
+    // was skipped) — the auto-run analysis must not immediately re-ask.
+    if (clarifyRanRef.current) {
+      markClarifyAsked(idea.id, clarifyFilterRef.current);
+    }
     const param =
       chosenMode === "analyze" ? "?analyze=1" : chosenMode === "add" ? "?fill=1" : "";
     router.push(`/idea/${idea.id}${param}`);
@@ -303,114 +268,14 @@ export function QuickAdd() {
         <blockquote className="mt-3 max-h-24 overflow-y-auto rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
           {draft.trim()}
         </blockquote>
-        <div className="mt-3 space-y-4">
-          {questions.map((q, i) => {
-            const a = answers[i] ?? {
-              choices: [],
-              custom: "",
-              showCustom: true,
-            };
-            // Stacked, left-aligned rows: detailed options read like short
-            // answers, not tags, and wrap cleanly on mobile.
-            const rowBase =
-              "w-full rounded-lg border px-3 py-2 text-left text-xs leading-relaxed transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600";
-            return (
-              <div key={i}>
-                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                  <p className="text-sm font-medium text-zinc-800">
-                    {q.question}
-                  </p>
-                  {a.choices.length > 2 ? (
-                    <span
-                      role="alert"
-                      className="text-xs font-medium text-red-600"
-                    >
-                      Best to pick 1–2 — a focused answer sharpens the
-                      analysis.
-                    </span>
-                  ) : null}
-                </div>
-                <div
-                  className="mt-1.5 space-y-1.5"
-                  role="group"
-                  aria-label={q.question}
-                >
-                  {q.options.map((opt) => {
-                    const selected = a.choices.includes(opt);
-                    return (
-                      <button
-                        key={opt}
-                        type="button"
-                        aria-pressed={selected}
-                        onClick={() => toggleChoice(i, opt)}
-                        className={`${rowBase} ${
-                          selected
-                            ? "border-teal-600 bg-teal-50 text-teal-900 ring-1 ring-teal-600"
-                            : "border-zinc-200 bg-white text-zinc-700 hover:border-teal-500 hover:bg-teal-50/40"
-                        }`}
-                      >
-                        <span className="flex items-start gap-2">
-                          <span
-                            aria-hidden
-                            className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${
-                              selected
-                                ? "border-teal-600 bg-teal-600 text-white"
-                                : "border-zinc-300 bg-white"
-                            }`}
-                          >
-                            {selected ? (
-                              <svg
-                                viewBox="0 0 16 16"
-                                className="h-2.5 w-2.5"
-                                fill="none"
-                                aria-hidden
-                              >
-                                <path
-                                  d="M3 8.5 6.5 12 13 4.5"
-                                  stroke="currentColor"
-                                  strokeWidth="2.5"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                              </svg>
-                            ) : null}
-                          </span>
-                          <span>{opt}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                  {q.options.length > 0 ? (
-                    <button
-                      type="button"
-                      aria-pressed={a.showCustom}
-                      onClick={() =>
-                        patchAnswer(i, { showCustom: !a.showCustom })
-                      }
-                      className={`${rowBase} ${
-                        a.showCustom
-                          ? "border-teal-600 bg-teal-50 font-medium text-teal-900 ring-1 ring-teal-600"
-                          : "border-dashed border-zinc-300 bg-white text-zinc-500 hover:border-teal-500 hover:text-teal-700"
-                      }`}
-                    >
-                      Other — add your own answer…
-                    </button>
-                  ) : null}
-                </div>
-                {a.showCustom ? (
-                  <input
-                    type="text"
-                    autoFocus={q.options.length > 0}
-                    value={a.custom}
-                    onChange={(e) => patchAnswer(i, { custom: e.target.value })}
-                    placeholder="Type your answer…"
-                    aria-label={`Your answer: ${q.question}`}
-                    className="mt-1.5 w-full rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600"
-                  />
-                ) : null}
-              </div>
-            );
-          })}
+        <div className="mt-3">
+          <ClarifyQuestionList
+            questions={questions}
+            answers={answers}
+            onToggleChoice={toggleChoice}
+            onPatchAnswer={patchAnswer}
+            accent={settings.filterMode === "cashcow" ? "amber" : "teal"}
+          />
         </div>
         {/* Only prompt for a background here when it's still missing — once
             filled, the "Add & analyze" button below works directly. */}

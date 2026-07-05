@@ -64,6 +64,30 @@ export interface AIAnalysis {
 export interface Clarification {
   question: string;
   answer: string;
+  /**
+   * Which scoring instrument the question was asked for. Each filter asks its
+   * own questions, so analyzing an idea in a filter with no clarifications
+   * tagged for it triggers a fresh (skippable) round. Untagged legacy entries
+   * satisfy NEITHER filter — they predate tagging and could have been framed
+   * for either instrument, so each filter gets one honest ask (previous
+   * answers are passed along, so nothing is ever re-asked verbatim).
+   */
+  filter?: "unicorn" | "cashcow";
+}
+
+/** Does the idea already have clarifying answers for this instrument? */
+export function hasClarificationsFor(
+  clarifications: Clarification[] | undefined,
+  filter: "unicorn" | "cashcow",
+): boolean {
+  // Mirrors what the prompt/db layers actually keep: entries need BOTH a
+  // question and an answer to count (answer-only rows are dropped by them).
+  return (clarifications ?? []).some(
+    (c) =>
+      c.filter === filter &&
+      c.question.trim() !== "" &&
+      c.answer.trim() !== "",
+  );
 }
 
 /**
@@ -89,17 +113,26 @@ export function normalizeClarifications(value: unknown): Clarification[] {
   const out: Clarification[] = [];
   for (const raw of value) {
     if (!raw || typeof raw !== "object") continue;
-    const { question, answer } = raw as {
+    const { question, answer, filter } = raw as {
       question?: unknown;
       answer?: unknown;
+      filter?: unknown;
     };
     if (typeof question !== "string" || !question.trim()) continue;
     out.push({
       question: question.trim().slice(0, 300),
       // Multi-select answers concatenate several detailed options, so allow room.
       answer: typeof answer === "string" ? answer.trim().slice(0, 1200) : "",
+      ...(filter === "unicorn" || filter === "cashcow" ? { filter } : {}),
     });
-    if (out.length >= 10) break;
+  }
+  // Cap at 20, preferring answered entries (newly answered pre-analysis Q&A
+  // arrives last and must not be the part that gets truncated).
+  if (out.length > 20) {
+    return [
+      ...out.filter((c) => c.answer !== ""),
+      ...out.filter((c) => c.answer === ""),
+    ].slice(0, 20);
   }
   return out;
 }

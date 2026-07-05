@@ -7,11 +7,17 @@ import { getAnonKey } from "@/lib/anon";
 import { GATES_BY_ID } from "@/lib/criteria";
 import { isPremiumModel } from "@/lib/entitlements";
 import { useStore } from "@/lib/store";
-import { CRITERION_IDS, GATE_IDS } from "@/lib/types";
+import { CRITERION_IDS, GATE_IDS, hasClarificationsFor } from "@/lib/types";
 import { Button, Section } from "@/components/ui";
+import {
+  markClarifyAsked,
+  wasClarifyAsked,
+} from "@/components/clarify/ClarifyForm";
+import { PreAnalysisClarify } from "@/components/clarify/PreAnalysisClarify";
 import type {
   AnalyzeMetadataResponse,
   AnalyzeResponse,
+  Clarification,
   Confidence,
   CriterionId,
   GateId,
@@ -44,6 +50,10 @@ export function AIPanel({
   const [failedMode, setFailedMode] = useState<"full" | "metadata" | null>(
     null,
   );
+  // Pre-analysis clarify: shown when the idea has no clarifying answers for
+  // THIS filter (e.g. it was clarified under the cash-cow filter only).
+  const [showClarify, setShowClarify] = useState(false);
+  const clarifyHandledRef = useRef(false);
   // The request may outlive this component (user navigates away mid-analysis).
   // The result is still applied through the store, which survives; only local
   // setState calls must stop after unmount.
@@ -96,12 +106,28 @@ export function AIPanel({
     "initialWedge",
   ] as const;
 
-  async function analyze(mode: "full" | "metadata" = "full") {
+  async function analyze(
+    mode: "full" | "metadata" = "full",
+    extraClarifications?: Clarification[],
+  ) {
     if (analyzing[idea.id]) return; // already running for this idea
     if (mode === "full" && !settings.founderBackground.trim()) {
       setError(
         "Analysis needs your founder background — add it in Settings first.",
       );
+      return;
+    }
+    // No clarifying answers for this filter yet → ask first (skippable).
+    if (
+      mode === "full" &&
+      extraClarifications === undefined &&
+      settings.askClarifying &&
+      !clarifyHandledRef.current &&
+      !wasClarifyAsked(idea.id, "unicorn") &&
+      !hasClarificationsFor(idea.clarifications, "unicorn")
+    ) {
+      setError(null);
+      setShowClarify(true);
       return;
     }
     setError(null);
@@ -135,7 +161,10 @@ export function AIPanel({
           },
           founderBackground: settings.founderBackground,
           coFounders: teamPayload,
-          clarifications: idea.clarifications ?? [],
+          clarifications: [
+            ...(idea.clarifications ?? []),
+            ...(extraClarifications ?? []),
+          ],
           provider: settings.provider,
           model,
           webSearch: settings.webSearch,
@@ -360,6 +389,25 @@ export function AIPanel({
           </span>
         ) : null}
       </div>
+
+      {showClarify ? (
+        <PreAnalysisClarify
+          idea={idea}
+          settings={settings}
+          filter="unicorn"
+          onReady={(extra) => {
+            clarifyHandledRef.current = true;
+            markClarifyAsked(idea.id, "unicorn");
+            setShowClarify(false);
+            if (extra.length) {
+              onPatch((latest) => ({
+                clarifications: [...(latest.clarifications ?? []), ...extra],
+              }));
+            }
+            void analyze("full", extra);
+          }}
+        />
+      ) : null}
 
       {error ? (
         <div className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">

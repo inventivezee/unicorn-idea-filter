@@ -21,6 +21,7 @@ import {
   requestTelemetry,
   resolveCaller,
 } from "@/lib/supabase/server";
+import { normalizeClarifications } from "@/lib/types";
 import type { ClarifyQuestion, ClarifyResponse } from "@/lib/types";
 
 // Question generation runs at low effort, but reasoning models still think.
@@ -42,6 +43,21 @@ export async function POST(request: Request) {
   const description = field(body.description).trim();
   const founderBackground = field(body.founderBackground, MAX_BACKGROUND_CHARS);
   const coFounders = coFoundersFromBody(body.coFounders);
+  // Context for re-asks (analyzing in the other filter): don't repeat what
+  // the founder already answered, and use known metadata for sharper aims.
+  const previous = normalizeClarifications(body.previousClarifications);
+  const rawMeta =
+    body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
+      ? (body.metadata as Record<string, unknown>)
+      : {};
+  const metadata = {
+    name: field(rawMeta.name, 200),
+    domain: field(rawMeta.domain, 200),
+    businessModel: field(rawMeta.businessModel, 200),
+    buyerICP: field(rawMeta.buyerICP, 500),
+    initialWedge: field(rawMeta.initialWedge, 500),
+    thesisNotes: "",
+  };
 
   if (!model) {
     return Response.json({ error: "No model selected." }, { status: 400 });
@@ -89,7 +105,13 @@ export async function POST(request: Request) {
       provider,
       model,
       system: buildClarifySystemPrompt(filter),
-      prompt: buildClarifyPrompt(description, founderBackground, coFounders),
+      prompt: buildClarifyPrompt(
+        description,
+        founderBackground,
+        coFounders,
+        previous,
+        metadata,
+      ),
       schemaName: "clarifying_questions",
       schema: CLARIFY_SCHEMA as unknown as Record<string, unknown>,
       webSearch: false,

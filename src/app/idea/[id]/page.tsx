@@ -264,7 +264,11 @@ export default function IdeaDetailPage() {
                 placeholder="The core insight, why it wins, and why now."
               />
             </label>
-            <ClarificationsEditor idea={idea} onPatch={patch} />
+            <ClarificationsEditor
+              idea={idea}
+              onPatch={patch}
+              activeFilter={cashcowMode ? "cashcow" : "unicorn"}
+            />
           </Section>
 
           {cashcowMode ? (

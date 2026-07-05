@@ -13,8 +13,12 @@ describe("acceptance test 6: export → import round-trips losslessly", () => {
       initialWedge: "wedge",
       thesisNotes: "notes with, commas and \"quotes\"",
       clarifications: [
-        { question: "Who pays?", answer: "Independent HVAC technicians" },
-        { question: "Why now?", answer: "" },
+        {
+          question: "Who pays?",
+          answer: "Independent HVAC technicians",
+          filter: "unicorn" as const,
+        },
+        { question: "Why now?", answer: "", filter: "cashcow" as const },
       ],
       confidence: 0.75,
       topRiskOverride1: "manual risk 1",

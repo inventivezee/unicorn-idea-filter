@@ -162,6 +162,15 @@ const CLARIFY_FOCUS = {
     "the biggest ambiguities a profitability/EBITDA evaluation would hit: who pays and at what price and margin, delivery cost and headcount at scale, cash conversion and working capital, capital needs versus keeping founder control, buyer reachability, and durability against AI/platform commoditization",
 } as const;
 
+// The load-bearing unknowns of each instrument, so every question can be aimed
+// at a specific gate or heavyweight criterion rather than generic diligence.
+const CLARIFY_TARGETS = {
+  unicorn:
+    "the $10B+ market gate, the $100M-revenue wedge, distribution, defensible moat, why-now timing, and founder unfair advantages",
+  cashcow:
+    "the $20M-EBITDA path gate, the 25%+ mature-margin gate, FCF conversion / working capital, the repeatable sales engine, customer concentration, founder control (33%+ equity, 50%+ voting), and durability vs AI/platform compression",
+} as const;
+
 /** Clarify prompt, framed for the active scoring instrument. */
 export function buildClarifySystemPrompt(
   filter: "unicorn" | "cashcow",
@@ -169,24 +178,47 @@ export function buildClarifySystemPrompt(
   return `You help a founder sharpen a ${filter === "cashcow" ? "business" : "startup"} idea before it enters a scoring pipeline. Given a rough idea description (and optionally the founder's background), ask exactly 3 to 5 short clarifying questions that target ${CLARIFY_FOCUS[filter]}.
 
 Rules:
-- Never ask about something the description already answers.
+- Aim each question at a specific gate or heavyweight criterion of this instrument — ${CLARIFY_TARGETS[filter]}. A perfect question is one whose answer could flip a gate or move a heavily-weighted score.
+- Never ask about something the description already answers, and never re-ask anything covered by the founder's previous clarification answers if any are provided — go deeper or attack a different unknown instead.
+- Ask about facts and choices the founder actually controls or knows (their buyer, pricing, channel, costs, commitments) — not predictions nobody can answer.
 - Each question must be answerable in a sentence or two — no essays, no multi-part questions.
-- Prefer questions whose answers would most change a gate or score judgment.
 - Plain language, no jargon, no numbering in the question text itself.
-- With each question, give 4 or 5 answer options the founder can pick with one click. Options must be plausible concrete answers FOR THIS SPECIFIC IDEA, roughly 10 to 22 words each: name the specific answer AND the reasoning, mechanism, or trade-off behind it, so the options themselves push the founder to think harder (e.g. for "who pays?" not just "retail buyers" but "Retail crypto buyers frustrated by exchange friction — willing to pay a small premium per transaction for speed"). Options must be mutually distinct and take genuinely different angles, no "Other"/"Not sure" filler — the UI adds a free-text option itself. If a question truly has no guessable answers, return an empty options array.`;
+- With each question, give 4 or 5 answer options the founder can pick with one click. Options must be plausible concrete answers FOR THIS SPECIFIC IDEA, roughly 10 to 22 words each: name the specific answer AND the reasoning, mechanism, or trade-off behind it, so the options themselves push the founder to think harder (e.g. for "who pays?" not just "retail buyers" but "Retail crypto buyers frustrated by exchange friction — willing to pay a small premium per transaction for speed"). Options must be mutually distinct and take genuinely different angles — including at least one less-obvious but defensible answer — no "Other"/"Not sure" filler; the UI adds a free-text option itself. If a question truly has no guessable answers, return an empty options array.`;
 }
 
 export function buildClarifyPrompt(
   description: string,
   founderBackground: string,
   coFounders: CoFounderInput[] = [],
+  previous: ClarificationInput[] = [],
+  metadata?: Partial<AnalyzeRequestIdea>,
 ): string {
   const team = formatFoundingTeam(founderBackground, coFounders);
   const hasTeam = !team.startsWith("(none provided");
+  const metaLines = metadata
+    ? [
+        metadata.name ? `Name: ${metadata.name}` : "",
+        metadata.domain ? `Domain: ${metadata.domain}` : "",
+        metadata.businessModel ? `Business model: ${metadata.businessModel}` : "",
+        metadata.buyerICP ? `Buyer / ICP: ${metadata.buyerICP}` : "",
+        metadata.initialWedge ? `Initial wedge: ${metadata.initialWedge}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : "";
+  const answered = previous.filter(
+    (c) => c.question.trim() && c.answer.trim(),
+  );
   return `## Idea description (rough, as typed by the founder)
 
 ${description}
-${hasTeam ? `\n## Founding team\n\n${team}\n` : ""}
+${metaLines ? `\n## Known metadata\n\n${metaLines}\n` : ""}${hasTeam ? `\n## Founding team\n\n${team}\n` : ""}${
+    answered.length
+      ? `\n## Previously answered clarifications (do NOT re-ask these)\n\n${answered
+          .map((c) => `- Q: ${c.question.trim()}\n  A: ${c.answer.trim()}`)
+          .join("\n")}\n`
+      : ""
+  }
 Ask your clarifying questions now.`;
 }
 

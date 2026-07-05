@@ -12,11 +12,21 @@ import { CC_GATES_BY_ID } from "@/lib/cashcow/criteria";
 import { emptyCashCowBlock } from "@/lib/cashcow/engine";
 import { isPremiumModel } from "@/lib/entitlements";
 import { useStore } from "@/lib/store";
-import { CC_CRITERION_IDS, CC_GATE_IDS } from "@/lib/types";
+import {
+  CC_CRITERION_IDS,
+  CC_GATE_IDS,
+  hasClarificationsFor,
+} from "@/lib/types";
 import { Button, Section } from "@/components/ui";
+import {
+  markClarifyAsked,
+  wasClarifyAsked,
+} from "@/components/clarify/ClarifyForm";
+import { PreAnalysisClarify } from "@/components/clarify/PreAnalysisClarify";
 import type {
   AnalyzeMetadataResponse,
   CashCowBlock,
+  Clarification,
   CcAnalyzeResponse,
   CcCriterionId,
   CcGateId,
@@ -45,6 +55,10 @@ export function CcAIPanel({
   const pendingMode = activeKind === "cc_metadata" ? "metadata" : "full";
   const otherInstrumentRunning = pending && !mine;
   const [error, setError] = useState<string | null>(null);
+  // Pre-analysis clarify: shown when the idea has no clarifying answers for
+  // the cash-cow filter (e.g. it was clarified under the unicorn filter only).
+  const [showClarify, setShowClarify] = useState(false);
+  const clarifyHandledRef = useRef(false);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -94,12 +108,28 @@ export function CcAIPanel({
     "initialWedge",
   ] as const;
 
-  async function analyze(mode: "full" | "metadata" = "full") {
+  async function analyze(
+    mode: "full" | "metadata" = "full",
+    extraClarifications?: Clarification[],
+  ) {
     if (analyzing[idea.id]) return;
     if (mode === "full" && !settings.founderBackground.trim()) {
       setError(
         "Analysis needs your founder background — add it in Settings first.",
       );
+      return;
+    }
+    // No clarifying answers for this filter yet → ask first (skippable).
+    if (
+      mode === "full" &&
+      extraClarifications === undefined &&
+      settings.askClarifying &&
+      !clarifyHandledRef.current &&
+      !wasClarifyAsked(idea.id, "cashcow") &&
+      !hasClarificationsFor(idea.clarifications, "cashcow")
+    ) {
+      setError(null);
+      setShowClarify(true);
       return;
     }
     setError(null);
@@ -133,7 +163,10 @@ export function CcAIPanel({
           },
           founderBackground: settings.founderBackground,
           coFounders: teamPayload,
-          clarifications: idea.clarifications ?? [],
+          clarifications: [
+            ...(idea.clarifications ?? []),
+            ...(extraClarifications ?? []),
+          ],
           provider: settings.provider,
           model,
           webSearch: settings.webSearch,
@@ -348,6 +381,25 @@ export function CcAIPanel({
           </span>
         ) : null}
       </div>
+
+      {showClarify ? (
+        <PreAnalysisClarify
+          idea={idea}
+          settings={settings}
+          filter="cashcow"
+          onReady={(extra) => {
+            clarifyHandledRef.current = true;
+            markClarifyAsked(idea.id, "cashcow");
+            setShowClarify(false);
+            if (extra.length) {
+              onPatch((latest) => ({
+                clarifications: [...(latest.clarifications ?? []), ...extra],
+              }));
+            }
+            void analyze("full", extra);
+          }}
+        />
+      ) : null}
 
       {error ? (
         <div className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
