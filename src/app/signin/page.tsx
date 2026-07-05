@@ -107,8 +107,12 @@ export default function SignInPage() {
     <div className="mx-auto mt-16 max-w-md">
       <div className="rounded-lg border border-zinc-200 bg-white p-6">
         <h1 className="text-lg font-semibold tracking-tight text-zinc-900">
-          Sign in
+          Sign up or sign in
         </h1>
+        <p className="mt-1 text-xs text-zinc-500">
+          New here or returning — enter your email and we&apos;ll send a link.
+          It creates your account if you don&apos;t have one yet.
+        </p>
 
         {error ? (
           <div className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
@@ -166,8 +170,8 @@ export default function SignInPage() {
         ) : null}
 
         <p className="mt-4 text-xs leading-relaxed text-zinc-500">
-          Sign in to keep your ideas across devices, get{" "}
-          {FREE_ANALYSES_PER_MONTH} free AI analyses a month, and unlock
+          A free account keeps your ideas across devices, gives you{" "}
+          {FREE_ANALYSES_PER_MONTH} free AI analyses a month, and unlocks
           subscriptions.
         </p>
       </div>

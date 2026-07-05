@@ -173,9 +173,9 @@ function AuthControl() {
     return (
       <Link
         href="/signin"
-        className="whitespace-nowrap py-3 text-xs text-zinc-600 transition-colors hover:text-zinc-900"
+        className="whitespace-nowrap py-3 text-xs font-medium text-teal-700 transition-colors hover:text-teal-800"
       >
-        Sign in
+        Sign up / Sign in
       </Link>
     );
   }
@@ -249,9 +249,9 @@ function MobileAuth({ onNavigate }: { onNavigate: () => void }) {
       <Link
         href="/signin"
         onClick={onNavigate}
-        className="block rounded-md px-3 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+        className="block rounded-md px-3 py-2.5 text-sm font-medium text-teal-700 hover:bg-zinc-50"
       >
-        Sign in
+        Sign up / Sign in
       </Link>
     );
   }
