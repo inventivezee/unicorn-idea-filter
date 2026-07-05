@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
+import { Logo } from "@/components/Logo";
 
 const LINKS = [
   { href: "/", label: "Pipeline" },
@@ -360,7 +361,12 @@ export function Nav() {
   return (
     <header className="sticky top-0 z-20 border-b border-zinc-200 bg-white/90 backdrop-blur">
       <div className="mx-auto flex w-full max-w-6xl items-center gap-4 px-4 sm:px-6">
-        <FilterSwitcher />
+        <div className="flex shrink-0 items-center gap-2">
+          <Link href="/" aria-label="Home" className="flex items-center">
+            <Logo className="h-6 w-6" />
+          </Link>
+          <FilterSwitcher />
+        </div>
 
         {/* Desktop nav — only once there's room for every item (see the long
             exit link); tablets and phones use the drawer. */}
