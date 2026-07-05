@@ -3,9 +3,11 @@ import {
   ANALYSIS_SCHEMA,
   CC_ANALYSIS_SCHEMA,
   CLARIFY_SCHEMA,
+  FILTER_DESIGN_SCHEMA,
   IDEAS_GEN_SCHEMA,
   METADATA_SCHEMA,
   REFRAME_SCHEMA,
+  buildCustomAnalysisSchema,
 } from "./schema";
 
 // Anthropic's constrained-decoding grammar compiler rejects oversized schemas
@@ -25,5 +27,18 @@ describe("AI schema size budget", () => {
     expect(JSON.stringify(CLARIFY_SCHEMA).length).toBeLessThan(600);
     expect(JSON.stringify(IDEAS_GEN_SCHEMA).length).toBeLessThan(1200);
     expect(JSON.stringify(REFRAME_SCHEMA).length).toBeLessThan(800);
+    expect(JSON.stringify(FILTER_DESIGN_SCHEMA).length).toBeLessThan(2500);
+  });
+
+  it("custom analysis schema stays under budget at max spec size", () => {
+    // normalizeCustomFilterSpec caps specs at 9 gates + 14 criteria — build
+    // the schema at that ceiling, the worst case the API can ever receive.
+    const maxSpec = {
+      gates: Array.from({ length: 9 }, (_, i) => ({ id: `g${i + 1}` })),
+      criteria: Array.from({ length: 14 }, (_, i) => ({ id: `c${i + 1}` })),
+    };
+    const size = JSON.stringify(buildCustomAnalysisSchema(maxSpec)).length;
+    console.log("custom analysis schema (max spec):", size, "chars");
+    expect(size).toBeLessThan(9000);
   });
 });

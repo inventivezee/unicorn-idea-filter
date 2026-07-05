@@ -3,7 +3,7 @@
 // Editable clarifying Q&A for an idea. The answers are gathered at add-time
 // but stay editable here — they feed the AI analysis (both filters) as direct
 // founder input and are saved with the idea. Shared across both instruments.
-import type { Clarification, FilterMode, Idea } from "@/lib/types";
+import type { Clarification, Idea } from "@/lib/types";
 
 const answerCls =
   "mt-1 w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500";
@@ -15,8 +15,9 @@ export function ClarificationsEditor({
 }: {
   idea: Idea;
   onPatch: (patch: Partial<Idea>) => void;
-  /** Manually added rows are tagged for this filter. */
-  activeFilter?: FilterMode;
+  /** Manually added rows are tagged for this instrument key
+   *  ("unicorn" | "cashcow" | "custom:<id>"). */
+  activeFilter?: string;
 }) {
   const clarifications: Clarification[] = idea.clarifications ?? [];
 
@@ -55,13 +56,19 @@ export function ClarificationsEditor({
                 />
                 <span
                   className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide ${
-                    (c.filter ?? "unicorn") === "cashcow"
+                    c.filter === "cashcow"
                       ? "bg-amber-100 text-amber-700"
-                      : "bg-teal-100 text-teal-700"
+                      : c.filter?.startsWith("custom:")
+                        ? "bg-violet-100 text-violet-700"
+                        : "bg-teal-100 text-teal-700"
                   }`}
                   title="Which filter asked this question"
                 >
-                  {(c.filter ?? "unicorn") === "cashcow" ? "Cash Cow" : "Unicorn"}
+                  {c.filter === "cashcow"
+                    ? "Cash Cow"
+                    : c.filter?.startsWith("custom:")
+                      ? "Custom"
+                      : "Unicorn"}
                 </span>
                 <button
                   type="button"

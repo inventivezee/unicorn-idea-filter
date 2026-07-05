@@ -14,8 +14,9 @@ import {
   type GateStatus,
 } from "@/lib/engine";
 import { pipelineCSV } from "@/lib/persistence";
-import { useStore } from "@/lib/store";
+import { isMetadataKind, useStore, type AnalysisKind } from "@/lib/store";
 import { CcPipelineTable } from "@/components/cashcow/CcPipeline";
+import { CustomPipelineTable } from "@/components/custom/CustomPipeline";
 import { IdeaGenerator } from "@/components/pipeline/IdeaGenerator";
 import { QuickAdd } from "@/components/pipeline/QuickAdd";
 import { GATE_IDS } from "@/lib/types";
@@ -135,7 +136,7 @@ function HeaderCell({
 }
 
 /** Small inline "Analyzing…" badge shown while an idea has an AI request in flight. */
-function AnalyzingBadge({ kind }: { kind: string }) {
+function AnalyzingBadge({ kind }: { kind: AnalysisKind }) {
   return (
     <span
       className="inline-flex shrink-0 items-center gap-1 rounded-full border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[10px] font-medium text-teal-700"
@@ -145,7 +146,7 @@ function AnalyzingBadge({ kind }: { kind: string }) {
         aria-hidden
         className="inline-block h-2.5 w-2.5 animate-spin rounded-full border border-teal-300 border-t-teal-600"
       />
-      {kind.endsWith("metadata") ? "Filling…" : "Analyzing…"}
+      {isMetadataKind(kind) ? "Filling…" : "Analyzing…"}
     </span>
   );
 }
@@ -204,6 +205,12 @@ export default function PipelinePage() {
   if (!hydrated) return null;
 
   const cashcowMode = state.settings.filterMode === "cashcow";
+  const activeSpec =
+    state.settings.filterMode === "custom"
+      ? state.settings.customFilters.find(
+          (f) => f.id === state.settings.activeCustomFilterId,
+        )
+      : undefined;
   const fullyScored = state.ideas.filter((i) => isFullyScored(i.scores)).length;
   const analyzingCount = state.ideas.filter((i) => analyzing[i.id]).length;
 
@@ -231,11 +238,21 @@ export default function PipelinePage() {
 
   const header = (
     <PageHeader
-      title={cashcowMode ? "Cash cow pipeline" : "Pipeline"}
+      title={
+        activeSpec
+          ? `${activeSpec.name} pipeline`
+          : cashcowMode
+            ? "Cash cow pipeline"
+            : "Pipeline"
+      }
       description={
         state.ideas.length === 0
           ? "No ideas yet."
-          : cashcowMode
+          : activeSpec
+            ? `${state.ideas.length} idea${state.ideas.length === 1 ? "" : "s"} · scored against your own bar${
+                analyzingCount > 0 ? ` · ${analyzingCount} analyzing` : ""
+              }`
+            : cashcowMode
             ? `${state.ideas.length} idea${state.ideas.length === 1 ? "" : "s"} · scored against the $20M EBITDA bar${
                 analyzingCount > 0 ? ` · ${analyzingCount} analyzing` : ""
               }`
@@ -245,7 +262,7 @@ export default function PipelinePage() {
       }
       actions={
         <>
-          {state.ideas.length > 0 && !cashcowMode ? (
+          {state.ideas.length > 0 && !cashcowMode && !activeSpec ? (
             <Button variant="secondary" onClick={handleExportCSV}>
               Export CSV
             </Button>
@@ -264,6 +281,17 @@ export default function PipelinePage() {
         <EmptyState>
           No ideas in the pipeline — describe one above to start filtering.
         </EmptyState>
+      </div>
+    );
+  }
+
+  if (activeSpec) {
+    return (
+      <div>
+        {header}
+        <QuickAdd />
+        <IdeaGenerator />
+        <CustomPipelineTable spec={activeSpec} />
       </div>
     );
   }

@@ -79,8 +79,25 @@ interface StoreContextValue {
   settingsHydrated: boolean;
 }
 
-/** What kind of AI request is running: instrument + mode. */
-export type AnalysisKind = "full" | "metadata" | "cc_full" | "cc_metadata";
+/** What kind of AI request is running: instrument + mode. Custom kinds carry
+ *  the filter id so panels for different custom filters don't claim each
+ *  other's in-flight runs. */
+export type AnalysisKind =
+  | "full"
+  | "metadata"
+  | "cc_full"
+  | "cc_metadata"
+  | `custom_full:${string}`
+  | `custom_metadata:${string}`;
+
+/** True when the running request is a metadata fill (vs a full analysis). */
+export function isMetadataKind(kind: AnalysisKind): boolean {
+  return (
+    kind === "metadata" ||
+    kind === "cc_metadata" ||
+    kind.startsWith("custom_metadata:")
+  );
+}
 
 const StoreContext = createContext<StoreContextValue | null>(null);
 
@@ -172,6 +189,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               webSearch: s.webSearch,
               askClarifying: s.askClarifying,
               filterMode: s.filterMode,
+              customFilters: s.customFilters,
+              activeCustomFilterId: s.activeCustomFilterId,
               weights: s.weights,
               trials: s.trials,
             },
@@ -227,13 +246,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             !profileBackground.trim() && s.settings.founderBackground.trim();
           const keepLocalCoFounders =
             profileCoFounders.length === 0 && s.settings.coFounders.length > 0;
-          pushLocalUp = Boolean(keepLocalBackground || keepLocalCoFounders);
+          // Custom filters are expensive AI designs — never let a wholesale
+          // prefs overwrite silently erase ones that exist only on this
+          // device (designed before sign-in, or in a tab the server hasn't
+          // seen). Union by id: server wins on conflicts, local-only specs
+          // survive and are pushed back up.
+          const serverFilters = Array.isArray(prefs.customFilters)
+            ? (prefs.customFilters as unknown[])
+            : [];
+          const serverIds = new Set(
+            serverFilters.map((f) =>
+              f && typeof f === "object"
+                ? (f as { id?: unknown }).id
+                : undefined,
+            ),
+          );
+          const localOnlyFilters = s.settings.customFilters.filter(
+            (f) => !serverIds.has(f.id),
+          );
+          const keepLocalFilters = localOnlyFilters.length > 0;
+          pushLocalUp = Boolean(
+            keepLocalBackground || keepLocalCoFounders || keepLocalFilters,
+          );
           const merged = normalizeState({
             version: 1,
             ideas: [],
             settings: {
               ...s.settings,
               ...((prefs as Record<string, unknown>) ?? {}),
+              customFilters: [...serverFilters, ...localOnlyFilters],
               founderBackground: keepLocalBackground
                 ? s.settings.founderBackground
                 : profileBackground,
@@ -242,6 +283,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 : profileCoFounders,
             },
           }).settings;
+          // If the union restored the locally active filter, keep it active.
+          if (
+            s.settings.activeCustomFilterId &&
+            !merged.activeCustomFilterId &&
+            merged.customFilters.some(
+              (f) => f.id === s.settings.activeCustomFilterId,
+            )
+          ) {
+            merged.activeCustomFilterId = s.settings.activeCustomFilterId;
+            if (s.settings.filterMode === "custom") {
+              merged.filterMode = "custom";
+            }
+          }
           return { ...s, settings: merged };
         });
         if (pushLocalUp) {

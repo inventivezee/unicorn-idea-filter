@@ -10,6 +10,7 @@ import {
   GATE_IDS,
   normalizeCashCow,
   normalizeClarifications,
+  normalizeCustomBlocks,
   stripLegacyClarificationsSuffix,
 } from "../types";
 import type { AIAnalysis, CoFounder, Idea } from "../types";
@@ -26,6 +27,7 @@ export interface IdeaRow {
   thesis_notes: string;
   clarifications?: unknown;
   cashcow?: unknown;
+  custom?: unknown;
   gates: Record<string, unknown>;
   scores: Record<string, unknown>;
   confidence: number | null;
@@ -121,6 +123,8 @@ export function rowToIdea(row: IdeaRow): Idea & {
   }
   const cashcow = normalizeCashCow(row.cashcow);
   if (cashcow) idea.cashcow = cashcow;
+  const custom = normalizeCustomBlocks(row.custom);
+  if (custom) idea.custom = custom;
   if (typeof row.top_risk_override_1 === "string") {
     idea.topRiskOverride1 = row.top_risk_override_1;
   }
@@ -165,6 +169,11 @@ export function ideaToWritableRow(idea: Partial<Idea>): Record<string, unknown> 
     // reattaches a server-persisted cashcow.ai to empty/ai-less incoming
     // blocks, so a paid-for analysis is still never erased by this.
     row.cashcow = normalizeCashCow(idea.cashcow) ?? null;
+  }
+  if (idea.custom !== undefined) {
+    // Same clear-persists semantics as cashcow. NOTE: computePublished never
+    // looks at custom — custom-filter verdicts are private by design.
+    row.custom = normalizeCustomBlocks(idea.custom) ?? null;
   }
   if (idea.gates !== undefined) row.gates = idea.gates;
   if (idea.scores !== undefined) row.scores = idea.scores;

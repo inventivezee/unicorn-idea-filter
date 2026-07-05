@@ -21,7 +21,7 @@ import {
   requestTelemetry,
   resolveCaller,
 } from "@/lib/supabase/server";
-import { normalizeClarifications } from "@/lib/types";
+import { normalizeClarifications, normalizeCustomFilterSpec } from "@/lib/types";
 import type { ClarifyQuestion, ClarifyResponse } from "@/lib/types";
 
 // Question generation runs at low effort, but reasoning models still think.
@@ -39,7 +39,16 @@ export async function POST(request: Request) {
   const provider = providerFromBody(body.provider);
   const model = modelFromBody(body.model);
   // Frame the questions for the active scoring instrument.
-  const filter = body.filter === "cashcow" ? ("cashcow" as const) : ("unicorn" as const);
+  const filter =
+    body.filter === "cashcow"
+      ? ("cashcow" as const)
+      : body.filter === "custom"
+        ? ("custom" as const)
+        : ("unicorn" as const);
+  const customSpec =
+    filter === "custom"
+      ? (normalizeCustomFilterSpec(body.customSpec) ?? undefined)
+      : undefined;
   const description = field(body.description).trim();
   const founderBackground = field(body.founderBackground, MAX_BACKGROUND_CHARS);
   const coFounders = coFoundersFromBody(body.coFounders);
@@ -104,7 +113,7 @@ export async function POST(request: Request) {
     const result = await callProviderJSON({
       provider,
       model,
-      system: buildClarifySystemPrompt(filter),
+      system: buildClarifySystemPrompt(filter, customSpec),
       prompt: buildClarifyPrompt(
         description,
         founderBackground,

@@ -2,6 +2,7 @@ import { CC_FOUNDER_PERSONAL_GATES } from "@/lib/cashcow/criteria";
 import { GATES } from "@/lib/criteria";
 import {
   buildCashCowSystemPrompt,
+  buildCustomSystemPrompt,
   buildSystemPrompt,
   buildUserPrompt,
   METADATA_SYSTEM_PROMPT,
@@ -9,6 +10,7 @@ import {
 import type { AnalyzeRequestIdea } from "@/lib/ai/prompt";
 import {
   ANALYSIS_SCHEMA,
+  buildCustomAnalysisSchema,
   CC_ANALYSIS_SCHEMA,
   METADATA_SCHEMA,
 } from "@/lib/ai/schema";
@@ -25,7 +27,11 @@ import {
   readJsonBody,
   MAX_BACKGROUND_CHARS,
 } from "@/lib/ai/server";
-import { applyAnalysisToIdea, applyCashCowToIdea } from "@/lib/db/ideas";
+import {
+  applyAnalysisToIdea,
+  applyCashCowToIdea,
+  applyCustomToIdea,
+} from "@/lib/db/ideas";
 import {
   ANON_ANALYSES_PER_DAY,
   FREE_ANALYSES_PER_MONTH,
@@ -45,6 +51,8 @@ import {
   CRITERION_IDS,
   GATE_IDS,
   normalizeClarifications,
+  normalizeCustomFilterSpec,
+  specToSnapshot,
 } from "@/lib/types";
 import type {
   AnalyzeMetadataResponse,
@@ -227,8 +235,22 @@ export async function POST(request: Request) {
   }
 
   const mode = body.mode === "metadata" ? "metadata" : "full";
-  // Which scoring instrument: unicorn (venture-scale) or cashcow ($20M EBITDA).
-  const filter = body.filter === "cashcow" ? "cashcow" : "unicorn";
+  // Which scoring instrument: unicorn, cashcow, or a founder-designed custom
+  // filter (spec supplied by the client, re-validated here).
+  const filter =
+    body.filter === "cashcow"
+      ? "cashcow"
+      : body.filter === "custom"
+        ? "custom"
+        : "unicorn";
+  const customSpec =
+    filter === "custom" ? normalizeCustomFilterSpec(body.customSpec) : null;
+  if (filter === "custom" && !customSpec) {
+    return Response.json(
+      { error: "Invalid or missing custom filter definition." },
+      { status: 400 },
+    );
+  }
   const webSearch = mode === "full" && body.webSearch !== false;
   const provider = providerFromBody(body.provider);
   const model = modelFromBody(body.model);
@@ -386,7 +408,9 @@ export async function POST(request: Request) {
             ? "fill"
             : filter === "cashcow"
               ? "analyze_cashcow"
-              : "analyze",
+              : filter === "custom"
+                ? "analyze_custom"
+                : "analyze",
         ...telemetry,
         founder_background_snapshot: founderBackground || null,
         provider,
@@ -442,6 +466,73 @@ export async function POST(request: Request) {
 
     // Subscribers/admins (premium) search uncapped; free tier is budgeted.
     const searchBudget = tier === "premium" ? null : STANDARD_WEB_SEARCH_CAP;
+
+    if (filter === "custom" && customSpec) {
+      const snapshot = specToSnapshot(customSpec);
+      const result = await callProviderJSON({
+        provider,
+        model,
+        system: buildCustomSystemPrompt(customSpec, searchBudget),
+        prompt: userPrompt,
+        schemaName: "custom_analysis",
+        schema: buildCustomAnalysisSchema(customSpec),
+        webSearch,
+        speed: "quality",
+        tier,
+      });
+      const raw = parseLastJSON<RawAnalysis>(result.texts);
+      const gates: Record<string, { value: "Y" | "N" | "UNSURE"; rationale: string }> = {};
+      for (const g of customSpec.gates) {
+        const v = raw.gates?.[g.id];
+        gates[g.id] = {
+          value: v?.value === "Y" || v?.value === "N" ? v.value : "UNSURE",
+          rationale: v?.rationale ?? "",
+        };
+      }
+      const scores: Record<string, { score: number; rationale: string }> = {};
+      for (const c of customSpec.criteria) {
+        const sc = raw.scores?.[c.id];
+        scores[c.id] = {
+          score:
+            typeof sc?.score === "number"
+              ? Math.min(5, Math.max(0, Math.round(sc.score)))
+              : 0,
+          rationale: sc?.rationale ?? "",
+        };
+      }
+      const needsConfirmation = new Set<string>();
+      for (const g of customSpec.gates) {
+        if (gates[g.id].value === "UNSURE") needsConfirmation.add(g.id);
+      }
+      const confidence =
+        raw.confidence === "1.0" ? 1.0 : raw.confidence === "0.75" ? 0.75 : 0.5;
+      const response = {
+        summary: raw.summary ?? "",
+        metadata: normalizeMetadataBlock(raw.metadata),
+        founderProfile:
+          typeof raw.founderProfile === "string"
+            ? raw.founderProfile.trim().slice(0, 600)
+            : "",
+        gates,
+        scores,
+        confidence: confidence as 0.5 | 0.75 | 1.0,
+        confidenceRationale: raw.confidenceRationale ?? "",
+        validationTest30d: raw.validationTest30d ?? "",
+        needsFounderConfirmation: [...needsConfirmation],
+        provider,
+        model,
+        webSearches: result.webSearches,
+      };
+      if (persistTo) {
+        await applyCustomToIdea(adminClient(), persistTo, customSpec.id, snapshot, {
+          ...response,
+          metadata: response.metadata as unknown as Record<string, string>,
+        });
+      }
+      await logAnalysis?.(response.webSearches);
+      refundQuota = null; // result delivered — the analysis is spent fairly
+      return Response.json({ ...response, filterId: customSpec.id, snapshot });
+    }
 
     if (filter === "cashcow") {
       const result = await callProviderJSON({

@@ -14,6 +14,16 @@ import { CriteriaSection } from "@/components/idea/CriteriaSection";
 import { GatesSection } from "@/components/idea/GatesSection";
 import { ReframePanel } from "@/components/idea/ReframePanel";
 import { CcAIPanel } from "@/components/cashcow/CcAIPanel";
+import { CustomAIPanel } from "@/components/custom/CustomAIPanel";
+import {
+  CustomComputedPanel,
+  CustomConfidenceSection,
+  CustomCriteriaSection,
+  CustomGatesSection,
+  CustomValidationSection,
+  StaleSpecNote,
+  makeCustomPatch,
+} from "@/components/custom/CustomSections";
 import {
   CcComputedPanel,
   CcConfidenceSection,
@@ -103,9 +113,18 @@ export default function IdeaDetailPage() {
 
   const weights = state.settings.weights;
   const cashcowMode = state.settings.filterMode === "cashcow";
+  const activeSpec =
+    state.settings.filterMode === "custom"
+      ? state.settings.customFilters.find(
+          (f) => f.id === state.settings.activeCustomFilterId,
+        )
+      : undefined;
   const patch = (p: Partial<Idea> | ((latest: Idea) => Partial<Idea>)) =>
     updateIdea(idea.id, p);
   const ccPatch = makeCcPatch(patch);
+  const customPatch = activeSpec
+    ? makeCustomPatch(patch, activeSpec)
+    : null;
 
   function handleDelete() {
     if (!idea) return;
@@ -268,11 +287,53 @@ export default function IdeaDetailPage() {
             <ClarificationsEditor
               idea={idea}
               onPatch={patch}
-              activeFilter={cashcowMode ? "cashcow" : "unicorn"}
+              activeFilter={
+                activeSpec
+                  ? `custom:${activeSpec.id}`
+                  : cashcowMode
+                    ? "cashcow"
+                    : "unicorn"
+              }
             />
           </Section>
 
-          {cashcowMode ? (
+          {activeSpec && customPatch ? (
+            <>
+              <StaleSpecNote idea={idea} spec={activeSpec} />
+              <CustomAIPanel
+                idea={idea}
+                spec={activeSpec}
+                settings={state.settings}
+                onPatch={patch}
+              />
+              <ReframePanel
+                idea={idea}
+                settings={state.settings}
+                filter="custom"
+                customSpec={activeSpec}
+              />
+              <CustomGatesSection
+                idea={idea}
+                spec={activeSpec}
+                customPatch={customPatch}
+              />
+              <CustomCriteriaSection
+                idea={idea}
+                spec={activeSpec}
+                customPatch={customPatch}
+              />
+              <CustomConfidenceSection
+                idea={idea}
+                spec={activeSpec}
+                customPatch={customPatch}
+              />
+              <CustomValidationSection
+                idea={idea}
+                spec={activeSpec}
+                customPatch={customPatch}
+              />
+            </>
+          ) : cashcowMode ? (
             <>
               <CcAIPanel
                 idea={idea}
@@ -359,7 +420,9 @@ export default function IdeaDetailPage() {
         </div>
 
         <aside className="min-w-0 self-start lg:sticky lg:top-16">
-          {cashcowMode ? (
+          {activeSpec ? (
+            <CustomComputedPanel idea={idea} spec={activeSpec} />
+          ) : cashcowMode ? (
             <CcComputedPanel idea={idea} />
           ) : (
             <ComputedPanel idea={idea} weights={weights} onPatch={patch} />

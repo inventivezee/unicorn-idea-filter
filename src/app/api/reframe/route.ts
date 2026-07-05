@@ -46,6 +46,7 @@ import {
   CRITERION_IDS,
   GATE_IDS,
   normalizeClarifications,
+  normalizeCustomFilterSpec,
 } from "@/lib/types";
 import type { CcCriterionId, CriterionId } from "@/lib/types";
 
@@ -72,12 +73,16 @@ function weightsFromBody(value: unknown): Weights {
 
 /** Distill the instrument's weak points from gates/scores/rationales. */
 function buildWeaknesses(
-  filter: "unicorn" | "cashcow",
+  filter: "unicorn" | "cashcow" | "custom",
   gates: Record<string, unknown>,
   scores: Record<string, unknown>,
   gateRationales: Record<string, unknown>,
   scoreRationales: Record<string, unknown>,
   weights: Weights,
+  customSpec?: {
+    gates: { id: string; label: string; nMeans: string }[];
+    criteria: { id: string; label: string; weight: number }[];
+  },
 ): ReframeWeakness[] {
   const out: ReframeWeakness[] = [];
   // Rationales are user-supplied — cap them like every other prompt input so
@@ -87,6 +92,27 @@ function buildWeaknesses(
       ? ` — ${(m[id] as string).trim().slice(0, 500)}`
       : "";
 
+  if (filter === "custom" && customSpec) {
+    for (const g of customSpec.gates) {
+      if (gates[g.id] === "N") {
+        out.push({
+          label: `FAILED GATE: ${g.label}`,
+          detail: `${g.nMeans}${rationale(gateRationales, g.id)}`,
+        });
+      }
+    }
+    const meanWeight = 100 / Math.max(1, customSpec.criteria.length);
+    for (const c of customSpec.criteria) {
+      const v = scores[c.id];
+      if (typeof v === "number" && v <= 2) {
+        out.push({
+          label: `${c.weight >= meanWeight ? "Killer flag" : "Weak point"}: ${c.label} scored ${v}`,
+          detail: `Weight ${c.weight}/100${rationale(scoreRationales, c.id)}`,
+        });
+      }
+    }
+    return out.slice(0, 10);
+  }
   if (filter === "cashcow") {
     for (const id of CC_GATE_IDS) {
       if (gates[id] === "N") {
@@ -197,7 +223,22 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const filter = body.filter === "cashcow" ? ("cashcow" as const) : ("unicorn" as const);
+  const filter =
+    body.filter === "cashcow"
+      ? ("cashcow" as const)
+      : body.filter === "custom"
+        ? ("custom" as const)
+        : ("unicorn" as const);
+  const customSpec =
+    filter === "custom"
+      ? (normalizeCustomFilterSpec(body.customSpec) ?? undefined)
+      : undefined;
+  if (filter === "custom" && !customSpec) {
+    return Response.json(
+      { error: "Invalid or missing custom filter definition." },
+      { status: 400 },
+    );
+  }
   const provider = providerFromBody(body.provider);
   const model = modelFromBody(body.model);
   const rawIdea = record(body.idea);
@@ -247,7 +288,12 @@ export async function POST(request: Request) {
       await admin.from("submission_logs").insert({
         user_id: caller.user?.id ?? null,
         anon_key: caller.user ? null : anonKey,
-        action: filter === "cashcow" ? "reframe_cashcow" : "reframe",
+        action:
+          filter === "cashcow"
+            ? "reframe_cashcow"
+            : filter === "custom"
+              ? "reframe_custom"
+              : "reframe",
         ...telemetry,
         provider,
         model,
@@ -262,13 +308,14 @@ export async function POST(request: Request) {
     record(body.gateRationales),
     record(body.scoreRationales),
     weightsFromBody(body.weights),
+    customSpec,
   );
 
   try {
     const result = await callProviderJSON({
       provider,
       model,
-      system: buildReframeSystemPrompt(filter),
+      system: buildReframeSystemPrompt(filter, customSpec),
       prompt: buildReframePrompt(
         idea,
         weaknesses,

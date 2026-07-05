@@ -1,52 +1,47 @@
 "use client";
 
-// Cash Cow Filter pipeline table — the mode-specific replacement for the
-// unicorn table on the home page. Same ideas, different instrument: 11 gates,
-// 18 criteria, EBITDA-bar decisions, amber identity.
+// Pipeline table for a founder's custom filter (violet identity). Same shape
+// as the other instruments' tables, driven by the active spec.
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  ccAdjustedScore,
-  ccDecision,
-  ccGateStatus,
-  ccKillerFlags,
-  ccRawScore,
-} from "@/lib/cashcow/engine";
-import type { CcDecision, CcGateStatus } from "@/lib/cashcow/engine";
+  customAdjustedScore,
+  customDecision,
+  customGateStatus,
+  customRawScore,
+  emptyCustomBlock,
+} from "@/lib/custom/engine";
+import type { CustomDecision, CustomGateStatus } from "@/lib/custom/engine";
 import { isMetadataKind, useStore } from "@/lib/store";
-import { CC_GATE_IDS } from "@/lib/types";
-import type { Idea } from "@/lib/types";
-import { FlagIcon, fmtScore } from "@/components/ui";
-import { CcDecisionChip, ccBlockOf } from "./CcSections";
+import type { CustomFilterSpec, Idea } from "@/lib/types";
+import { fmtScore } from "@/components/ui";
+import { CustomDecisionChip, CustomGateChip } from "./CustomSections";
 
-interface CcRow {
+interface Row {
   idea: Idea;
-  gate: CcGateStatus;
+  gate: CustomGateStatus;
   answered: number;
   raw: number | null;
   adj: number | null;
-  dec: CcDecision;
-  flagCount: number;
+  dec: CustomDecision;
 }
 
 type SortKey = "name" | "gate" | "raw" | "adjusted" | "decision" | "updated";
 type SortDir = "asc" | "desc";
 
-const GATE_ORDER: Record<CcGateStatus, number> = {
+const GATE_ORDER: Record<CustomGateStatus, number> = {
   PASS: 0,
   PENDING: 1,
   FAIL: 2,
 };
-
-const DECISION_ORDER: Record<CcDecision, number> = {
-  "BUILD / HOLD / EXIT": 0,
+const DECISION_ORDER: Record<CustomDecision, number> = {
+  "GO / BUILD": 0,
   "VALIDATE FAST": 1,
   "PARK / NARROW": 2,
   "KILL / REFRAME": 3,
   "PENDING GATES": 4,
   "PENDING SCORES": 5,
 };
-
 const DEFAULT_DIR: Record<SortKey, SortDir> = {
   name: "asc",
   gate: "asc",
@@ -56,7 +51,7 @@ const DEFAULT_DIR: Record<SortKey, SortDir> = {
   updated: "desc",
 };
 
-function sortValue(row: CcRow, key: SortKey): string | number | null {
+function sortValue(row: Row, key: SortKey): string | number | null {
   switch (key) {
     case "name":
       return row.idea.name.trim() ? row.idea.name.toLowerCase() : null;
@@ -101,7 +96,7 @@ function HeaderCell({
       >
         <span className="whitespace-nowrap">{label}</span>
         <span
-          className="w-2 text-[10px] leading-none text-amber-600"
+          className="w-2 text-[10px] leading-none text-violet-600"
           aria-hidden
         >
           {active ? (sort.dir === "asc" ? "↑" : "↓") : ""}
@@ -111,23 +106,7 @@ function HeaderCell({
   );
 }
 
-function CcGateChip({ status }: { status: CcGateStatus }) {
-  const styles =
-    status === "PASS"
-      ? "border-amber-500 bg-amber-500 text-white"
-      : status === "FAIL"
-        ? "border-red-600 bg-red-600 text-white"
-        : "border-zinc-200 bg-zinc-100 text-zinc-500";
-  return (
-    <span
-      className={`inline-block whitespace-nowrap rounded border px-2 py-0.5 text-xs font-medium ${styles}`}
-    >
-      {status}
-    </span>
-  );
-}
-
-export function CcPipelineTable() {
+export function CustomPipelineTable({ spec }: { spec: CustomFilterSpec }) {
   const router = useRouter();
   const { state, analyzing } = useStore();
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({
@@ -135,26 +114,28 @@ export function CcPipelineTable() {
     dir: "desc",
   });
 
-  const rows = useMemo<CcRow[]>(
+  const rows = useMemo<Row[]>(
     () =>
       state.ideas.map((idea) => {
-        const cc = ccBlockOf(idea);
-        const raw = ccRawScore(cc.scores);
+        const block = idea.custom?.[spec.id] ?? emptyCustomBlock(spec);
+        const raw = customRawScore(block.scores, block.snapshot);
         return {
           idea,
-          gate: ccGateStatus(cc.gates),
-          answered: CC_GATE_IDS.filter((id) => cc.gates[id] !== null).length,
+          gate: customGateStatus(block.gates, block.snapshot),
+          answered: block.snapshot.gates.filter(
+            (g) => block.gates[g.id] !== null && block.gates[g.id] !== undefined,
+          ).length,
           raw,
-          adj: ccAdjustedScore(raw, cc.confidence),
-          dec: ccDecision({
-            gates: cc.gates,
-            scores: cc.scores,
-            confidence: cc.confidence,
+          adj: customAdjustedScore(raw, block.confidence),
+          dec: customDecision({
+            gates: block.gates,
+            scores: block.scores,
+            confidence: block.confidence,
+            snapshot: block.snapshot,
           }),
-          flagCount: ccKillerFlags(cc.scores).length,
         };
       }),
-    [state.ideas],
+    [state.ideas, spec],
   );
 
   const sorted = useMemo(() => {
@@ -183,26 +164,16 @@ export function CcPipelineTable() {
   }
 
   return (
-    <div className="rounded-lg border border-amber-200 bg-white">
+    <div className="rounded-lg border border-violet-200 bg-white">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[820px] border-collapse text-sm">
+        <table className="w-full min-w-[760px] border-collapse text-sm">
           <thead>
-            <tr className="border-b border-amber-100 bg-amber-50/40">
+            <tr className="border-b border-violet-100 bg-violet-50/40">
               <HeaderCell label="Name" sortKey="name" sort={sort} onSort={handleSort} />
               <HeaderCell label="Gates" sortKey="gate" sort={sort} onSort={handleSort} />
               <HeaderCell label="Raw" sortKey="raw" sort={sort} onSort={handleSort} align="right" />
-              <th className="px-3 py-0 text-right">
-                <span className="flex h-8 items-center justify-end text-xs font-medium text-zinc-500">
-                  Conf.
-                </span>
-              </th>
               <HeaderCell label="Adjusted (sort)" sortKey="adjusted" sort={sort} onSort={handleSort} align="right" />
               <HeaderCell label="Decision" sortKey="decision" sort={sort} onSort={handleSort} />
-              <th className="px-3 py-0 text-left">
-                <span className="flex h-8 items-center text-xs font-medium text-zinc-500">
-                  Flags
-                </span>
-              </th>
               <HeaderCell label="Updated" sortKey="updated" sort={sort} onSort={handleSort} align="right" />
             </tr>
           </thead>
@@ -211,7 +182,7 @@ export function CcPipelineTable() {
               <tr
                 key={row.idea.id}
                 onClick={() => router.push(`/idea/${row.idea.id}`)}
-                className="cursor-pointer border-b border-zinc-100 last:border-b-0 hover:bg-amber-50/40"
+                className="cursor-pointer border-b border-zinc-100 last:border-b-0 hover:bg-violet-50/40"
               >
                 <td className="px-3 py-2.5">
                   <span className="flex items-center gap-1.5">
@@ -222,19 +193,14 @@ export function CcPipelineTable() {
                     ) : (
                       <span className="italic text-zinc-400">(untitled)</span>
                     )}
-                    {row.idea.isExample ? (
-                      <span className="shrink-0 rounded bg-zinc-100 px-1 text-[10px] text-zinc-500">
-                        example
-                      </span>
-                    ) : null}
                     {analyzing[row.idea.id] ? (
                       <span
-                        className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+                        className="inline-flex shrink-0 items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700"
                         title="An AI request is still running for this idea."
                       >
                         <span
                           aria-hidden
-                          className="inline-block h-2.5 w-2.5 animate-spin rounded-full border border-amber-300 border-t-amber-600"
+                          className="inline-block h-2.5 w-2.5 animate-spin rounded-full border border-violet-300 border-t-violet-600"
                         />
                         {isMetadataKind(analyzing[row.idea.id])
                           ? "Filling…"
@@ -244,40 +210,21 @@ export function CcPipelineTable() {
                   </span>
                 </td>
                 <td className="whitespace-nowrap px-3 py-2.5">
-                  <CcGateChip status={row.gate} />
+                  <CustomGateChip status={row.gate} />
                   {row.gate === "PENDING" ? (
                     <span className="tnum ml-1.5 text-[10px] text-zinc-400">
-                      {row.answered}/{CC_GATE_IDS.length} answered
+                      {row.answered}/{spec.gates.length} answered
                     </span>
                   ) : null}
                 </td>
                 <td className="tnum px-3 py-2.5 text-right text-zinc-700">
                   {fmtScore(row.raw)}
                 </td>
-                <td className="tnum px-3 py-2.5 text-right text-zinc-700">
-                  {ccBlockOf(row.idea).confidence === null ? (
-                    <span className="text-zinc-300">—</span>
-                  ) : (
-                    `${(ccBlockOf(row.idea).confidence as number) * 100}%`
-                  )}
-                </td>
                 <td className="tnum px-3 py-2.5 text-right font-medium text-zinc-900">
                   {fmtScore(row.adj)}
                 </td>
                 <td className="px-3 py-2.5">
-                  <CcDecisionChip decision={row.dec} />
-                </td>
-                <td className="whitespace-nowrap px-3 py-2.5">
-                  {row.flagCount === 0 ? (
-                    <span className="text-zinc-300">—</span>
-                  ) : (
-                    Array.from({ length: row.flagCount }, (_, i) => (
-                      <FlagIcon
-                        key={i}
-                        title="Low score on a heavyweight cash criterion"
-                      />
-                    ))
-                  )}
+                  <CustomDecisionChip decision={row.dec} />
                 </td>
                 <td className="tnum px-3 py-2.5 text-right text-xs text-zinc-500">
                   {row.idea.updatedAt.slice(0, 10)}

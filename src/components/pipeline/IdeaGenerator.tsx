@@ -72,7 +72,20 @@ export function IdeaGenerator() {
   const settings = state.settings;
   const filter = settings.filterMode;
   const cashcow = filter === "cashcow";
-  const copy = COPY[filter];
+  const activeSpec =
+    filter === "custom"
+      ? settings.customFilters.find(
+          (f) => f.id === settings.activeCustomFilterId,
+        )
+      : undefined;
+  const copy = activeSpec
+    ? {
+        tagline: `Ideas matched to your own bar — ${activeSpec.question} Describe an industry, or leave it blank and I'll work from your background and live trend research.`,
+        button: "Generate ideas for my filter",
+        loading:
+          "Researching current trends and generating ideas matched to your filter — this can take a minute or two…",
+      }
+    : COPY[filter === "custom" ? "unicorn" : filter];
 
   const [industry, setIndustry] = useState("");
   const [loading, setLoading] = useState(false);
@@ -81,17 +94,18 @@ export function IdeaGenerator() {
   /** Generated-idea index → the pipeline id it was added under. */
   const [added, setAdded] = useState<Record<number, string>>({});
 
+  const storageKey = activeSpec ? `custom:${activeSpec.id}` : filter;
   // Restore this filter's last batch (mount + mode switches). Saving happens
   // at explicit mutation points, NOT in an effect — an effect-based save runs
   // with the initial empty state during StrictMode's double-invoke and would
   // clobber the stored batch before the restore's setState lands.
   useEffect(() => {
-    const stored = loadGen(filter);
+    const stored = loadGen(storageKey);
     setIdeas(stored?.ideas ?? null);
     setAdded(stored?.added ?? {});
     setIndustry(stored?.industry ?? "");
     setError(null);
-  }, [filter]);
+  }, [storageKey]);
 
   const hasBackground = settings.founderBackground.trim().length > 0;
   const accent = cashcow
@@ -100,11 +114,17 @@ export function IdeaGenerator() {
         chip: "bg-amber-50 text-amber-700",
         spinner: "border-t-amber-500",
       }
-    : {
-        border: "border-teal-200",
-        chip: "bg-teal-50 text-teal-700",
-        spinner: "border-t-teal-600",
-      };
+    : activeSpec
+      ? {
+          border: "border-violet-200",
+          chip: "bg-violet-50 text-violet-700",
+          spinner: "border-t-violet-500",
+        }
+      : {
+          border: "border-teal-200",
+          chip: "bg-teal-50 text-teal-700",
+          spinner: "border-t-teal-600",
+        };
 
   async function generate() {
     if (loading) return;
@@ -124,6 +144,7 @@ export function IdeaGenerator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           filter,
+          ...(activeSpec ? { customSpec: activeSpec } : {}),
           industry,
           founderBackground: settings.founderBackground,
           coFounders: settings.coFounders
@@ -167,7 +188,7 @@ export function IdeaGenerator() {
         return;
       }
       setIdeas(data.ideas);
-      saveGen(filter, { ideas: data.ideas, added: {}, industry });
+      saveGen(storageKey, { ideas: data.ideas, added: {}, industry });
     } catch {
       setError("Network error while generating ideas.");
     } finally {
@@ -191,7 +212,7 @@ export function IdeaGenerator() {
     });
     const nextAdded = { ...added, [index]: created.id };
     setAdded(nextAdded);
-    saveGen(filter, { ideas, added: nextAdded, industry });
+    saveGen(storageKey, { ideas, added: nextAdded, industry });
   }
 
   return (
@@ -203,7 +224,11 @@ export function IdeaGenerator() {
         <span
           className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${accent.chip}`}
         >
-          {cashcow ? "Cash Cow Filter" : "Unicorn Idea Filter"}
+          {activeSpec
+            ? activeSpec.name
+            : cashcow
+              ? "Cash Cow Filter"
+              : "Unicorn Idea Filter"}
         </span>
       </div>
       <p className="mt-0.5 text-xs text-zinc-500">{copy.tagline}</p>
@@ -215,7 +240,7 @@ export function IdeaGenerator() {
           disabled={loading}
           onChange={(e) => {
             setIndustry(e.target.value);
-            saveGen(filter, { ideas, added, industry: e.target.value });
+            saveGen(storageKey, { ideas, added, industry: e.target.value });
           }}
           onKeyDown={(e) => {
             // isComposing: IME users confirm compositions with Enter — that

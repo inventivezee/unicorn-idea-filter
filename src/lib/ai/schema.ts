@@ -239,3 +239,95 @@ export const REFRAME_SCHEMA = {
   required: ["reframes"],
   additionalProperties: false,
 } as const;
+
+/** Schema for AI-designing a custom filter from the founder's goals. */
+export const FILTER_DESIGN_SCHEMA = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    question: { type: "string" },
+    gates: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          label: { type: "string" },
+          yMeans: { type: "string" },
+          nMeans: { type: "string" },
+        },
+        required: ["label", "yMeans", "nMeans"],
+        additionalProperties: false,
+      },
+    },
+    criteria: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          label: { type: "string" },
+          weight: { type: "integer" },
+          anchor0: { type: "string" },
+          anchor3: { type: "string" },
+          anchor5: { type: "string" },
+        },
+        required: ["label", "weight", "anchor0", "anchor3", "anchor5"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["name", "question", "gates", "criteria"],
+  additionalProperties: false,
+} as const;
+
+/**
+ * Analysis schema for a CUSTOM filter — built at request time from the
+ * founder's spec (dynamic gate/criterion ids). Spec caps (≤9 gates, ≤14
+ * criteria) keep the compiled grammar comfortably inside the size budget the
+ * static schemas are tested against.
+ */
+export function buildCustomAnalysisSchema(spec: {
+  gates: { id: string }[];
+  criteria: { id: string }[];
+}): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: {
+      summary: { type: "string" },
+      metadata: METADATA_OBJECT,
+      founderProfile: { type: "string" },
+      gates: {
+        type: "object",
+        properties: Object.fromEntries(spec.gates.map((g) => [g.id, GATE_VALUE])),
+        required: spec.gates.map((g) => g.id),
+        additionalProperties: false,
+      },
+      scores: {
+        type: "object",
+        properties: Object.fromEntries(
+          spec.criteria.map((c) => [c.id, SCORE_VALUE]),
+        ),
+        required: spec.criteria.map((c) => c.id),
+        additionalProperties: false,
+      },
+      confidence: { type: "string", enum: ["0.5", "0.75", "1.0"] },
+      confidenceRationale: { type: "string" },
+      validationTest30d: { type: "string" },
+      needsFounderConfirmation: {
+        type: "array",
+        items: { type: "string", enum: spec.gates.map((g) => g.id) },
+      },
+    },
+    required: [
+      "summary",
+      "metadata",
+      "founderProfile",
+      "gates",
+      "scores",
+      "confidence",
+      "confidenceRationale",
+      "validationTest30d",
+      "needsFounderConfirmation",
+    ],
+    additionalProperties: false,
+  };
+}

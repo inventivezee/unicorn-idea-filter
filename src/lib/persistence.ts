@@ -1,7 +1,15 @@
 import { DEFAULT_WEIGHTS, CRITERIA_BY_ID } from "./criteria";
 import { defaultSettings, emptyGates, emptyScores, generateId, newIdea } from "./defaults";
 import { adjustedScore, decision, gateStatus, killerFlags, rawScore } from "./engine";
-import { CRITERION_IDS, GATE_IDS, normalizeCashCow, normalizeClarifications, stripLegacyClarificationsSuffix } from "./types";
+import {
+  CRITERION_IDS,
+  GATE_IDS,
+  normalizeCashCow,
+  normalizeClarifications,
+  normalizeCustomBlocks,
+  normalizeCustomFilterSpec,
+  stripLegacyClarificationsSuffix,
+} from "./types";
 import type {
   AIAnalysis,
   AppState,
@@ -100,8 +108,27 @@ export function normalizeState(data: unknown): AppState {
       }),
     webSearch: s.webSearch !== false,
     askClarifying: s.askClarifying !== false,
-    filterMode: s.filterMode === "cashcow" ? "cashcow" : "unicorn",
+    filterMode: "unicorn",
+    customFilters: (Array.isArray(s.customFilters) ? s.customFilters : [])
+      .map(normalizeCustomFilterSpec)
+      .filter((f): f is NonNullable<typeof f> => f !== null)
+      .slice(0, 5),
+    activeCustomFilterId: null,
   };
+  // Active custom filter only counts if it still exists; filterMode "custom"
+  // falls back to unicorn otherwise.
+  const activeId =
+    typeof s.activeCustomFilterId === "string" &&
+    settings.customFilters.some((f) => f.id === s.activeCustomFilterId)
+      ? s.activeCustomFilterId
+      : null;
+  settings.activeCustomFilterId = activeId;
+  settings.filterMode =
+    s.filterMode === "cashcow"
+      ? "cashcow"
+      : s.filterMode === "custom" && activeId
+        ? "custom"
+        : "unicorn";
   for (const id of CRITERION_IDS) {
     const w = s.weights?.[id];
     settings.weights[id] =
@@ -144,6 +171,8 @@ export function normalizeState(data: unknown): AppState {
     }
     const cashcow = normalizeCashCow(i.cashcow);
     if (cashcow) idea.cashcow = cashcow;
+    const custom = normalizeCustomBlocks(i.custom);
+    if (custom) idea.custom = custom;
     if (typeof i.topRiskOverride1 === "string") {
       idea.topRiskOverride1 = i.topRiskOverride1;
     }

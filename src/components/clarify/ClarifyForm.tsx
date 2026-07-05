@@ -5,7 +5,7 @@
 // wizard (at idea creation) and by the AI panels (pre-analysis in a filter
 // the idea hasn't been clarified for yet).
 import { useState } from "react";
-import type { Clarification, ClarifyQuestion, FilterMode } from "@/lib/types";
+import type { Clarification, ClarifyQuestion } from "@/lib/types";
 
 /** Per-question answer: any number of picked options, plus optional free text. */
 export interface ClarifyAnswer {
@@ -35,7 +35,8 @@ export function answerText(a: ClarifyAnswer | undefined): string {
 export function composeClarifications(
   questions: ClarifyQuestion[],
   answers: ClarifyAnswer[],
-  filter: FilterMode,
+  /** Instrument key: "unicorn", "cashcow", or "custom:<filterId>". */
+  filter: string,
 ): Clarification[] {
   return questions
     .map((q, i) => ({
@@ -82,11 +83,11 @@ export function normalizeClarifyQuestions(value: unknown): ClarifyQuestion[] {
 // clarify calls. Session-scoped on purpose: a fresh session may ask once more
 // (skippable, and previous answers are passed so nothing repeats verbatim).
 // ---------------------------------------------------------------------------
-function clarifyAskedKey(ideaId: string, filter: FilterMode): string {
+function clarifyAskedKey(ideaId: string, filter: string): string {
   return `clarify-asked:${ideaId}:${filter}`;
 }
 
-export function markClarifyAsked(ideaId: string, filter: FilterMode): void {
+export function markClarifyAsked(ideaId: string, filter: string): void {
   try {
     sessionStorage.setItem(clarifyAskedKey(ideaId, filter), "1");
   } catch {
@@ -94,7 +95,7 @@ export function markClarifyAsked(ideaId: string, filter: FilterMode): void {
   }
 }
 
-export function wasClarifyAsked(ideaId: string, filter: FilterMode): boolean {
+export function wasClarifyAsked(ideaId: string, filter: string): boolean {
   try {
     return sessionStorage.getItem(clarifyAskedKey(ideaId, filter)) === "1";
   } catch {
@@ -146,19 +147,32 @@ export function ClarifyQuestionList({
   answers: ClarifyAnswer[];
   onToggleChoice: (i: number, opt: string) => void;
   onPatchAnswer: (i: number, patch: Partial<ClarifyAnswer>) => void;
-  accent?: "teal" | "amber";
+  accent?: "teal" | "amber" | "violet";
 }) {
-  const ring = accent === "amber" ? "focus-visible:ring-amber-500" : "focus-visible:ring-teal-600";
+  const ring =
+    accent === "amber"
+      ? "focus-visible:ring-amber-500"
+      : accent === "violet"
+        ? "focus-visible:ring-violet-500"
+        : "focus-visible:ring-teal-600";
   const sel =
     accent === "amber"
       ? "border-amber-500 bg-amber-50 text-amber-900 ring-1 ring-amber-500"
-      : "border-teal-600 bg-teal-50 text-teal-900 ring-1 ring-teal-600";
+      : accent === "violet"
+        ? "border-violet-500 bg-violet-50 text-violet-900 ring-1 ring-violet-500"
+        : "border-teal-600 bg-teal-50 text-teal-900 ring-1 ring-teal-600";
   const hover =
     accent === "amber"
       ? "hover:border-amber-500 hover:bg-amber-50/40"
-      : "hover:border-teal-500 hover:bg-teal-50/40";
+      : accent === "violet"
+        ? "hover:border-violet-500 hover:bg-violet-50/40"
+        : "hover:border-teal-500 hover:bg-teal-50/40";
   const check =
-    accent === "amber" ? "border-amber-500 bg-amber-500" : "border-teal-600 bg-teal-600";
+    accent === "amber"
+      ? "border-amber-500 bg-amber-500"
+      : accent === "violet"
+        ? "border-violet-500 bg-violet-500"
+        : "border-teal-600 bg-teal-600";
   const rowBase = `w-full rounded-lg border px-3 py-2 text-left text-xs leading-relaxed transition-colors focus:outline-none focus-visible:ring-2 ${ring}`;
 
   return (

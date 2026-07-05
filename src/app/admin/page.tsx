@@ -16,7 +16,13 @@ import {
 } from "@/components/ui";
 import { computeDefaultRawScore } from "@/lib/db/types";
 import type { IdeaRow } from "@/lib/db/types";
-import { normalizeClarifications } from "@/lib/types";
+import {
+  customAdjustedScore,
+  customDecision,
+  customGateStatus,
+  customRawScore,
+} from "@/lib/custom/engine";
+import { normalizeClarifications, normalizeCustomBlocks } from "@/lib/types";
 import { useStore } from "@/lib/store";
 
 // ---------------------------------------------------------------------------
@@ -740,6 +746,85 @@ export default function AdminPage() {
                                   </p>
                                 )}
                               </div>
+                              {(() => {
+                                const blocks = normalizeCustomBlocks(
+                                  idea.custom,
+                                );
+                                const entries = Object.entries(blocks ?? {});
+                                if (!entries.length) return null;
+                                return (
+                                  <div>
+                                    <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+                                      Custom filters (private — owner &amp;
+                                      admin only)
+                                    </div>
+                                    <div className="mt-1 flex max-w-3xl flex-col gap-2">
+                                      {entries.map(([fid, block]) => {
+                                        const raw = customRawScore(
+                                          block.scores,
+                                          block.snapshot,
+                                        );
+                                        const adj = customAdjustedScore(
+                                          raw,
+                                          block.confidence,
+                                        );
+                                        const dec = customDecision({
+                                          gates: block.gates,
+                                          scores: block.scores,
+                                          confidence: block.confidence,
+                                          snapshot: block.snapshot,
+                                        });
+                                        return (
+                                          <div
+                                            key={fid}
+                                            className="rounded border border-violet-200 bg-violet-50/40 px-2.5 py-2 text-xs"
+                                          >
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <span className="font-medium text-violet-900">
+                                                {block.snapshot.name}
+                                              </span>
+                                              <Chip tone="zinc">
+                                                gates:{" "}
+                                                {customGateStatus(
+                                                  block.gates,
+                                                  block.snapshot,
+                                                )}
+                                              </Chip>
+                                              <Chip tone="zinc">{dec}</Chip>
+                                              <span className="tnum text-zinc-600">
+                                                raw {fmtScore(raw)} · adj{" "}
+                                                {fmtScore(adj)}
+                                              </span>
+                                              {block.ai ? (
+                                                <span className="text-zinc-400">
+                                                  {block.ai.model} ·{" "}
+                                                  {block.ai.analyzedAt.slice(
+                                                    0,
+                                                    10,
+                                                  )}
+                                                </span>
+                                              ) : null}
+                                            </div>
+                                            <p className="mt-1 text-zinc-500">
+                                              “{block.snapshot.question}”
+                                            </p>
+                                            {block.ai?.summary ? (
+                                              <p className="mt-1 whitespace-pre-wrap text-zinc-600">
+                                                {block.ai.summary}
+                                              </p>
+                                            ) : (
+                                              <p className="mt-1 text-zinc-400">
+                                                Not AI-analyzed in this filter
+                                                yet.
+                                              </p>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
                               <div>
                                 <div className="flex items-center gap-2">
                                   <Button

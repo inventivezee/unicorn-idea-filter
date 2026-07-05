@@ -60,6 +60,8 @@ export function defaultSettings(): Settings {
     webSearch: true,
     askClarifying: true,
     filterMode: "unicorn",
+    customFilters: [],
+    activeCustomFilterId: null,
   };
 }
 

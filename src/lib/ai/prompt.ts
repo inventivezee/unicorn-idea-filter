@@ -171,14 +171,24 @@ const CLARIFY_TARGETS = {
     "the $20M-EBITDA path gate, the 25%+ mature-margin gate, FCF conversion / working capital, the repeatable sales engine, customer concentration, founder control (33%+ equity, 50%+ voting), and durability vs AI/platform compression",
 } as const;
 
-/** Clarify prompt, framed for the active scoring instrument. */
+/** Clarify prompt, framed for the active scoring instrument. For custom
+ *  filters, pass the spec so questions aim at the founder's own bar. */
 export function buildClarifySystemPrompt(
-  filter: "unicorn" | "cashcow",
+  filter: "unicorn" | "cashcow" | "custom",
+  customSpec?: CustomSpecPromptShape,
 ): string {
-  return `You help a founder sharpen a ${filter === "cashcow" ? "business" : "startup"} idea before it enters a scoring pipeline. Given a rough idea description (and optionally the founder's background), ask exactly 3 to 5 short clarifying questions that target ${CLARIFY_FOCUS[filter]}.
+  const focus =
+    filter === "custom" && customSpec
+      ? `the biggest ambiguities ${customFilterFocus(customSpec)} would hit`
+      : CLARIFY_FOCUS[filter === "custom" ? "unicorn" : filter];
+  const targets =
+    filter === "custom" && customSpec
+      ? `${customSpec.gates.map((g) => g.label).slice(0, 5).join(", ")}, and the heavyweight criteria of "${customSpec.name}"`
+      : CLARIFY_TARGETS[filter === "custom" ? "unicorn" : filter];
+  return `You help a founder sharpen a ${filter === "unicorn" ? "startup" : "business"} idea before it enters a scoring pipeline. Given a rough idea description (and optionally the founder's background), ask exactly 3 to 5 short clarifying questions that target ${focus}.
 
 Rules:
-- Aim each question at a specific gate or heavyweight criterion of this instrument — ${CLARIFY_TARGETS[filter]}. A perfect question is one whose answer could flip a gate or move a heavily-weighted score.
+- Aim each question at a specific gate or heavyweight criterion of this instrument — ${targets}. A perfect question is one whose answer could flip a gate or move a heavily-weighted score.
 - Never ask about something the description already answers, and never re-ask anything covered by the founder's previous clarification answers if any are provided — go deeper or attack a different unknown instead.
 - Ask about facts and choices the founder actually controls or knows (their buyer, pricing, channel, costs, commitments) — not predictions nobody can answer.
 - Each question must be answerable in a sentence or two — no essays, no multi-part questions.
@@ -262,12 +272,24 @@ const GEN_BAR = {
     "profitable, PE-style business ideas that could plausibly clear the Cash Cow bar: a realistic path to $20M+ EBITDA/year, 25%+ mature EBITDA margins, high free-cash-flow conversion with low working-capital drag, customer-funded or lightly financed so the founder keeps 33%+ equity and voting control, a repeatable sales engine, and durability against AI/platform commoditization. Boring-but-rich niches with expensive recurring pain beat glamorous crowded spaces",
 } as const;
 
-/** System prompt for idea generation, framed for the active instrument. */
+/** System prompt for idea generation, framed for the active instrument. For
+ *  custom filters, the bar comes from the founder's own spec. */
 export function buildGenerateSystemPrompt(
-  filter: "unicorn" | "cashcow",
+  filter: "unicorn" | "cashcow" | "custom",
   searchBudget: number | null,
+  customSpec?: CustomSpecPromptShape,
 ): string {
-  return `You are an elite ideation partner inside the ${filter === "cashcow" ? "Cash Cow Filter" : "Unicorn Idea Filter"}. Generate exactly 5 ${GEN_BAR[filter]}.
+  const bar =
+    filter === "custom" && customSpec
+      ? `business ideas that could plausibly clear the founder's own instrument "${customSpec.name}": ${customSpec.question} Their goals:\n${formatFilterInputs(customSpec.inputs)}\nIdeas must fit that life — the profit target within the time horizon at the stated hours, respecting every stated constraint`
+      : GEN_BAR[filter === "custom" ? "unicorn" : filter];
+  const instrument =
+    filter === "cashcow"
+      ? "Cash Cow Filter"
+      : filter === "custom" && customSpec
+        ? customSpec.name
+        : "Unicorn Idea Filter";
+  return `You are an elite ideation partner inside the ${instrument}. Generate exactly 5 ${bar}.
 
 Rules:
 - Grounding order: if an industry brief is provided, every idea anchors in it (interpreted honestly, not stretched). Otherwise derive ideas from the founder's background — their unfair advantages, networks, and scar tissue. If neither is available, work purely from current timing inflections found via web research.
@@ -311,9 +333,16 @@ Research, then generate the 5 ideas now.`;
 
 /** System prompt for reframing a weak idea, framed for the active instrument. */
 export function buildReframeSystemPrompt(
-  filter: "unicorn" | "cashcow",
+  filter: "unicorn" | "cashcow" | "custom",
+  customSpec?: { name: string; question: string },
 ): string {
-  return `You help a founder rescue a ${filter === "cashcow" ? "business" : "startup"} idea that scored poorly on the ${filter === "cashcow" ? "Cash Cow Filter ($20M+ EBITDA/year with durable enterprise value)" : "Unicorn Idea Filter (venture-scale, category-defining)"}. You get the idea, its gate answers and scores, the evaluator's rationales, and a distilled list of its weakest points.
+  const instrument =
+    filter === "cashcow"
+      ? "Cash Cow Filter ($20M+ EBITDA/year with durable enterprise value)"
+      : filter === "custom" && customSpec
+        ? `founder's own instrument "${customSpec.name}" (${customSpec.question})`
+        : "Unicorn Idea Filter (venture-scale, category-defining)";
+  return `You help a founder rescue a ${filter === "unicorn" ? "startup" : "business"} idea that scored poorly on the ${instrument}. You get the idea, its gate answers and scores, the evaluator's rationales, and a distilled list of its weakest points.
 
 Propose exactly 3 to 5 REFRAMES. A reframe is a substantive mutation — change the buyer, the wedge, the business model, the delivery mechanism, the geography, or the scope — so that the SPECIFIC weaknesses are structurally fixed, not reworded away. Preserve what already works, especially anything that leans on the founder's own edge.
 
@@ -371,4 +400,115 @@ ${team}
 ` : ""}${formatClarifications(clarifications)}
 
 Generate the reframes now.`;
+}
+// ---------------------------------------------------------------------------
+// Custom filters — founder-designed instruments.
+// ---------------------------------------------------------------------------
+
+export interface CustomFilterInputsPrompt {
+  netProfitTarget: number;
+  hoursPerDay: number;
+  yearsToBuild: number;
+  capitalAvailable: string;
+  maxTeamSize: string;
+  wantsToSell: string;
+  otherQualities: string;
+}
+
+function formatFilterInputs(inputs: CustomFilterInputsPrompt): string {
+  return [
+    `- Target net profit: $${Math.round(inputs.netProfitTarget).toLocaleString("en-US")} per year`,
+    `- Hours/day they want to work: ${inputs.hoursPerDay}`,
+    `- Years they're willing to spend building: ${inputs.yearsToBuild}`,
+    inputs.capitalAvailable ? `- Capital available to invest: ${inputs.capitalAvailable}` : "",
+    inputs.maxTeamSize ? `- Max team size: ${inputs.maxTeamSize}` : "",
+    `- Wants to eventually sell the business: ${inputs.wantsToSell}`,
+    inputs.otherQualities ? `- Other qualities that matter to them: ${inputs.otherQualities}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export const FILTER_DESIGN_SYSTEM_PROMPT = `You design a personal business-idea scoring instrument for one founder, in the exact structural style of a venture "unicorn filter" — but calibrated to THEIR stated life goals, which may be much more modest than venture scale (that is the point: not everyone wants a unicorn or $20M EBITDA; many want $1M/yr and a good life).
+
+You will receive the founder's goals (target net profit, working hours, time horizon, capital, team size, sell intention, other qualities) and optionally their background. Produce:
+- name: a short, memorable filter name that reflects their goal (under 40 characters, e.g. "Good Life Filter — $1M/yr").
+- question: the instrument's single core question, mentioning the concrete profit target, time horizon, and hours (under 250 characters).
+- gates: 5 to 8 hard pass/fail gates. Each has label (short), yMeans (what a YES concretely means) and nMeans (what a NO means — the kill condition). Gates must encode the founder's non-negotiables: the profit target being reachable within their horizon AND hours, capital fitting what they have, team fitting their max size, plus universal viability gates (real pain someone pays for, reachable buyers, legal feasibility). If they never want to sell, durability-of-income matters more than exit value; if they do, transferability gates in.
+- criteria: 8 to 12 scoring criteria with integer weights that SUM TO EXACTLY 100, each with anchors: anchor0 (what a 0 looks like), anchor3 (a 3), anchor5 (a 5). Weight what the founder cares about most heavily. Include criteria unique to their goals — e.g. profit per founder-hour, automation leverage, time-to-first-dollar, stress/complexity load, schedule flexibility, founder-market fit — not a generic VC checklist.
+
+Rules:
+- Anchors and gate meanings must be concrete and judgeable from an idea description, not vague ("can plausibly net $80k+/month within 4 years at ~8h/day" — not "makes good money").
+- Do NOT include criteria about things the founder explicitly doesn't want (no fundraising criteria if they never want investors).
+- Keep every string tight: labels under 12 words, anchors and gate meanings 1-2 sentences.
+- The instrument should be demanding but fair: a mediocre idea should fail it; an idea genuinely matching their goals should pass.`;
+
+export function buildFilterDesignPrompt(
+  inputs: CustomFilterInputsPrompt,
+  founderBackground: string,
+  coFounders: CoFounderInput[] = [],
+): string {
+  const team = formatFoundingTeam(founderBackground, coFounders);
+  const hasTeam = !team.startsWith("(none provided");
+  return `## The founder's goals
+
+${formatFilterInputs(inputs)}
+${hasTeam ? `\n## Founder background (tailor founder-fit criteria to this)\n\n${team}\n` : ""}
+Design the filter now.`;
+}
+
+export interface CustomSpecPromptShape {
+  name: string;
+  question: string;
+  gates: { id: string; label: string; yMeans: string; nMeans: string }[];
+  criteria: {
+    id: string;
+    label: string;
+    weight: number;
+    anchor0: string;
+    anchor3: string;
+    anchor5: string;
+  }[];
+  inputs: CustomFilterInputsPrompt;
+}
+
+/** Analysis system prompt for a founder-designed custom filter. */
+export function buildCustomSystemPrompt(
+  spec: CustomSpecPromptShape,
+  searchBudget: number | null,
+): string {
+  return `You are a rigorous evaluator inside "${spec.name}" — a personal scoring instrument this founder designed around their own goals. The instrument's core question: ${spec.question}
+
+The founder's stated goals (judge against THESE, not venture-scale or PE norms):
+${formatFilterInputs(spec.inputs)}
+
+You will receive a business idea and the founder's background. Evaluate the idea exactly against the gates and criteria below. Be calibrated and unsentimental: most ideas should NOT pass every gate or score above 3 on most criteria — killing weak ideas early is the product working. Judge whether THIS idea fits THIS founder's stated life, not whether it could be bigger.
+
+Rules:
+- summary: a 3–5 sentence assessment against the instrument's core question, referencing the founder's goals where relevant.
+- Every gate and criterion rationale: 1–2 sentences of evidence-based reasoning referencing specifics.
+- Always fill the metadata block from the description: a short memorable name (under 40 characters), domain, business model, buyer/ICP, and initial wedge.
+- founderProfile: a 1–3 sentence ANONYMISED profile of the founding team, categorical terms only — never names, employers, schools, or locations. Empty string if no background was provided.
+${webSearchRule(searchBudget)}
+- Score each criterion as an integer 0–5 using the anchors given (values between anchors interpolate).
+- Answer each gate Y or N when the information supports a clear call; use UNSURE when it genuinely does not.
+- Founder-personal judgements (fit, hours, commitment) must be grounded in the founding-team background provided; if it's missing or thin, mark those gates UNSURE and score fit conservatively.
+- Confidence reflects evidence quality: 0.5 unless the description cites concrete external evidence, then 0.75; reserve 1.0 for strong proof.
+- The 30-day validation test must attack the single biggest risk, be executable by one or two people in 30 days, and include a numeric pass/fail threshold.
+
+Gates (hard pass/fail):
+${spec.gates.map((g) => `- ${g.id} · ${g.label} — Y: ${g.yMeans}. N: ${g.nMeans}.`).join("\n")}
+
+Criteria (0–5, weights sum to 100):
+${spec.criteria.map((c) => `- ${c.id} · ${c.label} (weight ${c.weight}) — 0: ${c.anchor0}. 3: ${c.anchor3}. 5: ${c.anchor5}.`).join("\n")}`;
+}
+
+/** One-line summary of a custom spec for clarify/generate/reframe framing. */
+export function customFilterFocus(spec: CustomSpecPromptShape): string {
+  const heavyweight = [...spec.criteria]
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 5)
+    .map((c) => c.label)
+    .join(", ");
+  return `the founder's own instrument "${spec.name}" (${spec.question}) — its heavyweight criteria: ${heavyweight}`;
 }

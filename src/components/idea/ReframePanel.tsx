@@ -10,10 +10,16 @@ import { useState } from "react";
 import { getAnonKey } from "@/lib/anon";
 import { ccDecision } from "@/lib/cashcow/engine";
 import { emptyCashCowBlock } from "@/lib/cashcow/engine";
+import { customDecision, emptyCustomBlock } from "@/lib/custom/engine";
 import { decision } from "@/lib/engine";
 import { useStore } from "@/lib/store";
 import { Button, Section } from "@/components/ui";
-import type { FilterMode, Idea, Settings } from "@/lib/types";
+import type {
+  CustomFilterSpec,
+  FilterMode,
+  Idea,
+  Settings,
+} from "@/lib/types";
 
 interface Reframe {
   name: string;
@@ -26,10 +32,13 @@ export function ReframePanel({
   idea,
   settings,
   filter,
+  customSpec,
 }: {
   idea: Idea;
   settings: Settings;
   filter: FilterMode;
+  /** Required when filter === "custom". */
+  customSpec?: CustomFilterSpec;
 }) {
   const { addIdea } = useStore();
   const router = useRouter();
@@ -42,7 +51,18 @@ export function ReframePanel({
   // Only offer reframes once the instrument has actually judged the idea
   // weak — that's when "reframe" is the decision ladder's own advice.
   const cc = idea.cashcow ?? emptyCashCowBlock();
-  const dec = cashcow
+  const custom =
+    filter === "custom" && customSpec
+      ? (idea.custom?.[customSpec.id] ?? emptyCustomBlock(customSpec))
+      : null;
+  const dec = custom
+    ? customDecision({
+        gates: custom.gates,
+        scores: custom.scores,
+        confidence: custom.confidence,
+        snapshot: custom.snapshot,
+      })
+    : cashcow
     ? ccDecision({
         gates: cc.gates,
         scores: cc.scores,
@@ -68,7 +88,7 @@ export function ReframePanel({
     setReframes(null);
     setAdded({});
     try {
-      const ai = cashcow ? idea.cashcow?.ai : idea.ai;
+      const ai = custom ? custom.ai : cashcow ? idea.cashcow?.ai : idea.ai;
       const res = await fetch("/api/reframe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -82,9 +102,10 @@ export function ReframePanel({
             initialWedge: idea.initialWedge,
             thesisNotes: idea.thesisNotes,
           },
-          gates: cashcow ? cc.gates : idea.gates,
-          scores: cashcow ? cc.scores : idea.scores,
+          gates: custom ? custom.gates : cashcow ? cc.gates : idea.gates,
+          scores: custom ? custom.scores : cashcow ? cc.scores : idea.scores,
           weights: settings.weights,
+          ...(filter === "custom" && customSpec ? { customSpec } : {}),
           gateRationales: ai?.gateRationales ?? {},
           scoreRationales: ai?.scoreRationales ?? {},
           aiSummary: ai?.summary ?? "",
@@ -147,9 +168,11 @@ export function ReframePanel({
     <Section
       title="Reframe this idea"
       description={
-        cashcow
-          ? "It missed the EBITDA bar as-is. Generate mutations that attack its specific weaknesses — different buyer, wedge, model, or scope."
-          : "It missed the venture bar as-is. Generate mutations that attack its specific weaknesses — different buyer, wedge, model, or scope."
+        custom && customSpec
+          ? `It missed your “${customSpec.name}” bar as-is. Generate mutations that attack its specific weaknesses — different buyer, wedge, model, or scope.`
+          : cashcow
+            ? "It missed the EBITDA bar as-is. Generate mutations that attack its specific weaknesses — different buyer, wedge, model, or scope."
+            : "It missed the venture bar as-is. Generate mutations that attack its specific weaknesses — different buyer, wedge, model, or scope."
       }
     >
       <div className="flex flex-wrap items-center gap-3">
@@ -165,7 +188,11 @@ export function ReframePanel({
             <span
               aria-hidden
               className={`inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-200 ${
-                cashcow ? "border-t-amber-500" : "border-t-teal-600"
+                custom
+                  ? "border-t-violet-500"
+                  : cashcow
+                    ? "border-t-amber-500"
+                    : "border-t-teal-600"
               }`}
             />
             Studying the weaknesses and generating reframes…

@@ -32,7 +32,8 @@ const FILTER_META = {
   },
 } as const;
 
-/** Top-left brand — a dropdown that switches between the two instruments. */
+/** Top-left brand — a dropdown switching between the built-in instruments
+ *  and the founder's own custom filters. */
 function FilterSwitcher() {
   const { state, updateSettings, settingsHydrated } = useStore();
   const router = useRouter();
@@ -40,7 +41,18 @@ function FilterSwitcher() {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const mode = state.settings.filterMode;
-  const meta = FILTER_META[mode];
+  const customFilters = state.settings.customFilters;
+  const activeCustom =
+    mode === "custom"
+      ? customFilters.find((f) => f.id === state.settings.activeCustomFilterId)
+      : undefined;
+  const meta = activeCustom
+    ? {
+        label: activeCustom.name,
+        question: activeCustom.question,
+        dot: "bg-violet-500",
+      }
+    : FILTER_META[mode === "custom" ? "unicorn" : mode];
 
   useEffect(() => {
     if (!open) return;
@@ -90,56 +102,120 @@ function FilterSwitcher() {
       </button>
       {open ? (
         <div className="absolute left-0 top-full z-30 w-72 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg">
-          {(Object.keys(FILTER_META) as (keyof typeof FILTER_META)[]).map(
-            (key) => {
-              const m = FILTER_META[key];
-              const active = key === mode;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    if (active) return;
-                    updateSettings({ filterMode: key });
-                    // Compare/Dashboard are unicorn-only — don't strand the
-                    // user on a page whose nav link just disappeared.
-                    if (
-                      key === "cashcow" &&
-                      (pathname.startsWith("/compare") ||
-                        pathname.startsWith("/dashboard"))
-                    ) {
-                      router.push("/");
-                    }
-                  }}
-                  className={`block w-full px-3 py-2 text-left transition-colors ${
-                    active ? "bg-zinc-50" : "hover:bg-zinc-50"
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <span
-                      aria-hidden
-                      className={`h-2 w-2 shrink-0 rounded-full ${m.dot}`}
-                    />
-                    <span className="text-sm font-medium text-zinc-900">
-                      {m.label}
+          {(["unicorn", "cashcow"] as const).map((key) => {
+            const m = FILTER_META[key];
+            const active = key === mode;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  if (active) return;
+                  updateSettings({ filterMode: key });
+                  // Compare/Dashboard are unicorn-only — don't strand the
+                  // user on a page whose nav link just disappeared.
+                  if (
+                    key !== "unicorn" &&
+                    (pathname.startsWith("/compare") ||
+                      pathname.startsWith("/dashboard"))
+                  ) {
+                    router.push("/");
+                  }
+                }}
+                className={`block w-full px-3 py-2 text-left transition-colors ${
+                  active ? "bg-zinc-50" : "hover:bg-zinc-50"
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <span
+                    aria-hidden
+                    className={`h-2 w-2 shrink-0 rounded-full ${m.dot}`}
+                  />
+                  <span className="text-sm font-medium text-zinc-900">
+                    {m.label}
+                  </span>
+                  {active ? (
+                    <span className="ml-auto text-[10px] font-medium text-zinc-400">
+                      current
                     </span>
-                    {active ? (
-                      <span className="ml-auto text-[10px] font-medium text-zinc-400">
-                        current
-                      </span>
-                    ) : null}
+                  ) : null}
+                </span>
+                <span className="mt-0.5 block pl-4 text-xs text-zinc-500">
+                  {m.question}
+                </span>
+              </button>
+            );
+          })}
+          {customFilters.map((f) => {
+            const active =
+              mode === "custom" &&
+              state.settings.activeCustomFilterId === f.id;
+            return (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  if (active) return;
+                  updateSettings({
+                    filterMode: "custom",
+                    activeCustomFilterId: f.id,
+                  });
+                  if (
+                    pathname.startsWith("/compare") ||
+                    pathname.startsWith("/dashboard")
+                  ) {
+                    router.push("/");
+                  }
+                }}
+                className={`block w-full px-3 py-2 text-left transition-colors ${
+                  active ? "bg-zinc-50" : "hover:bg-zinc-50"
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <span
+                    aria-hidden
+                    className="h-2 w-2 shrink-0 rounded-full bg-violet-500"
+                  />
+                  <span className="truncate text-sm font-medium text-zinc-900">
+                    {f.name}
                   </span>
-                  <span className="mt-0.5 block pl-4 text-xs text-zinc-500">
-                    {m.question}
-                  </span>
-                </button>
-              );
-            },
-          )}
+                  {active ? (
+                    <span className="ml-auto shrink-0 text-[10px] font-medium text-zinc-400">
+                      current
+                    </span>
+                  ) : null}
+                </span>
+                <span className="mt-0.5 block truncate pl-4 text-xs text-zinc-500">
+                  {f.question}
+                </span>
+              </button>
+            );
+          })}
+          <Link
+            href="/filters"
+            onClick={() => setOpen(false)}
+            className="block w-full border-t border-zinc-100 px-3 py-2 text-left transition-colors hover:bg-zinc-50"
+          >
+            <span className="flex items-center gap-2">
+              <span
+                aria-hidden
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-dashed border-violet-400 text-[10px] leading-none text-violet-500"
+              >
+                +
+              </span>
+              <span className="text-sm font-medium text-violet-700">
+                {customFilters.length ? "Manage custom filters" : "Create your own filter…"}
+              </span>
+            </span>
+            <span className="mt-0.5 block pl-6 text-xs text-zinc-500">
+              Design a filter around YOUR goals — e.g. $1M/yr and a good life.
+            </span>
+          </Link>
           <p className="border-t border-zinc-100 px-3 pb-1 pt-1.5 text-[10px] text-zinc-400">
             Same ideas, different instrument — each filter keeps its own gates,
-            scores, and AI analysis.
+            scores, and AI analysis. Custom-filter verdicts are never public.
           </p>
         </div>
       ) : null}
@@ -335,12 +411,15 @@ export function Nav() {
     pendingLocalImport,
     importLocalIdeas,
   } = useStore();
-  const cashcowMode =
-    settingsHydrated && state.settings.filterMode === "cashcow";
-  const navLinks = cashcowMode ? CASHCOW_LINKS : LINKS;
-  const accent = cashcowMode
-    ? { border: "border-amber-500", text: "text-amber-700", bg: "bg-amber-50" }
-    : { border: "border-teal-600", text: "text-teal-700", bg: "bg-teal-50" };
+  const activeMode = settingsHydrated ? state.settings.filterMode : "unicorn";
+  // Compare/Dashboard read the unicorn instrument — hidden in other modes.
+  const navLinks = activeMode === "unicorn" ? LINKS : CASHCOW_LINKS;
+  const accent =
+    activeMode === "cashcow"
+      ? { border: "border-amber-500", text: "text-amber-700", bg: "bg-amber-50" }
+      : activeMode === "custom"
+        ? { border: "border-violet-500", text: "text-violet-700", bg: "bg-violet-50" }
+        : { border: "border-teal-600", text: "text-teal-700", bg: "bg-teal-50" };
   const [mobileOpen, setMobileOpen] = useState(false);
 
   // Close the drawer whenever the route changes.

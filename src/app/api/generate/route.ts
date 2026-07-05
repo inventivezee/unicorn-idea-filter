@@ -34,6 +34,7 @@ import {
   requestTelemetry,
   resolveCaller,
 } from "@/lib/supabase/server";
+import { normalizeCustomFilterSpec } from "@/lib/types";
 
 // Research + generation with a thinking model takes a while.
 export const maxDuration = 300;
@@ -84,7 +85,22 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const filter = body.filter === "cashcow" ? ("cashcow" as const) : ("unicorn" as const);
+  const filter =
+    body.filter === "cashcow"
+      ? ("cashcow" as const)
+      : body.filter === "custom"
+        ? ("custom" as const)
+        : ("unicorn" as const);
+  const customSpec =
+    filter === "custom"
+      ? (normalizeCustomFilterSpec(body.customSpec) ?? undefined)
+      : undefined;
+  if (filter === "custom" && !customSpec) {
+    return Response.json(
+      { error: "Invalid or missing custom filter definition." },
+      { status: 400 },
+    );
+  }
   const provider = providerFromBody(body.provider);
   const model = modelFromBody(body.model);
   const industry = field(body.industry, 2000).trim();
@@ -190,7 +206,12 @@ export async function POST(request: Request) {
       await admin.from("submission_logs").insert({
         user_id: caller.user?.id ?? null,
         anon_key: caller.user ? null : anonKey,
-        action: filter === "cashcow" ? "generate_cashcow" : "generate",
+        action:
+          filter === "cashcow"
+            ? "generate_cashcow"
+            : filter === "custom"
+              ? "generate_custom"
+              : "generate",
         ...telemetry,
         founder_background_snapshot: founderBackground || null,
         provider,
@@ -205,7 +226,7 @@ export async function POST(request: Request) {
     const result = await callProviderJSON({
       provider,
       model,
-      system: buildGenerateSystemPrompt(filter, searchBudget),
+      system: buildGenerateSystemPrompt(filter, searchBudget, customSpec),
       prompt: buildGeneratePrompt(
         industry,
         founderBackground,

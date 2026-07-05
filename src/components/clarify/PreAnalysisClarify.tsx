@@ -19,6 +19,7 @@ import {
 import type {
   Clarification,
   ClarifyQuestion,
+  CustomFilterSpec,
   FilterMode,
   Idea,
   Settings,
@@ -28,11 +29,14 @@ export function PreAnalysisClarify({
   idea,
   settings,
   filter,
+  customSpec,
   onReady,
 }: {
   idea: Idea;
   settings: Settings;
   filter: FilterMode;
+  /** Required when filter === "custom": frames the questions to the spec. */
+  customSpec?: CustomFilterSpec;
   /** Called with the NEW answers to append (empty = proceed without any). */
   onReady: (extra: Clarification[]) => void;
 }) {
@@ -43,7 +47,11 @@ export function PreAnalysisClarify({
   // entirely — consistently drop, never launch an analysis nobody is watching
   // for. The user simply clicks Analyze again when they return.
   const cancelledRef = useRef(false);
-  const accent = filter === "cashcow" ? "amber" : "teal";
+  const accent =
+    filter === "cashcow" ? "amber" : filter === "custom" ? "violet" : "teal";
+  // Answers are tagged per instrument; custom filters tag per filter id.
+  const tagKey =
+    filter === "custom" && customSpec ? `custom:${customSpec.id}` : filter;
 
   useEffect(() => {
     // Reset on every (re)mount — StrictMode's simulated unmount runs the
@@ -80,6 +88,7 @@ export function PreAnalysisClarify({
             model: settings.models[settings.provider],
             anonKey: getAnonKey(),
             filter,
+            ...(customSpec ? { customSpec } : {}),
           }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -106,7 +115,11 @@ export function PreAnalysisClarify({
         <span
           aria-hidden
           className={`inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-200 ${
-            accent === "amber" ? "border-t-amber-500" : "border-t-teal-600"
+            accent === "amber"
+              ? "border-t-amber-500"
+              : accent === "violet"
+                ? "border-t-violet-500"
+                : "border-t-teal-600"
           }`}
         />
         Preparing a few clarifying questions for this filter…
@@ -137,7 +150,9 @@ export function PreAnalysisClarify({
       <p className="text-sm font-semibold text-zinc-900">
         {filter === "cashcow"
           ? "A few cash-cow questions first"
-          : "A few venture questions first"}
+          : filter === "custom" && customSpec
+            ? `A few questions for “${customSpec.name}” first`
+            : "A few venture questions first"}
       </p>
       <p className="mt-0.5 text-xs text-zinc-500">
         This filter weighs different things than the one this idea was
@@ -156,7 +171,7 @@ export function PreAnalysisClarify({
         <Button
           variant="primary"
           onClick={() =>
-            onReady(composeClarifications(questions, answers, filter))
+            onReady(composeClarifications(questions, answers, tagKey))
           }
         >
           Answer &amp; analyze

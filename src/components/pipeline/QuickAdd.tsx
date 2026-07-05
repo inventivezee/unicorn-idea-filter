@@ -41,10 +41,21 @@ export function QuickAdd() {
   const bgTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const settings = state.settings;
-  // Which filter the clarify questions were fetched under (the global toggle
-  // can change while the wizard is open), and whether the step actually ran —
+  const activeSpec =
+    settings.filterMode === "custom"
+      ? settings.customFilters.find(
+          (f) => f.id === settings.activeCustomFilterId,
+        )
+      : undefined;
+  // The instrument key the clarify questions were fetched under (the global
+  // toggle can change while the wizard is open), and whether the step ran —
   // used to tag answers correctly and to not re-ask right after the add.
-  const clarifyFilterRef = useRef(settings.filterMode);
+  const filterKey = activeSpec
+    ? `custom:${activeSpec.id}`
+    : settings.filterMode === "custom"
+      ? "unicorn"
+      : settings.filterMode;
+  const clarifyFilterRef = useRef(filterKey);
   const clarifyRanRef = useRef(false);
   const hasBackground = settings.founderBackground.trim().length > 0;
   const teamPayload = settings.coFounders
@@ -77,7 +88,7 @@ export function QuickAdd() {
     setError(null);
     setMode(chosenMode);
     setLoadingMode(chosenMode);
-    clarifyFilterRef.current = settings.filterMode;
+    clarifyFilterRef.current = filterKey;
     try {
       const res = await fetch("/api/clarify", {
         method: "POST",
@@ -89,7 +100,8 @@ export function QuickAdd() {
           provider: settings.provider,
           model: settings.models[settings.provider],
           anonKey: getAnonKey(),
-          filter: settings.filterMode,
+          filter: activeSpec ? "custom" : settings.filterMode,
+          ...(activeSpec ? { customSpec: activeSpec } : {}),
         }),
       });
       if (!res.ok) {
@@ -274,7 +286,13 @@ export function QuickAdd() {
             answers={answers}
             onToggleChoice={toggleChoice}
             onPatchAnswer={patchAnswer}
-            accent={settings.filterMode === "cashcow" ? "amber" : "teal"}
+            accent={
+              activeSpec
+                ? "violet"
+                : settings.filterMode === "cashcow"
+                  ? "amber"
+                  : "teal"
+            }
           />
         </div>
         {/* Only prompt for a background here when it's still missing — once

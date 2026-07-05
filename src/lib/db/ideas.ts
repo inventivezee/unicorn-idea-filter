@@ -4,8 +4,19 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeDefaultRawScore, computePublished, ideaToWritableRow, rowToIdea } from "./types";
 import type { IdeaRow } from "./types";
-import { CC_CRITERION_IDS, CC_GATE_IDS, normalizeCashCow } from "../types";
-import type { CashCowBlock, CcAnalyzeResponse, Idea } from "../types";
+import {
+  CC_CRITERION_IDS,
+  CC_GATE_IDS,
+  normalizeCashCow,
+  normalizeCustomBlocks,
+} from "../types";
+import type {
+  CashCowBlock,
+  CcAnalyzeResponse,
+  CustomBlock,
+  CustomSpecSnapshot,
+  Idea,
+} from "../types";
 
 export class IdeaAccessError extends Error {
   status: number;
@@ -180,6 +191,27 @@ export async function patchIdea(
           row.cashcow = { ...emptyCashCowBlock(), ai: existingCc.ai };
         }
       }
+    }
+  }
+  // custom[filterId].ai never regresses either (same rule as cashcow.ai).
+  if ("custom" in row) {
+    const incoming = row.custom as Record<string, CustomBlock> | null;
+    const existingCustom = normalizeCustomBlocks(existing.custom);
+    if (existingCustom) {
+      const merged: Record<string, CustomBlock> = { ...(incoming ?? {}) };
+      for (const [fid, block] of Object.entries(existingCustom)) {
+        if (!block.ai) continue;
+        const inc = merged[fid];
+        if (!inc) {
+          // Cleared block but a persisted analysis exists — keep the analysis.
+          merged[fid] = { ...block };
+        } else if (!inc.ai && inc.snapshot.version === block.snapshot.version) {
+          // Only reattach onto the SAME spec version — grafting a newer
+          // analysis onto an older-version block would misattribute ids.
+          inc.ai = block.ai;
+        }
+      }
+      row.custom = Object.keys(merged).length ? merged : null;
     }
   }
   if (isPrivate !== undefined) {
@@ -427,4 +459,127 @@ function emptyCashCowBlock(): CashCowBlock {
     confidence: null,
     validationTest30d: "",
   };
+}
+
+/**
+ * Persist a custom-filter analysis onto an idea (same server-side guarantee
+ * as the other instruments). Fill-blanks within that filter's block; shared
+ * metadata fields fill blanks too. NEVER touches published — custom verdicts
+ * are private to the founder (and admins).
+ */
+export async function applyCustomToIdea(
+  admin: SupabaseClient,
+  ideaId: string,
+  filterId: string,
+  snapshot: CustomSpecSnapshot,
+  analysis: {
+    summary: string;
+    metadata: Record<string, string>;
+    founderProfile: string;
+    gates: Record<string, { value: string; rationale: string }>;
+    scores: Record<string, { score: number; rationale: string }>;
+    confidence: 0.5 | 0.75 | 1.0;
+    confidenceRationale: string;
+    validationTest30d: string;
+    needsFounderConfirmation: string[];
+    provider: "anthropic" | "openai";
+    model: string;
+    webSearches: number;
+  },
+): Promise<void> {
+  const { data: existing } = await admin
+    .from("ideas")
+    .select("*")
+    .eq("id", ideaId)
+    .maybeSingle<IdeaRow>();
+  if (!existing) return;
+
+  const row: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+  };
+
+  const metaMap: Record<string, string> = {
+    name: "name",
+    domain: "domain",
+    businessModel: "business_model",
+    buyerICP: "buyer_icp",
+    initialWedge: "initial_wedge",
+  };
+  for (const [appField, column] of Object.entries(metaMap)) {
+    const proposal = analysis.metadata?.[appField]?.trim();
+    const current = (existing as unknown as Record<string, unknown>)[column];
+    if (proposal && (typeof current !== "string" || !current.trim())) {
+      row[column] = proposal;
+    }
+  }
+  if (
+    analysis.founderProfile?.trim() &&
+    !(existing.founder_profile ?? "").trim()
+  ) {
+    row.founder_profile = analysis.founderProfile.trim();
+  }
+
+  const blocks = normalizeCustomBlocks(existing.custom) ?? {};
+  const current: CustomBlock = blocks[filterId] ?? {
+    gates: Object.fromEntries(snapshot.gates.map((g) => [g.id, null])),
+    scores: Object.fromEntries(snapshot.criteria.map((c) => [c.id, null])),
+    confidence: null,
+    validationTest30d: "",
+    snapshot,
+  };
+  // A stale in-flight analysis (run against an OLDER spec version than the
+  // block already holds) must never clobber newer data — drop it.
+  if (current.snapshot.version > snapshot.version) return;
+  // A newer spec version replaces the block wholesale (old ids don't align).
+  const sameVersion = current.snapshot.version === snapshot.version;
+  const target: CustomBlock = sameVersion
+    ? current
+    : {
+        gates: Object.fromEntries(snapshot.gates.map((g) => [g.id, null])),
+        scores: Object.fromEntries(snapshot.criteria.map((c) => [c.id, null])),
+        confidence: null,
+        validationTest30d: "",
+        snapshot,
+      };
+
+  for (const g of snapshot.gates) {
+    if (target.gates[g.id] === null || target.gates[g.id] === undefined) {
+      const v = analysis.gates[g.id]?.value;
+      target.gates[g.id] = v === "Y" || v === "N" ? v : null;
+    }
+  }
+  for (const c of snapshot.criteria) {
+    if (typeof target.scores[c.id] !== "number") {
+      const sc = analysis.scores[c.id]?.score;
+      target.scores[c.id] = typeof sc === "number" ? sc : null;
+    }
+  }
+  if (target.confidence === null) target.confidence = analysis.confidence;
+  if (!target.validationTest30d.trim()) {
+    target.validationTest30d = analysis.validationTest30d;
+  }
+  target.snapshot = snapshot;
+  target.ai = {
+    summary: analysis.summary,
+    gateRationales: Object.fromEntries(
+      Object.entries(analysis.gates).map(([k, v]) => [k, v.rationale]),
+    ),
+    scoreRationales: Object.fromEntries(
+      Object.entries(analysis.scores).map(([k, v]) => [k, v.rationale]),
+    ),
+    confidenceRationale: analysis.confidenceRationale,
+    needsFounderConfirmation: analysis.needsFounderConfirmation,
+    provider: analysis.provider,
+    model: analysis.model,
+    analyzedAt: new Date().toISOString(),
+    webSearches: analysis.webSearches,
+  };
+  blocks[filterId] = target;
+  row.custom = blocks;
+  // Deliberately NOT recomputing published: custom verdicts are private.
+
+  const { error } = await writeToleratingMissingColumns<IdeaRow>(row, (r) =>
+    admin.from("ideas").update(r).eq("id", ideaId).select("*").single<IdeaRow>(),
+  );
+  if (error) console.error("custom analysis persist failed", error.message);
 }
