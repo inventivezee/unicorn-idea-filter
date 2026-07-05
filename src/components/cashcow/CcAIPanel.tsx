@@ -415,7 +415,11 @@ export function CcAIPanel({
             {ai.webSearches ? (
               <> · {ai.webSearches} web search{ai.webSearches === 1 ? "" : "es"}</>
             ) : null}{" "}
-            · {new Date(ai.analyzedAt).toLocaleString()}
+            · {new Date(ai.analyzedAt).toLocaleDateString(undefined, {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+            })}
           </p>
           {ai.needsFounderConfirmation?.length ? (
             <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">

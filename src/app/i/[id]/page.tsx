@@ -104,10 +104,17 @@ function CcGateChip({ status }: { status: ReturnType<typeof ccGateStatus> }) {
   );
 }
 
-function fmtDateTime(iso: string | null | undefined): string | null {
+/** Date only (no time) for scoring attribution, or null when unavailable. */
+function fmtScoredDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const d = new Date(iso);
-  return isNaN(d.getTime()) ? null : d.toLocaleString();
+  return isNaN(d.getTime())
+    ? null
+    : d.toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
 }
 
 function fmtDate(iso: string): string {
@@ -129,7 +136,7 @@ function ScoredBy({
   analyzedAt: string | null | undefined;
 }) {
   if (!model) return null;
-  const when = fmtDateTime(analyzedAt);
+  const when = fmtScoredDate(analyzedAt);
   return (
     <p className="mt-2 text-xs text-zinc-400">
       Scored by {model}

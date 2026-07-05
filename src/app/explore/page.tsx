@@ -378,7 +378,7 @@ export default function ExplorePage() {
                             const d = new Date(at);
                             return isNaN(d.getTime())
                               ? undefined
-                              : `Scored ${d.toLocaleString()}`;
+                              : `Scored ${fmtDate(at)}`;
                           })()}
                         >
                           {(cashcowMode ? row.cc_model : row.ai_model) || "—"}
