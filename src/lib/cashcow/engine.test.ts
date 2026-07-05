@@ -103,11 +103,11 @@ describe("cash cow engine", () => {
   });
 });
 
-describe("migration 006 cc_raw_score stays in sync with the engine", () => {
+describe("public-view cc_raw_score stays in sync with the engine", () => {
   it("SQL weights match CC_CRITERIA", () => {
     const fs = require("node:fs") as typeof import("node:fs");
     const sql = fs.readFileSync(
-      "supabase/migrations/006_public_cashcow.sql",
+      "supabase/migrations/007_public_model_info.sql",
       "utf8",
     );
     for (const c of CC_CRITERIA) {

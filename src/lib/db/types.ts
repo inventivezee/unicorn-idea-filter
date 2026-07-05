@@ -65,6 +65,11 @@ export interface PublicIdeaRow {
   cc_confidence?: number | null;
   cc_summary?: string | null;
   cc_raw_score?: number | null;
+  /** Which model scored each instrument, and when (migration 007). */
+  ai_model?: string | null;
+  ai_analyzed_at?: string | null;
+  cc_model?: string | null;
+  cc_analyzed_at?: string | null;
 }
 
 export interface ProfileRow {

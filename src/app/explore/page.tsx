@@ -122,7 +122,7 @@ function SkeletonRows() {
     <>
       {Array.from({ length: 6 }).map((_, i) => (
         <tr key={i} className="border-t border-zinc-100">
-          {Array.from({ length: 8 }).map((_, j) => (
+          {Array.from({ length: 9 }).map((_, j) => (
             <td key={j} className="px-3 py-3">
               <div className="h-3.5 animate-pulse rounded bg-zinc-100" />
             </td>
@@ -284,7 +284,7 @@ export default function ExplorePage() {
       ) : (
         <div className="rounded-lg border border-zinc-200 bg-white">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[880px] border-collapse text-sm">
+            <table className="w-full min-w-[960px] border-collapse text-sm">
               <thead>
                 <tr className="text-xs text-zinc-500">
                   <th className="px-3 py-2.5 text-left font-medium">Name</th>
@@ -298,6 +298,9 @@ export default function ExplorePage() {
                   <th className="px-3 py-2.5 text-left font-medium">Gates</th>
                   <th className="px-3 py-2.5 text-left font-medium">Decision</th>
                   <th className="px-3 py-2.5 text-left font-medium">Author</th>
+                  <th className="px-3 py-2.5 text-left font-medium">
+                    Scored with
+                  </th>
                   <th className="px-3 py-2.5 text-right font-medium">Added</th>
                 </tr>
               </thead>
@@ -364,6 +367,21 @@ export default function ExplorePage() {
                         </td>
                         <td className="max-w-[160px] truncate px-3 py-2.5 text-zinc-600">
                           {row.author_handle ?? "Anonymous founder"}
+                        </td>
+                        <td
+                          className="max-w-[150px] truncate px-3 py-2.5 text-xs text-zinc-500"
+                          title={(() => {
+                            const at = cashcowMode
+                              ? row.cc_analyzed_at
+                              : row.ai_analyzed_at;
+                            if (!at) return undefined;
+                            const d = new Date(at);
+                            return isNaN(d.getTime())
+                              ? undefined
+                              : `Scored ${d.toLocaleString()}`;
+                          })()}
+                        >
+                          {(cashcowMode ? row.cc_model : row.ai_model) || "—"}
                         </td>
                         <td className="tnum whitespace-nowrap px-3 py-2.5 text-right text-xs text-zinc-500">
                           {fmtDate(row.created_at)}

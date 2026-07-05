@@ -104,6 +104,12 @@ function CcGateChip({ status }: { status: ReturnType<typeof ccGateStatus> }) {
   );
 }
 
+function fmtDateTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : d.toLocaleString();
+}
+
 function fmtDate(iso: string): string {
   const d = new Date(iso);
   return isNaN(d.getTime())
@@ -113,6 +119,23 @@ function fmtDate(iso: string): string {
         month: "short",
         day: "numeric",
       });
+}
+
+function ScoredBy({
+  model,
+  analyzedAt,
+}: {
+  model: string | null | undefined;
+  analyzedAt: string | null | undefined;
+}) {
+  if (!model) return null;
+  const when = fmtDateTime(analyzedAt);
+  return (
+    <p className="mt-2 text-xs text-zinc-400">
+      Scored by {model}
+      {when ? <> · {when}</> : null}
+    </p>
+  );
 }
 
 function MetaCell({ label, value }: { label: string; value: string }) {
@@ -241,6 +264,13 @@ export default function PublicIdeaPage() {
     Boolean(idea.cc_summary) ||
     CC_GATE_IDS.some((g) => ccGates[g] !== null) ||
     CC_CRITERION_IDS.some((c) => typeof ccScores[c] === "number");
+  const hasUnicornData =
+    Boolean(idea.ai_summary) ||
+    GATE_IDS.some((g) => gates[g] !== null) ||
+    CRITERION_IDS.some((c) => typeof scores[c] === "number");
+  // The viewer's own ideas are in the store (cloud mode loads them) — owners
+  // get a "run the analysis" shortcut instead of just a note.
+  const ownsIdea = state.ideas.some((i) => i.id === idea.id);
 
   return (
     <div>
@@ -290,6 +320,10 @@ export default function PublicIdeaPage() {
                     <p className="whitespace-pre-wrap text-sm text-zinc-700">
                       {idea.cc_summary}
                     </p>
+                    <ScoredBy
+                      model={idea.cc_model}
+                      analyzedAt={idea.cc_analyzed_at}
+                    />
                   </Section>
                 ) : null}
                 <Section
@@ -336,18 +370,63 @@ export default function PublicIdeaPage() {
               <Section title="Cash Cow Filter">
                 <p className="text-sm text-zinc-600">
                   This idea hasn&apos;t been scored with the Cash Cow Filter
-                  yet — switch to the Unicorn Idea Filter (top-left) to see its
-                  venture verdict.
+                  yet
+                  {hasUnicornData
+                    ? " — switch to the Unicorn Idea Filter (top-left) to see its venture verdict."
+                    : "."}
                 </p>
+                {ownsIdea ? (
+                  <div className="mt-3">
+                    <Link
+                      href={`/idea/${idea.id}?analyze=1`}
+                      className="inline-block rounded bg-amber-500 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-amber-600"
+                    >
+                      Run the Cash Cow analysis
+                    </Link>
+                    <span className="ml-2 text-xs text-zinc-400">
+                      It&apos;s your idea — this opens it with the analysis
+                      running.
+                    </span>
+                  </div>
+                ) : null}
               </Section>
             )
           ) : (
+            !hasUnicornData ? (
+              <Section title="Unicorn Idea Filter">
+                <p className="text-sm text-zinc-600">
+                  This idea hasn&apos;t been scored with the Unicorn Idea
+                  Filter yet
+                  {hasCcData
+                    ? " — switch to the Cash Cow Filter (top-left) to see its EBITDA verdict."
+                    : "."}
+                </p>
+                {ownsIdea ? (
+                  <div className="mt-3">
+                    <Link
+                      href={`/idea/${idea.id}?analyze=1`}
+                      className="inline-block rounded bg-teal-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-teal-700"
+                    >
+                      Run the Unicorn analysis
+                    </Link>
+                    <span className="ml-2 text-xs text-zinc-400">
+                      It&apos;s your idea — this opens it with the analysis
+                      running.
+                    </span>
+                  </div>
+                ) : null}
+              </Section>
+            ) : (
             <>
               {idea.ai_summary ? (
                 <Section title="AI assessment">
                   <p className="whitespace-pre-wrap text-sm text-zinc-700">
                     {idea.ai_summary}
                   </p>
+                  <ScoredBy
+                    model={idea.ai_model}
+                    analyzedAt={idea.ai_analyzed_at}
+                  />
                 </Section>
               ) : null}
 
@@ -389,6 +468,7 @@ export default function PublicIdeaPage() {
                 </div>
               </Section>
             </>
+            )
           )}
         </div>
 
@@ -420,9 +500,13 @@ export default function PublicIdeaPage() {
                     </dd>
                   </div>
                 </dl>
+                <ScoredBy
+                  model={idea.cc_model}
+                  analyzedAt={idea.cc_analyzed_at}
+                />
               </Section>
             ) : null
-          ) : (
+          ) : !hasUnicornData ? null : (
             <Section title="Computed">
               <dl className="space-y-3">
                 <div className="flex items-center justify-between gap-2">
@@ -446,6 +530,10 @@ export default function PublicIdeaPage() {
                   </dd>
                 </div>
               </dl>
+              <ScoredBy
+                model={idea.ai_model}
+                analyzedAt={idea.ai_analyzed_at}
+              />
             </Section>
           )}
         </div>
