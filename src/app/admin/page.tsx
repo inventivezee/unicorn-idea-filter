@@ -477,7 +477,7 @@ export default function AdminPage() {
   }, [hydrated, isAdmin, loadIdeas, loadActivity, loadCvUploads]);
 
   const runAnalyze = useCallback(
-    async (ideaId: string) => {
+    async (ideaId: string, filter: "unicorn" | "cashcow") => {
       setAnalyzeState((prev) => ({ ...prev, [ideaId]: { status: "pending" } }));
       try {
         await fetchJSON<{ ok: boolean; webSearches: number }>(
@@ -485,7 +485,7 @@ export default function AdminPage() {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ideaId }),
+            body: JSON.stringify({ ideaId, filter }),
           },
         );
         setAnalyzeState((prev) => ({ ...prev, [ideaId]: { status: "done" } }));
@@ -648,12 +648,24 @@ export default function AdminPage() {
                               <Button
                                 variant="secondary"
                                 className="px-2! py-0.5! text-xs!"
+                                title="Run the Unicorn analysis on this idea exactly as it stands (owner's background, no extra questions)"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  void runAnalyze(idea.id);
+                                  void runAnalyze(idea.id, "unicorn");
                                 }}
                               >
-                                Analyze
+                                🦄 Analyze
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                className="px-2! py-0.5! text-xs!"
+                                title="Run the Cash Cow analysis on this idea exactly as it stands (owner's background, no extra questions)"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void runAnalyze(idea.id, "cashcow");
+                                }}
+                              >
+                                🐄 Analyze
                               </Button>
                               {analyze?.status === "done" ? <CheckIcon /> : null}
                               {analyze?.status === "error" ? (

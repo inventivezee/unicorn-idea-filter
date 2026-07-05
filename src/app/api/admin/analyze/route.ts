@@ -1,8 +1,12 @@
 // Admin: manually run the full analysis on any idea. Uses the owner's stored
 // founder background when available (or the latest anonymous snapshot), and
 // persists results with the standard fill-blanks merge. Quota-exempt.
-import { buildSystemPrompt, buildUserPrompt } from "@/lib/ai/prompt";
-import { ANALYSIS_SCHEMA } from "@/lib/ai/schema";
+import {
+  buildCashCowSystemPrompt,
+  buildSystemPrompt,
+  buildUserPrompt,
+} from "@/lib/ai/prompt";
+import { ANALYSIS_SCHEMA, CC_ANALYSIS_SCHEMA } from "@/lib/ai/schema";
 import {
   callProviderJSON,
   keyMissingResponse,
@@ -10,7 +14,7 @@ import {
   parseLastJSON,
   readJsonBody,
 } from "@/lib/ai/server";
-import { applyAnalysisToIdea } from "@/lib/db/ideas";
+import { applyAnalysisToIdea, applyCashCowToIdea } from "@/lib/db/ideas";
 import type { IdeaRow, ProfileRow } from "@/lib/db/types";
 import {
   adminClient,
@@ -18,9 +22,21 @@ import {
   requestTelemetry,
   resolveCaller,
 } from "@/lib/supabase/server";
+import { CC_FOUNDER_PERSONAL_GATES } from "@/lib/cashcow/criteria";
 import { GATES } from "@/lib/criteria";
-import { CRITERION_IDS, GATE_IDS, normalizeClarifications } from "@/lib/types";
-import type { CoFounder, GateId } from "@/lib/types";
+import {
+  CC_CRITERION_IDS,
+  CC_GATE_IDS,
+  CRITERION_IDS,
+  GATE_IDS,
+  normalizeClarifications,
+} from "@/lib/types";
+import type {
+  CcAnalyzeResponse,
+  CcGateId,
+  CoFounder,
+  GateId,
+} from "@/lib/types";
 
 export const maxDuration = 300;
 
@@ -51,6 +67,11 @@ export async function POST(request: Request) {
   if (!ideaId) {
     return Response.json({ error: "ideaId required." }, { status: 400 });
   }
+  // Which instrument to run — the idea is analyzed EXACTLY as it stands
+  // (original founder background, existing clarifications, no extra questions)
+  // so an admin/mentor can show a founder how it fares on the other filter.
+  const filter =
+    body?.filter === "cashcow" ? ("cashcow" as const) : ("unicorn" as const);
   const model =
     typeof body?.model === "string" && body.model.trim()
       ? body.model.trim().slice(0, 200)
@@ -106,6 +127,88 @@ export async function POST(request: Request) {
     coFounders,
     normalizeClarifications(row.clarifications),
   );
+
+  if (filter === "cashcow") {
+    try {
+      const result = await callProviderJSON({
+        provider,
+        model,
+        // Admin runs premium tier — uncapped web search.
+        system: buildCashCowSystemPrompt(null),
+        prompt: userPrompt,
+        schemaName: "cashcow_analysis",
+        schema: CC_ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
+        webSearch: true,
+        speed: "quality",
+        tier: "premium",
+      });
+      const raw = parseLastJSON<RawAnalysis>(result.texts);
+
+      const gates = {} as CcAnalyzeResponse["gates"];
+      for (const id of CC_GATE_IDS) {
+        const g = raw.gates?.[id];
+        gates[id] = {
+          value: g?.value === "Y" || g?.value === "N" ? g.value : "UNSURE",
+          rationale: g?.rationale ?? "",
+        };
+      }
+      const scores = {} as CcAnalyzeResponse["scores"];
+      for (const id of CC_CRITERION_IDS) {
+        const sc = raw.scores?.[id];
+        scores[id] = {
+          score:
+            typeof sc?.score === "number"
+              ? Math.min(5, Math.max(0, Math.round(sc.score)))
+              : 0,
+          rationale: sc?.rationale ?? "",
+        };
+      }
+      const needsConfirmation = new Set<CcGateId>(CC_FOUNDER_PERSONAL_GATES);
+      for (const id of CC_GATE_IDS) {
+        if (gates[id].value === "UNSURE") needsConfirmation.add(id);
+      }
+
+      const response: CcAnalyzeResponse = {
+        summary: raw.summary ?? "",
+        metadata: {
+          name: raw.metadata?.name ?? "",
+          domain: raw.metadata?.domain ?? "",
+          businessModel: raw.metadata?.businessModel ?? "",
+          buyerICP: raw.metadata?.buyerICP ?? "",
+          initialWedge: raw.metadata?.initialWedge ?? "",
+        },
+        founderProfile:
+          typeof raw.founderProfile === "string"
+            ? raw.founderProfile.trim().slice(0, 600)
+            : "",
+        gates,
+        scores,
+        confidence:
+          raw.confidence === "1.0" ? 1.0 : raw.confidence === "0.75" ? 0.75 : 0.5,
+        confidenceRationale: raw.confidenceRationale ?? "",
+        validationTest30d: raw.validationTest30d ?? "",
+        needsFounderConfirmation: [...needsConfirmation],
+        provider,
+        model,
+        webSearches: result.webSearches,
+      };
+      await applyCashCowToIdea(admin, ideaId, response);
+
+      await admin.from("submission_logs").insert({
+        idea_id: ideaId,
+        user_id: caller.user?.id ?? null,
+        action: "admin_analyze_cashcow",
+        ...requestTelemetry(request),
+        provider,
+        model,
+        web_searches: result.webSearches,
+      });
+
+      return Response.json({ ok: true, webSearches: result.webSearches });
+    } catch (err) {
+      return mapProviderError(err, model);
+    }
+  }
 
   try {
     const result = await callProviderJSON({
