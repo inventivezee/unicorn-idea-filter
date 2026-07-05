@@ -39,7 +39,7 @@ function normalizeClarifyQuestions(value: unknown): ClarifyQuestion[] {
               .filter((o): o is string => typeof o === "string" && !!o.trim())
               .map((o) => o.trim()),
           ),
-        ).slice(0, 4);
+        ).slice(0, 5);
         out.push({ question: question.trim(), options: opts });
       }
     }
@@ -300,9 +300,10 @@ export function QuickAdd() {
           A few clarifying questions
         </h2>
         <p className="mt-0.5 text-xs text-zinc-500">
-          Pick any answers that apply — you can choose more than one, or add
-          your own. All optional; skip any you&apos;re not sure about. They
-          sharpen the AI&apos;s naming, metadata, and scoring.
+          Pick the answers that apply — you can choose more than one, or add
+          your own, though 1–2 focused picks per question work best. All
+          optional; skip any you&apos;re not sure about. They sharpen the
+          AI&apos;s naming, metadata, and scoring.
         </p>
         <blockquote className="mt-3 max-h-24 overflow-y-auto rounded border border-zinc-100 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
           {draft.trim()}
@@ -320,9 +321,20 @@ export function QuickAdd() {
               "w-full rounded-lg border px-3 py-2 text-left text-xs leading-relaxed transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600";
             return (
               <div key={i}>
-                <p className="text-sm font-medium text-zinc-800">
-                  {q.question}
-                </p>
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                  <p className="text-sm font-medium text-zinc-800">
+                    {q.question}
+                  </p>
+                  {a.choices.length > 2 ? (
+                    <span
+                      role="alert"
+                      className="text-xs font-medium text-red-600"
+                    >
+                      Best to pick 1–2 — a focused answer sharpens the
+                      analysis.
+                    </span>
+                  ) : null}
+                </div>
                 <div
                   className="mt-1.5 space-y-1.5"
                   role="group"

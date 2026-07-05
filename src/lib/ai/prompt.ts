@@ -102,7 +102,7 @@ Rules:
 - Each question must be answerable in a sentence or two — no essays, no multi-part questions.
 - Prefer questions whose answers would most change a gate or score judgment.
 - Plain language, no jargon, no numbering in the question text itself.
-- With each question, give 2 to 4 answer options the founder can pick with one click. Options must be plausible concrete answers FOR THIS SPECIFIC IDEA, roughly 10 to 22 words each: name the specific answer AND the reasoning, mechanism, or trade-off behind it, so the options themselves push the founder to think harder (e.g. for "who pays?" not just "retail buyers" but "Retail crypto buyers frustrated by exchange friction — willing to pay a small premium per transaction for speed"). Options must be mutually distinct and take genuinely different angles, no "Other"/"Not sure" filler — the UI adds a free-text option itself. If a question truly has no guessable answers, return an empty options array.`;
+- With each question, give 4 or 5 answer options the founder can pick with one click. Options must be plausible concrete answers FOR THIS SPECIFIC IDEA, roughly 10 to 22 words each: name the specific answer AND the reasoning, mechanism, or trade-off behind it, so the options themselves push the founder to think harder (e.g. for "who pays?" not just "retail buyers" but "Retail crypto buyers frustrated by exchange friction — willing to pay a small premium per transaction for speed"). Options must be mutually distinct and take genuinely different angles, no "Other"/"Not sure" filler — the UI adds a free-text option itself. If a question truly has no guessable answers, return an empty options array.`;
 
 export function buildClarifyPrompt(
   description: string,
