@@ -133,6 +133,7 @@ export function CcAIPanel({
           },
           founderBackground: settings.founderBackground,
           coFounders: teamPayload,
+          clarifications: idea.clarifications ?? [],
           provider: settings.provider,
           model,
           webSearch: settings.webSearch,

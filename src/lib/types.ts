@@ -66,6 +66,23 @@ export interface Clarification {
   answer: string;
 }
 
+/**
+ * Legacy migration: ideas created before clarifications became a structured,
+ * separately-fed field had their Q&A appended into the description by the old
+ * QuickAdd flow (a trailing "\n\nClarifications:\n Q:… A:…" block). Now that the
+ * structured clarifications feed the prompt on their own, that suffix would
+ * double-count. Strip it when the idea already carries structured clarifications.
+ */
+const LEGACY_CLARIFICATION_MARKER = "\n\nClarifications:\n";
+export function stripLegacyClarificationsSuffix(
+  thesisNotes: string,
+  hasClarifications: boolean,
+): string {
+  if (!hasClarifications) return thesisNotes;
+  const idx = thesisNotes.lastIndexOf(LEGACY_CLARIFICATION_MARKER);
+  return idx === -1 ? thesisNotes : thesisNotes.slice(0, idx);
+}
+
 /** Coerce arbitrary input into a clean, capped Clarification[] (DB/local/import). */
 export function normalizeClarifications(value: unknown): Clarification[] {
   if (!Array.isArray(value)) return [];

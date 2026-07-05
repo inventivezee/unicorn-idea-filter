@@ -1,5 +1,6 @@
 import { CC_CRITERIA, CC_GATES } from "../cashcow/criteria";
 import { CRITERIA, GATES } from "../criteria";
+import { stripLegacyClarificationsSuffix } from "../types";
 
 /** The web-search rule line, tiered by the caller's search budget. */
 function webSearchRule(searchBudget: number | null): string {
@@ -107,11 +108,35 @@ export function formatFoundingTeam(
   return parts.join("\n\n");
 }
 
+export interface ClarificationInput {
+  question: string;
+  answer: string;
+}
+
+/** The founder's clarifying Q&A, as a prompt section (empty string when none). */
+function formatClarifications(clarifications: ClarificationInput[]): string {
+  const answered = clarifications.filter(
+    (c) => c.question.trim() && c.answer.trim(),
+  );
+  if (answered.length === 0) return "";
+  return `\n\n## Founder's clarifications\n\nThe founder answered these clarifying questions — weight them as direct, authoritative input:\n${answered
+    .map((c) => `- Q: ${c.question.trim()}\n  A: ${c.answer.trim()}`)
+    .join("\n")}`;
+}
+
 export function buildUserPrompt(
   idea: AnalyzeRequestIdea,
   founderBackground: string,
   coFounders: CoFounderInput[] = [],
+  clarifications: ClarificationInput[] = [],
 ): string {
+  // Legacy ideas baked the Q&A into the description; the structured
+  // clarifications now feed the prompt on their own, so strip that suffix to
+  // avoid sending the same Q&A twice.
+  const thesisNotes = stripLegacyClarificationsSuffix(
+    idea.thesisNotes,
+    clarifications.length > 0,
+  );
   return `## Startup idea
 
 Name: ${idea.name || "(unnamed)"}
@@ -121,11 +146,11 @@ Buyer / ICP: ${idea.buyerICP || "(not specified)"}
 Initial wedge: ${idea.initialWedge || "(not specified)"}
 
 Thesis / description:
-${idea.thesisNotes || "(none provided)"}
+${thesisNotes || "(none provided)"}
 
 ## Founding team
 
-${formatFoundingTeam(founderBackground, coFounders)}
+${formatFoundingTeam(founderBackground, coFounders)}${formatClarifications(clarifications)}
 
 Evaluate this idea now and return the structured analysis.`;
 }

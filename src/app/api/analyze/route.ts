@@ -44,6 +44,7 @@ import {
   CC_GATE_IDS,
   CRITERION_IDS,
   GATE_IDS,
+  normalizeClarifications,
 } from "@/lib/types";
 import type {
   AnalyzeMetadataResponse,
@@ -257,6 +258,8 @@ export async function POST(request: Request) {
   }
   const founderBackground = field(body.founderBackground, MAX_BACKGROUND_CHARS);
   const coFounders = coFoundersFromBody(body.coFounders);
+  // The founder's clarifying Q&A feeds the analysis as authoritative input.
+  const clarifications = normalizeClarifications(body.clarifications);
   if (mode === "full" && !founderBackground.trim()) {
     return Response.json(
       {
@@ -393,7 +396,12 @@ export async function POST(request: Request) {
     };
   }
 
-  const userPrompt = buildUserPrompt(idea, founderBackground, coFounders);
+  const userPrompt = buildUserPrompt(
+    idea,
+    founderBackground,
+    coFounders,
+    clarifications,
+  );
 
   try {
     if (mode === "metadata") {

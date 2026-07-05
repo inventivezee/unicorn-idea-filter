@@ -3,7 +3,13 @@
 import { DEFAULT_WEIGHTS } from "../criteria";
 import { emptyGates, emptyScores, newIdea } from "../defaults";
 import { rawScore } from "../engine";
-import { CRITERION_IDS, GATE_IDS, normalizeCashCow, normalizeClarifications } from "../types";
+import {
+  CRITERION_IDS,
+  GATE_IDS,
+  normalizeCashCow,
+  normalizeClarifications,
+  stripLegacyClarificationsSuffix,
+} from "../types";
 import type { AIAnalysis, CoFounder, Idea } from "../types";
 
 export interface IdeaRow {
@@ -95,7 +101,11 @@ export function rowToIdea(row: IdeaRow): Idea & {
     updatedAt: row.updated_at,
   });
   const clarifications = normalizeClarifications(row.clarifications);
-  if (clarifications.length) idea.clarifications = clarifications;
+  if (clarifications.length) {
+    idea.clarifications = clarifications;
+    // Legacy ideas kept the Q&A in the description too — drop that copy.
+    idea.thesisNotes = stripLegacyClarificationsSuffix(idea.thesisNotes, true);
+  }
   const cashcow = normalizeCashCow(row.cashcow);
   if (cashcow) idea.cashcow = cashcow;
   if (typeof row.top_risk_override_1 === "string") {

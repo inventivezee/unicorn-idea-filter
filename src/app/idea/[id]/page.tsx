@@ -8,6 +8,7 @@ import { SUBSCRIPTION_PRICE_LABEL } from "@/lib/entitlements";
 import { useStore } from "@/lib/store";
 import { Button, EmptyState, Section } from "@/components/ui";
 import { AIPanel } from "@/components/idea/AIPanel";
+import { ClarificationsEditor } from "@/components/idea/ClarificationsEditor";
 import { ComputedPanel } from "@/components/idea/ComputedPanel";
 import { CriteriaSection } from "@/components/idea/CriteriaSection";
 import { GatesSection } from "@/components/idea/GatesSection";
@@ -263,30 +264,7 @@ export default function IdeaDetailPage() {
                 placeholder="The core insight, why it wins, and why now."
               />
             </label>
-            {idea.clarifications && idea.clarifications.length > 0 ? (
-              <div className="mt-4">
-                <span className="mb-1.5 block text-xs font-medium text-zinc-500">
-                  Clarifying answers
-                </span>
-                <dl className="space-y-2 rounded-lg border border-zinc-200 bg-zinc-50/60 p-3">
-                  {idea.clarifications.map((c, i) => (
-                    <div key={i}>
-                      <dt className="text-xs font-medium text-zinc-700">
-                        {c.question}
-                      </dt>
-                      <dd className="text-sm text-zinc-900">
-                        {c.answer || (
-                          <span className="text-zinc-400">(skipped)</span>
-                        )}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-                <span className="mt-1 block text-[10px] text-zinc-400">
-                  Captured when you added the idea. Not shown publicly.
-                </span>
-              </div>
-            ) : null}
+            <ClarificationsEditor idea={idea} onPatch={patch} />
           </Section>
 
           {cashcowMode ? (

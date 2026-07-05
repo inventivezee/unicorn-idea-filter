@@ -19,7 +19,7 @@ import {
   resolveCaller,
 } from "@/lib/supabase/server";
 import { GATES } from "@/lib/criteria";
-import { CRITERION_IDS, GATE_IDS } from "@/lib/types";
+import { CRITERION_IDS, GATE_IDS, normalizeClarifications } from "@/lib/types";
 import type { CoFounder, GateId } from "@/lib/types";
 
 export const maxDuration = 300;
@@ -104,6 +104,7 @@ export async function POST(request: Request) {
     },
     founderBackground,
     coFounders,
+    normalizeClarifications(row.clarifications),
   );
 
   try {

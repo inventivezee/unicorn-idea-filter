@@ -170,17 +170,11 @@ export function QuickAdd() {
     return parts.join("; ");
   }
 
+  // The description stays the founder's raw text; the clarifying Q&A is kept
+  // as structured, editable clarifications (composeClarifications) that feed
+  // the analysis on their own — so it isn't duplicated into the description.
   function composeNotes(): string {
-    const answered = questions
-      .map((q, i) => ({ q: q.question, a: answerText(answers[i]) }))
-      .filter((x) => x.a);
-    const base = draft.trim();
-    if (answered.length === 0) return base;
-    return (
-      base +
-      "\n\nClarifications:\n" +
-      answered.map(({ q, a }) => `Q: ${q}\nA: ${a}`).join("\n")
-    );
+    return draft.trim();
   }
 
   function patchAnswer(i: number, patch: Partial<ClarifyAnswer>) {
