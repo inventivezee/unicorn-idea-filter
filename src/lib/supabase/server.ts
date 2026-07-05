@@ -121,5 +121,9 @@ export function requestTelemetry(request: Request): {
 export function anonKeyFromBody(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const v = value.trim();
+  // The client's storage-blocked fallback (src/lib/anon.ts) is the SAME
+  // constant for every such visitor — accepting it as an identity would put
+  // strangers in one shared ownership bucket. Treat it as "no identity".
+  if (v === "anon-ephemeral-fallback-key") return null;
   return /^[A-Za-z0-9-]{16,64}$/.test(v) ? v : null;
 }

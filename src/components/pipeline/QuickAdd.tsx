@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getAnonKey } from "@/lib/anon";
 import { AutoSavedFlag, Button } from "@/components/ui";
@@ -20,7 +20,7 @@ type Stage = "draft" | "clarify";
 type AddMode = "analyze" | "add";
 
 export function QuickAdd() {
-  const { state, addIdea, updateSettings } = useStore();
+  const { state, addIdea, updateSettings, cloud, hydrated } = useStore();
   const router = useRouter();
 
   const [stage, setStage] = useState<Stage>("draft");
@@ -33,6 +33,29 @@ export function QuickAdd() {
   // One idea per wizard — guards double-clicks across every add path.
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // -------------------------------------------------------------------------
+  // Cloud drafts: unfinished Quick Adds autosave server-side so they can be
+  // resumed later (any device) — and are visible to the admin. Local-only
+  // deployments skip this (nothing to sync to).
+  // -------------------------------------------------------------------------
+  interface IdeaDraftRow {
+    id: string;
+    updated_at: string;
+    payload: {
+      description?: string;
+      stage?: Stage;
+      mode?: AddMode;
+      filterKey?: string;
+      questions?: ClarifyQuestion[];
+      answers?: ClarifyAnswer[];
+    };
+  }
+  const [ideaDrafts, setIdeaDrafts] = useState<IdeaDraftRow[]>([]);
+  const draftRowIdRef = useRef<string | null>(null);
+  const draftDirtyRef = useRef(false);
+  const draftSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftsLoadedRef = useRef(false);
 
   // Inline founder-background capture (revealed when analysis is attempted
   // without a background set).
@@ -61,6 +84,158 @@ export function QuickAdd() {
   const teamPayload = settings.coFounders
     .filter((c) => c.background.trim())
     .map((c) => ({ name: c.name, background: c.background }));
+
+  useEffect(() => {
+    if (!cloud || !hydrated || draftsLoadedRef.current) return;
+    draftsLoadedRef.current = true;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/drafts?kind=idea&anon_key=${encodeURIComponent(getAnonKey())}`,
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as { drafts?: IdeaDraftRow[] };
+        setIdeaDrafts(
+          (data.drafts ?? []).filter((d) => d.payload?.description?.trim()),
+        );
+      } catch {
+        // Draft listing is best-effort.
+      }
+    })();
+  }, [cloud, hydrated]);
+
+  function markDraftDirty() {
+    if (!cloud) return;
+    draftDirtyRef.current = true;
+    if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current);
+    draftSaveTimer.current = setTimeout(() => void flushDraftSave(), 1500);
+  }
+
+  const wizardRef = useRef({ draft, stage, mode, questions, answers });
+  wizardRef.current = { draft, stage, mode, questions, answers };
+  // Saves run through one promise chain so two debounced flushes can never
+  // both see "no row yet" and double-create.
+  const draftFlushChainRef = useRef<Promise<void>>(Promise.resolve());
+  const wizardDoneRef = useRef(false);
+
+  function flushDraftSave(): Promise<void> {
+    const run = async () => {
+      if (
+        !draftDirtyRef.current ||
+        submittingRef.current ||
+        wizardDoneRef.current
+      ) {
+        return;
+      }
+      draftDirtyRef.current = false;
+      const w = wizardRef.current;
+      const text = w.draft.trim();
+      if (!text) return; // nothing worth keeping
+      const payload = {
+        description: w.draft,
+        stage: w.stage,
+        mode: w.mode,
+        filterKey: clarifyFilterRef.current,
+        questions: w.questions,
+        answers: w.answers,
+      };
+      try {
+        if (draftRowIdRef.current) {
+          const res = await fetch(`/api/drafts/${draftRowIdRef.current}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ payload, anonKey: getAnonKey() }),
+          });
+          if (res.ok) return;
+          if (res.status === 404) {
+            draftRowIdRef.current = null; // deleted elsewhere — recreate
+          } else {
+            draftDirtyRef.current = true; // real failure — retry later
+            return;
+          }
+        }
+        const res = await fetch("/api/drafts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            kind: "idea",
+            payload,
+            anonKey: getAnonKey(),
+          }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { draft?: { id?: string } };
+          if (data.draft?.id) draftRowIdRef.current = data.draft.id;
+        } else {
+          draftDirtyRef.current = true;
+        }
+      } catch {
+        draftDirtyRef.current = true; // retry on the next edit
+      }
+    };
+    const next = draftFlushChainRef.current.then(run, run);
+    draftFlushChainRef.current = next;
+    return next;
+  }
+
+  /** The wizard finished (idea added) — the draft row is no longer needed.
+   *  Chained after any in-flight save so a row created mid-flight is still
+   *  found and deleted. */
+  function clearDraftRow() {
+    if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current);
+    draftDirtyRef.current = false;
+    wizardDoneRef.current = true;
+    void draftFlushChainRef.current.finally(() => {
+      const id = draftRowIdRef.current;
+      if (!id) return;
+      draftRowIdRef.current = null;
+      // keepalive lets the DELETE survive the navigation to the new idea.
+      void fetch(
+        `/api/drafts/${id}?anon_key=${encodeURIComponent(getAnonKey())}`,
+        { method: "DELETE", keepalive: true },
+      ).catch(() => {});
+    });
+  }
+
+  function resumeDraft(row: IdeaDraftRow) {
+    const p = row.payload ?? {};
+    draftRowIdRef.current = row.id;
+    setDraft(p.description ?? "");
+    setMode(p.mode === "add" ? "add" : "analyze");
+    if (p.filterKey) clarifyFilterRef.current = p.filterKey;
+    const qs = normalizeClarifyQuestions(p.questions);
+    if (p.stage === "clarify" && qs.length) {
+      setQuestions(qs);
+      const restored = emptyAnswersFor(qs).map((empty, i) => {
+        const saved = Array.isArray(p.answers) ? p.answers[i] : undefined;
+        if (!saved || typeof saved !== "object") return empty;
+        const custom = typeof saved.custom === "string" ? saved.custom : "";
+        return {
+          ...empty,
+          choices: Array.isArray(saved.choices)
+            ? saved.choices.filter((c): c is string => typeof c === "string")
+            : [],
+          custom,
+          showCustom: saved.showCustom === true || custom.trim() !== "",
+        };
+      });
+      setAnswers(restored);
+      clarifyRanRef.current = true;
+      setStage("clarify");
+    } else {
+      setStage("draft");
+    }
+    setIdeaDrafts((all) => all.filter((d) => d.id !== row.id));
+  }
+
+  function discardDraft(row: IdeaDraftRow) {
+    setIdeaDrafts((all) => all.filter((d) => d.id !== row.id));
+    if (draftRowIdRef.current === row.id) draftRowIdRef.current = null;
+    void fetch(
+      `/api/drafts/${row.id}?anon_key=${encodeURIComponent(getAnonKey())}`,
+      { method: "DELETE" },
+    ).catch(() => {});
+  }
 
   /** Reveal the inline background field, scroll to it, and focus it. */
   function revealBackground() {
@@ -139,6 +314,7 @@ export function QuickAdd() {
       setQuestions(normalized);
       setAnswers(emptyAnswersFor(normalized));
       setStage("clarify");
+      markDraftDirty();
     } catch {
       setError("Network error while fetching clarifying questions.");
     } finally {
@@ -155,6 +331,7 @@ export function QuickAdd() {
 
   function patchAnswer(i: number, patch: Partial<ClarifyAnswer>) {
     setAnswers((all) => all.map((a, j) => (j === i ? { ...a, ...patch } : a)));
+    markDraftDirty();
   }
 
   function toggleChoice(i: number, opt: string) {
@@ -170,6 +347,7 @@ export function QuickAdd() {
           : a,
       ),
     );
+    markDraftDirty();
   }
 
   /** Create the idea and hand off: full analysis, metadata-only fill, or nothing. */
@@ -193,6 +371,7 @@ export function QuickAdd() {
     if (clarifyRanRef.current) {
       markClarifyAsked(idea.id, clarifyFilterRef.current);
     }
+    clearDraftRow();
     const param =
       chosenMode === "analyze" ? "?analyze=1" : chosenMode === "add" ? "?fill=1" : "";
     router.push(`/idea/${idea.id}${param}`);
@@ -331,8 +510,44 @@ export function QuickAdd() {
     );
   }
 
+  const visibleDrafts = ideaDrafts
+    .filter((d) => d.id !== draftRowIdRef.current)
+    .slice(0, 3);
+
   return (
     <div className="mb-6 rounded-lg border border-zinc-200 bg-white p-4">
+      {visibleDrafts.length > 0 && !draft.trim() ? (
+        <div className="mb-3 rounded-lg border border-teal-200 bg-teal-50/60 p-3">
+          <p className="text-xs font-semibold text-teal-900">
+            You have {visibleDrafts.length === 1 ? "an unfinished idea" : "unfinished ideas"} — pick up where you left off:
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {visibleDrafts.map((d) => (
+              <li key={d.id} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-xs text-zinc-700">
+                  {(d.payload.description ?? "").trim()}
+                </span>
+                <span className="tnum shrink-0 text-[10px] text-zinc-400">
+                  {d.updated_at.slice(0, 10)}
+                </span>
+                <Button
+                  className="shrink-0 px-2 py-0.5 text-xs!"
+                  onClick={() => resumeDraft(d)}
+                >
+                  Resume
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => discardDraft(d)}
+                  className="shrink-0 text-xs text-zinc-400 underline-offset-2 hover:text-red-600 hover:underline"
+                >
+                  Discard
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <label htmlFor="quick-add" className="text-sm font-semibold text-zinc-900">
         New idea
       </label>
@@ -346,7 +561,10 @@ export function QuickAdd() {
         rows={3}
         value={draft}
         disabled={loadingMode !== null}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          markDraftDirty();
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
             void startClarify("analyze");

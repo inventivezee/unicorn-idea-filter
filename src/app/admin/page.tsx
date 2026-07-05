@@ -32,6 +32,18 @@ import { useStore } from "@/lib/store";
 /** Row shape returned by GET /api/admin/ideas — full IdeaRow + owner context. */
 type AdminIdea = IdeaRow & { owner_email: string | null };
 
+interface AdminDraft {
+  id: string;
+  owner_id: string | null;
+  owner_email: string | null;
+  anon_key: string | null;
+  kind: "idea" | "filter";
+  status: "draft" | "designing" | "ready" | "failed";
+  payload: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 /** Row shape of submission_logs, returned by GET /api/admin/logs. */
 interface LogRow {
   id: number;
@@ -167,13 +179,15 @@ function Chip({
   tone,
   children,
 }: {
-  tone: "teal" | "zinc";
+  tone: "teal" | "zinc" | "red";
   children: ReactNode;
 }) {
   const styles =
     tone === "teal"
       ? "border-teal-200 bg-teal-50 text-teal-700"
-      : "border-zinc-200 bg-zinc-50 text-zinc-500";
+      : tone === "red"
+        ? "border-red-200 bg-red-50 text-red-700"
+        : "border-zinc-200 bg-zinc-50 text-zinc-500";
   return (
     <span
       className={`inline-block whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] font-medium ${styles}`}
@@ -387,6 +401,12 @@ export default function AdminPage() {
   const [activityError, setActivityError] = useState<string | null>(null);
 
   // CV uploads (retained even after a founder clears their background).
+  const [drafts, setDrafts] = useState<AdminDraft[] | null>(null);
+  const [draftsTotal, setDraftsTotal] = useState(0);
+  const [draftsPage, setDraftsPage] = useState(0);
+  const [draftsLoading, setDraftsLoading] = useState(false);
+  const [draftsError, setDraftsError] = useState<string | null>(null);
+  const [draftsOpen, setDraftsOpen] = useState<ReadonlySet<string>>(new Set());
   const [cvUploads, setCvUploads] = useState<CvUpload[] | null>(null);
   const [cvTotal, setCvTotal] = useState(0);
   const [cvPage, setCvPage] = useState(0);
@@ -454,6 +474,27 @@ export default function AdminPage() {
     }
   }, []);
 
+  const loadDrafts = useCallback(async (page: number) => {
+    setDraftsLoading(true);
+    setDraftsError(null);
+    try {
+      const data = await fetchJSON<{ drafts: AdminDraft[]; total: number }>(
+        `/api/admin/drafts?page=${page}`,
+      );
+      setDrafts((prev) => {
+        if (page === 0 || !prev) return data.drafts;
+        const seen = new Set(prev.map((d) => d.id));
+        return [...prev, ...data.drafts.filter((d) => !seen.has(d.id))];
+      });
+      setDraftsTotal(data.total);
+      setDraftsPage(page);
+    } catch (e) {
+      setDraftsError(errMsg(e, "Couldn't load drafts."));
+    } finally {
+      setDraftsLoading(false);
+    }
+  }, []);
+
   const loadCvUploads = useCallback(async (page: number) => {
     setCvLoading(true);
     setCvError(null);
@@ -480,7 +521,8 @@ export default function AdminPage() {
     void loadIdeas(0);
     void loadActivity(0);
     void loadCvUploads(0);
-  }, [hydrated, isAdmin, loadIdeas, loadActivity, loadCvUploads]);
+    void loadDrafts(0);
+  }, [hydrated, isAdmin, loadIdeas, loadActivity, loadCvUploads, loadDrafts]);
 
   const runAnalyze = useCallback(
     async (ideaId: string, filter: "unicorn" | "cashcow") => {
@@ -872,6 +914,200 @@ export default function AdminPage() {
               onClick={() => void loadIdeas(ideasPage + 1)}
             >
               {ideasLoading ? "Loading…" : "Load more"}
+            </Button>
+          </div>
+        ) : null}
+      </Section>
+
+      <Section
+        title="Drafts"
+        description="Unfinished work across all users: in-progress Quick Add ideas and custom-filter designs (including running design chains), newest first."
+      >
+        {draftsError ? (
+          <div className="mb-3 flex items-center gap-3 text-xs text-red-600">
+            <span>{draftsError}</span>
+            <Button
+              className="px-2! py-0.5! text-xs!"
+              onClick={() => void loadDrafts(drafts ? draftsPage : 0)}
+            >
+              Retry
+            </Button>
+          </div>
+        ) : null}
+
+        {!drafts ? (
+          draftsLoading ? (
+            <p className="text-xs text-zinc-400">Loading drafts…</p>
+          ) : null
+        ) : drafts.length === 0 ? (
+          <p className="text-xs text-zinc-400">No drafts right now.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] border-collapse">
+              <thead>
+                <tr className="border-b border-zinc-200">
+                  <th className={`${TH} w-6`} aria-label="expand" />
+                  <th className={TH}>Kind</th>
+                  <th className={TH}>Owner</th>
+                  <th className={TH}>Status</th>
+                  <th className={TH}>Content</th>
+                  <th className={TH}>Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {drafts.map((d) => {
+                  const open = draftsOpen.has(d.id);
+                  const payload = d.payload ?? {};
+                  const description =
+                    typeof payload.description === "string"
+                      ? payload.description
+                      : "";
+                  const inputs =
+                    payload.inputs && typeof payload.inputs === "object"
+                      ? (payload.inputs as Record<string, unknown>)
+                      : null;
+                  const chain =
+                    payload.chain && typeof payload.chain === "object"
+                      ? (payload.chain as Record<string, unknown>)
+                      : null;
+                  const resultSpec =
+                    payload.resultSpec && typeof payload.resultSpec === "object"
+                      ? (payload.resultSpec as Record<string, unknown>)
+                      : null;
+                  const summary =
+                    d.kind === "idea"
+                      ? description || "(empty)"
+                      : inputs
+                        ? `$${Number(inputs.netProfitTarget ?? 0).toLocaleString()}/yr · ${String(
+                            inputs.hoursPerDay ?? "?",
+                          )}h/day · ${String(inputs.yearsToBuild ?? "?")}yrs`
+                        : "(no inputs)";
+                  return (
+                    <Fragment key={d.id}>
+                      <tr
+                        onClick={() =>
+                          setDraftsOpen((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(d.id)) next.delete(d.id);
+                            else next.add(d.id);
+                            return next;
+                          })
+                        }
+                        className={`cursor-pointer border-b hover:bg-zinc-50 ${
+                          open ? "border-zinc-100 bg-zinc-50" : "border-zinc-100"
+                        }`}
+                      >
+                        <td className={`${TD} pr-0`}>
+                          <Chevron open={open} />
+                        </td>
+                        <td className={TD}>
+                          <Chip tone={d.kind === "filter" ? "zinc" : "teal"}>
+                            {d.kind === "filter" ? "🎯 Filter design" : "💡 Idea"}
+                          </Chip>
+                        </td>
+                        <td className={`${TD} whitespace-nowrap`}>
+                          {d.owner_email ??
+                            (d.anon_key ? (
+                              <span
+                                className="tnum text-zinc-500"
+                                title={d.anon_key}
+                              >
+                                anon:{d.anon_key.slice(0, 8)}…
+                              </span>
+                            ) : (
+                              <Dash />
+                            ))}
+                        </td>
+                        <td className={TD}>
+                          <Chip
+                            tone={
+                              d.status === "failed"
+                                ? "red"
+                                : d.status === "ready" ||
+                                    d.status === "designing"
+                                  ? "teal"
+                                  : "zinc"
+                            }
+                          >
+                            {d.status === "designing"
+                              ? `designing (stage ${String(chain?.stage ?? "?")})`
+                              : d.status}
+                          </Chip>
+                        </td>
+                        <td className={`${TD} max-w-[320px]`}>
+                          <span className="block truncate text-zinc-600">
+                            {summary}
+                          </span>
+                        </td>
+                        <td className={`tnum ${TD} whitespace-nowrap text-zinc-500`}>
+                          {fmtTime(d.updated_at)}
+                        </td>
+                      </tr>
+                      {open ? (
+                        <tr className="border-b border-zinc-100">
+                          <td colSpan={6} className="bg-zinc-50 px-4 py-3">
+                            <div className="flex flex-col gap-3 text-xs">
+                              {d.kind === "idea" ? (
+                                <div>
+                                  <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+                                    Draft description
+                                  </div>
+                                  <p className="mt-1 max-w-3xl whitespace-pre-wrap text-zinc-600">
+                                    {description || "(empty)"}
+                                  </p>
+                                </div>
+                              ) : (
+                                <>
+                                  <div>
+                                    <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+                                      Founder goals
+                                    </div>
+                                    <p className="mt-1 text-zinc-600">
+                                      {summary}
+                                      {inputs &&
+                                      typeof inputs.otherQualities === "string" &&
+                                      inputs.otherQualities.trim()
+                                        ? ` · "${inputs.otherQualities}"`
+                                        : ""}
+                                    </p>
+                                  </div>
+                                  {chain && typeof chain.error === "string" ? (
+                                    <p className="text-red-600">
+                                      Error: {chain.error}
+                                    </p>
+                                  ) : null}
+                                  {resultSpec ? (
+                                    <p className="text-zinc-600">
+                                      Result: “
+                                      {typeof resultSpec.name === "string"
+                                        ? resultSpec.name
+                                        : "?"}
+                                      ” — awaiting acceptance.
+                                    </p>
+                                  ) : null}
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {drafts && drafts.length < draftsTotal ? (
+          <div className="mt-3">
+            <Button
+              variant="secondary"
+              className="text-xs!"
+              disabled={draftsLoading}
+              onClick={() => void loadDrafts(draftsPage + 1)}
+            >
+              {draftsLoading ? "Loading…" : "Load more"}
             </Button>
           </div>
         ) : null}

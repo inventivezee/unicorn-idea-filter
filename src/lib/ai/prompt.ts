@@ -429,19 +429,69 @@ function formatFilterInputs(inputs: CustomFilterInputsPrompt): string {
     .join("\n");
 }
 
-export const FILTER_DESIGN_SYSTEM_PROMPT = `You design a personal business-idea scoring instrument for one founder, in the exact structural style of a venture "unicorn filter" — but calibrated to THEIR stated life goals, which may be much more modest than venture scale (that is the point: not everyone wants a unicorn or $20M EBITDA; many want $1M/yr and a good life).
+// ---------------------------------------------------------------------------
+// The three-model filter-design chain. Stage 1: GPT-5.5 Pro (xhigh) designs
+// the instrument from a detailed brief. Stage 2: Claude Fable 5 (max effort)
+// adversarially reviews it and outputs an improved full spec. Stage 3:
+// GPT-5.5 Pro (xhigh) reconciles both versions into the final instrument.
+// All three stages emit the same FILTER_DESIGN_SCHEMA shape.
+// ---------------------------------------------------------------------------
 
-You will receive the founder's goals (target net profit, working hours, time horizon, capital, team size, sell intention, other qualities) and optionally their background. Produce:
-- name: a short, memorable filter name that reflects their goal (under 40 characters, e.g. "Good Life Filter — $1M/yr").
-- question: the instrument's single core question, mentioning the concrete profit target, time horizon, and hours (under 250 characters).
-- gates: 5 to 8 hard pass/fail gates. Each has label (short), yMeans (what a YES concretely means) and nMeans (what a NO means — the kill condition). Gates must encode the founder's non-negotiables: the profit target being reachable within their horizon AND hours, capital fitting what they have, team fitting their max size, plus universal viability gates (real pain someone pays for, reachable buyers, legal feasibility). If they never want to sell, durability-of-income matters more than exit value; if they do, transferability gates in.
-- criteria: 8 to 12 scoring criteria with integer weights that SUM TO EXACTLY 100, each with anchors: anchor0 (what a 0 looks like), anchor3 (a 3), anchor5 (a 5). Weight what the founder cares about most heavily. Include criteria unique to their goals — e.g. profit per founder-hour, automation leverage, time-to-first-dollar, stress/complexity load, schedule flexibility, founder-market fit — not a generic VC checklist.
+const FILTER_SHARED_QUALITY_BAR = `Output shape (all of it, every stage):
+- name: a short, memorable filter name reflecting the founder's goal (under 40 characters, e.g. "Good Life Filter — $1M/yr").
+- question: the instrument's single core question, naming the concrete profit target, time horizon, and hours (under 250 characters).
+- gates: 5 to 8 hard pass/fail gates. Each has label (short), yMeans (what a YES concretely means), nMeans (what a NO means — the kill condition).
+- criteria: 8 to 12 scoring criteria with integer weights that SUM TO EXACTLY 100, each with anchor0 / anchor3 / anchor5 describing what a 0, a 3, and a 5 look like.
 
-Rules:
-- Anchors and gate meanings must be concrete and judgeable from an idea description, not vague ("can plausibly net $80k+/month within 4 years at ~8h/day" — not "makes good money").
-- Do NOT include criteria about things the founder explicitly doesn't want (no fundraising criteria if they never want investors).
-- Keep every string tight: labels under 12 words, anchors and gate meanings 1-2 sentences.
-- The instrument should be demanding but fair: a mediocre idea should fail it; an idea genuinely matching their goals should pass.`;
+The quality bar every gate, criterion, and anchor must clear:
+1. JUDGEABLE — decidable from an idea description plus ordinary research. "Can plausibly net $83k+/month by year 4 at ~8h/day" is judgeable; "makes good money" is not. Every anchor needs a number, a timeframe, or an observable fact.
+2. PERSONAL — encodes THIS founder's stated life, not a generic VC or PE checklist. Their profit target, hours, horizon, capital, and team ceiling must each appear in at least one gate or criterion with its actual value. Weight what they said matters most.
+3. DISCRIMINATING — a mediocre idea should fail 1–2 gates or land near 50; an idea genuinely matching the founder's goals should pass gates and land 70+. If every plausible idea would pass a gate, the gate is dead weight — sharpen or cut it.
+4. NON-OVERLAPPING — no two criteria should reward the same underlying property (e.g. "high margins" and "profit per hour" overlap unless the anchors separate them). Each criterion earns its weight by measuring something distinct.
+5. COMPLETE ON THE DOWNSIDE — include at least one criterion for the costs the founder is exposed to: stress/complexity load, schedule rigidity, regulatory or platform risk, or key-person dependence — whichever their goals make relevant.
+6. GOAL-CONSISTENT — nothing the founder explicitly rejected (no fundraising criteria if they want no investors; if they never want to sell, weight durable income over exit value; if they do want to sell, transferability and clean books gate in).
+7. TIGHT PROSE — labels under 12 words; yMeans/nMeans and anchors 1–2 sentences each.
+
+Universal viability floor (always encoded somewhere in the gates): a real pain someone already pays to solve, buyers the founder can actually reach, and legal/platform feasibility.`;
+
+export const FILTER_DESIGN_SYSTEM_PROMPT = `You are the world's most careful designer of decision instruments for founders. You design a personal business-idea scoring instrument for ONE founder, in the exact structural style of a venture "unicorn filter" — hard gates, then weighted 0–5 criteria — but calibrated to THEIR stated life goals, which may be far more modest than venture scale. That is the point: not everyone wants a unicorn or $20M EBITDA; many want $1M a year and a good life, some want $200k a year at 5 hours a day.
+
+You will receive the founder's goals (target net profit, working hours per day, years they'll spend building, capital available, max team size, sell intention, other qualities that matter to them) and optionally their background.
+
+Before writing the instrument, reason through:
+- What does the profit target ÷ realistic pricing imply about customer count, price point, and gross margin? Encode the implied arithmetic in gates/anchors (e.g. $1M/yr net at ~$99/mo SaaS pricing implies roughly 1,100+ paying customers at healthy margins — a gate can demand a credible path to that).
+- What does the hours ceiling imply? Low hours demand automation, asynchronous delivery, or productized services — not founder-delivered hourly work. Encode it.
+- What does the time horizon imply about time-to-first-dollar and compounding? A 3-year horizon kills slow-burn plays; anchors should reflect it.
+- What do capital and team limits kill? Inventory-heavy, capex-heavy, or headcount-heavy models may be out — encode as gates if so.
+- What did they say in "other qualities"? Treat every concrete wish there (location independence, no employees, prestige, mission) as a first-class constraint worth a gate or criterion.
+
+${FILTER_SHARED_QUALITY_BAR}`;
+
+export const FILTER_REVIEW_SYSTEM_PROMPT = `You are the adversarial reviewer of a founder's personal business-idea scoring instrument (hard gates + weighted 0–5 criteria) that another model designed. Your job: find what is wrong, weak, missing, or misweighted — then output the IMPROVED, COMPLETE instrument.
+
+Review discipline:
+- Check every gate and criterion against the founder's stated goals: is each of their numbers (profit target, hours, years, capital, team size) actually encoded with its real value somewhere? If a stated constraint is missing or watered down, fix it.
+- Check the arithmetic: do the anchors' implied numbers actually add up to the profit target within the hours and horizon? Correct any anchor whose math doesn't work.
+- Hunt overlap: merge or sharpen criteria that reward the same property, and reallocate their weights.
+- Hunt vagueness: rewrite any anchor or gate meaning that couldn't be judged from an idea description plus ordinary research.
+- Hunt blind spots: what failure mode of THIS founder's plan is unguarded (churn, platform dependence, key-person load, regulatory exposure, seasonality)? Add or reweight to cover the one or two that matter most.
+- Check the weights: do they mirror what the founder said matters most, and sum to exactly 100? Rebalance if not.
+- Respect what is right: keep the original's good decisions; do not rewrite for taste. Every change must have a reason a founder would recognize.
+
+Output the FULL improved instrument (not a diff, not commentary) in the exact same shape.
+
+${FILTER_SHARED_QUALITY_BAR}`;
+
+export const FILTER_FINAL_REVIEW_SYSTEM_PROMPT = `You are the final editor of a founder's personal business-idea scoring instrument. You will see the founder's goals, the original design (stage 1), and a reviewer's improved version (stage 2). Produce the FINAL instrument.
+
+Discipline:
+- Default to the stage-2 version — it already absorbed one review — but restore anything from stage 1 the reviewer wrongly dropped, and fix anything the reviewer broke (arithmetic, weight balance, judgeability, goal coverage).
+- Verify once more that every stated goal number appears with its actual value, weights sum to exactly 100, no two criteria overlap, and every anchor is judgeable.
+- Prefer the tightest phrasing of each pair. No new experimental ideas at this stage — this pass is for correctness, coverage, and polish.
+
+Output the FULL final instrument (not a diff, not commentary) in the exact same shape.
+
+${FILTER_SHARED_QUALITY_BAR}`;
 
 export function buildFilterDesignPrompt(
   inputs: CustomFilterInputsPrompt,
@@ -455,6 +505,51 @@ export function buildFilterDesignPrompt(
 ${formatFilterInputs(inputs)}
 ${hasTeam ? `\n## Founder background (tailor founder-fit criteria to this)\n\n${team}\n` : ""}
 Design the filter now.`;
+}
+
+/** Stage 2 (Fable 5 review) user prompt: goals + the stage-1 design. */
+export function buildFilterReviewPrompt(
+  inputs: CustomFilterInputsPrompt,
+  founderBackground: string,
+  coFounders: CoFounderInput[],
+  stage1Design: string,
+): string {
+  const team = formatFoundingTeam(founderBackground, coFounders);
+  const hasTeam = !team.startsWith("(none provided");
+  return `## The founder's goals
+
+${formatFilterInputs(inputs)}
+${hasTeam ? `\n## Founder background\n\n${team}\n` : ""}
+## The instrument to review (stage-1 design, JSON)
+
+${stage1Design}
+
+Review it against the founder's goals and output the full improved instrument.`;
+}
+
+/** Stage 3 (final GPT-5.5 Pro pass) user prompt: goals + both versions. */
+export function buildFilterFinalPrompt(
+  inputs: CustomFilterInputsPrompt,
+  founderBackground: string,
+  coFounders: CoFounderInput[],
+  stage1Design: string,
+  stage2Design: string,
+): string {
+  const team = formatFoundingTeam(founderBackground, coFounders);
+  const hasTeam = !team.startsWith("(none provided");
+  return `## The founder's goals
+
+${formatFilterInputs(inputs)}
+${hasTeam ? `\n## Founder background\n\n${team}\n` : ""}
+## Stage-1 design (original, JSON)
+
+${stage1Design}
+
+## Stage-2 design (reviewer's improved version, JSON)
+
+${stage2Design}
+
+Produce the final instrument.`;
 }
 
 export interface CustomSpecPromptShape {

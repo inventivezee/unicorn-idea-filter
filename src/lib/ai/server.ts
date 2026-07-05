@@ -50,6 +50,18 @@ function sameOrigin(request: Request): boolean {
   }
 }
 
+/** Same-origin gate only — for authenticated poll endpoints where the
+ *  per-IP rate limit would false-positive on legitimate multi-tab polling. */
+export function guardOrigin(request: Request): Response | null {
+  if (!sameOrigin(request)) {
+    return Response.json(
+      { error: "Cross-origin requests are not allowed." },
+      { status: 403 },
+    );
+  }
+  return null;
+}
+
 /** Origin + rate-limit gate. Returns an error Response to send, or null to proceed. */
 export function guardRequest(request: Request): Response | null {
   if (!sameOrigin(request)) {

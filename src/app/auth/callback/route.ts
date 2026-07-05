@@ -41,11 +41,16 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}/signin?error=auth`);
   }
 
-  // Claim this device's anonymous ideas for the new session's user.
+  // Claim this device's anonymous ideas and drafts for the new session's user.
   if (anonKey) {
     const admin = adminClient();
     await admin
       .from("ideas")
+      .update({ owner_id: data.user.id, anon_key: null })
+      .is("owner_id", null)
+      .eq("anon_key", anonKey);
+    await admin
+      .from("drafts")
       .update({ owner_id: data.user.id, anon_key: null })
       .is("owner_id", null)
       .eq("anon_key", anonKey);
