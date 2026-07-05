@@ -37,7 +37,7 @@ import {
   resolveCaller,
 } from "@/lib/supabase/server";
 
-export const maxDuration = 300;
+export const maxDuration = 800; // Vercel Pro (GA limit; build fails on Hobby)
 
 const MAX_DESIGNS_PER_DAY = 6;
 // The chain stores these in the job payload; caps keep the payload bounded.

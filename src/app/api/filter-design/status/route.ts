@@ -18,7 +18,7 @@ import {
   resolveCaller,
 } from "@/lib/supabase/server";
 
-export const maxDuration = 300;
+export const maxDuration = 800; // Vercel Pro (GA limit; build fails on Hobby)
 
 function statusBody(draft: DraftRow) {
   const chain = chainStateFrom(

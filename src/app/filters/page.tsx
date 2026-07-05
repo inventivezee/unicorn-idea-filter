@@ -586,7 +586,7 @@ export default function FiltersPage() {
       {eligible && designing ? (
         <Section
           title="Designing your filter…"
-          description="A three-model chain is at work. You can leave this page — the design keeps running and will be waiting here when you come back."
+          description="A three-model chain is at work. You can close this tab — or your whole browser — the design keeps running on the server (checked every minute) and will be waiting here when you come back."
         >
           <div className="space-y-3">
             {[1, 2, 3].map((n) => {

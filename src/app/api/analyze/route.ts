@@ -65,7 +65,7 @@ import type {
 } from "@/lib/types";
 
 // AI analysis with a thinking model can take a while — allow long invocations.
-export const maxDuration = 300;
+export const maxDuration = 800; // Vercel Pro (GA limit; build fails on Hobby)
 
 const FOUNDER_PERSONAL_GATES = GATES.filter((g) => g.founderPersonal).map(
   (g) => g.id,

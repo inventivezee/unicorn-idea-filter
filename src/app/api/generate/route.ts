@@ -37,7 +37,7 @@ import {
 import { normalizeCustomFilterSpec } from "@/lib/types";
 
 // Research + generation with a thinking model takes a while.
-export const maxDuration = 300;
+export const maxDuration = 800; // Vercel Pro (GA limit; build fails on Hobby)
 
 export interface GeneratedIdea {
   name: string;

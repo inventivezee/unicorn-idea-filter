@@ -50,7 +50,7 @@ import {
 } from "@/lib/types";
 import type { CcCriterionId, CriterionId } from "@/lib/types";
 
-export const maxDuration = 300;
+export const maxDuration = 800; // Vercel Pro (GA limit; build fails on Hobby)
 
 function record(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v)
