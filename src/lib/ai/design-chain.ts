@@ -30,6 +30,7 @@ import {
 } from "./prompt";
 import { FILTER_DESIGN_SCHEMA } from "./schema";
 import { casUpdateDraft, type DraftRow } from "@/lib/db/drafts";
+import { designFailedEmail, designReadyEmail, sendEmail } from "@/lib/email";
 import { normalizeCustomFilterSpec } from "@/lib/types";
 
 export const CHAIN_OPENAI_MODEL = "gpt-5.5-pro";
@@ -368,6 +369,34 @@ function submitTarget(state: ChainState): {
   return { stage: state.stage, model: CHAIN_OPENAI_MODEL };
 }
 
+/**
+ * Email the design's owner about a terminal transition. Called ONLY by the
+ * CAS winner of that transition, so each design sends at most one "ready"
+ * and one "failed" mail. Best-effort: a mail failure never fails the chain.
+ */
+async function notifyOwner(
+  admin: SupabaseClient,
+  draft: DraftRow,
+  mail: { subject: string; html: string },
+): Promise<void> {
+  if (!draft.owner_id) return;
+  try {
+    const { data } = await admin
+      .from("profiles")
+      .select("email")
+      .eq("id", draft.owner_id)
+      .maybeSingle<{ email: string | null }>();
+    if (data?.email) {
+      await sendEmail({ to: data.email, ...mail });
+    }
+  } catch (err) {
+    console.error(
+      "design notification failed",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
 async function failDraft(
   admin: SupabaseClient,
   draft: DraftRow,
@@ -379,6 +408,7 @@ async function failDraft(
       payload: { ...draft.payload, chain: { ...state, error: message } },
       status: "failed",
     });
+    if (updated) await notifyOwner(admin, draft, designFailedEmail(message));
     return updated ?? draft;
   } catch {
     // The terminal transition must ALWAYS land — if the full payload trips
@@ -396,6 +426,7 @@ async function failDraft(
       payload: { ...draft.payload, chain: lean },
       status: "failed",
     });
+    if (updated) await notifyOwner(admin, draft, designFailedEmail(message));
     return updated ?? draft;
   }
 }
@@ -602,6 +633,7 @@ export async function advanceDraftChain(
         payload: { ...payload, chain: done, resultSpec: spec },
         status: "ready",
       });
+      if (updated) await notifyOwner(admin, draft, designReadyEmail(spec.name));
       return updated ?? draft;
     }
   }

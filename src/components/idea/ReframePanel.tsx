@@ -33,12 +33,16 @@ export function ReframePanel({
   settings,
   filter,
   customSpec,
+  fallbackSummary,
 }: {
   idea: Idea;
   settings: Settings;
   filter: FilterMode;
   /** Required when filter === "custom". */
   customSpec?: CustomFilterSpec;
+  /** AI-summary context when the idea carries no AIAnalysis object — used
+   *  for public verdicts, whose summaries are sanitized strings only. */
+  fallbackSummary?: string;
 }) {
   const { addIdea } = useStore();
   const router = useRouter();
@@ -108,7 +112,7 @@ export function ReframePanel({
           ...(filter === "custom" && customSpec ? { customSpec } : {}),
           gateRationales: ai?.gateRationales ?? {},
           scoreRationales: ai?.scoreRationales ?? {},
-          aiSummary: ai?.summary ?? "",
+          aiSummary: ai?.summary ?? fallbackSummary ?? "",
           clarifications: idea.clarifications ?? [],
           founderBackground: settings.founderBackground,
           coFounders: settings.coFounders

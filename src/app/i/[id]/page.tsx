@@ -22,7 +22,10 @@ import {
   type CcScores,
 } from "@/lib/cashcow/engine";
 import { CcDecisionChip } from "@/components/cashcow/CcSections";
+import { ReframePanel } from "@/components/idea/ReframePanel";
 import { CRITERIA, DEFAULT_WEIGHTS } from "@/lib/criteria";
+import { emptyCashCowBlock } from "@/lib/cashcow/engine";
+import { newIdea } from "@/lib/defaults";
 import type { PublicIdeaRow } from "@/lib/db/types";
 import {
   KILLER_FLAG_COPY,
@@ -229,6 +232,38 @@ function RunAnalysisCTA({
   );
 }
 
+/**
+ * Always-available fork: copies the idea's text and metadata into the
+ * viewer's own pipeline (verdict NOT copied — the fork stays unpublished
+ * until the forker scores it themselves, so the public feed never fills
+ * with duplicates). Works signed-in or anonymous.
+ */
+function ForkButton({ idea }: { idea: PublicIdeaRow }) {
+  const router = useRouter();
+  const { addIdea } = useStore();
+  const forkingRef = useRef(false);
+
+  function fork() {
+    if (forkingRef.current) return;
+    forkingRef.current = true;
+    const created = addIdea({
+      name: idea.name,
+      domain: idea.domain,
+      businessModel: idea.business_model,
+      buyerICP: idea.buyer_icp,
+      initialWedge: idea.initial_wedge,
+      thesisNotes: idea.thesis_notes,
+    });
+    router.push(`/idea/${created.id}`);
+  }
+
+  return (
+    <Button variant="secondary" onClick={fork} title="Copy this idea into your own pipeline — edit it, analyze it with your background, and reframe it from there.">
+      ⑂ Fork into my pipeline
+    </Button>
+  );
+}
+
 export default function PublicIdeaPage() {
   const { id } = useParams<{ id: string }>();
   const { hydrated, cloud, state } = useStore();
@@ -354,17 +389,61 @@ export default function PublicIdeaPage() {
   // get a "run the analysis" shortcut instead of just a note.
   const ownsIdea = state.ideas.some((i) => i.id === idea.id);
 
+  // A store-shaped copy of the PUBLIC verdict so the reframe tool can judge
+  // it with the normal engines. Never persisted — reframes the viewer adds
+  // become fresh ideas in their own pipeline.
+  const reframeFilter: "unicorn" | "cashcow" =
+    cashcowMode && hasCcData ? "cashcow" : "unicorn";
+  const syntheticIdea = newIdea({
+    id: `public-${idea.id}`,
+    name: idea.name,
+    domain: idea.domain,
+    businessModel: idea.business_model,
+    buyerICP: idea.buyer_icp,
+    initialWedge: idea.initial_wedge,
+    thesisNotes: idea.thesis_notes,
+    gates,
+    scores,
+    confidence: toConfidence(idea.confidence),
+    ...(hasCcData
+      ? {
+          cashcow: {
+            ...emptyCashCowBlock(),
+            gates: ccGates,
+            scores: ccScores,
+            confidence: toConfidence(idea.cc_confidence ?? null),
+          },
+        }
+      : {}),
+  });
+  const publicSummary =
+    (reframeFilter === "cashcow" ? idea.cc_summary : idea.ai_summary) ?? "";
+  const showReframe =
+    !ownsIdea && (reframeFilter === "cashcow" ? hasCcData : hasUnicornData);
+
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold tracking-tight text-zinc-900">
-          {idea.name || "Untitled idea"}
-        </h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          {idea.author_handle ?? "Anonymous founder"}
-          {" · added "}
-          <span className="tnum">{fmtDate(idea.created_at)}</span>
-        </p>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-zinc-900">
+            {idea.name || "Untitled idea"}
+          </h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            {idea.author_handle ?? "Anonymous founder"}
+            {" · added "}
+            <span className="tnum">{fmtDate(idea.created_at)}</span>
+          </p>
+        </div>
+        {ownsIdea ? (
+          <Link
+            href={`/idea/${idea.id}`}
+            className="text-sm font-medium text-teal-700 underline-offset-2 hover:underline"
+          >
+            Open in my pipeline →
+          </Link>
+        ) : (
+          <ForkButton idea={idea} />
+        )}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
@@ -604,6 +683,17 @@ export default function PublicIdeaPage() {
           )}
         </div>
       </div>
+
+      {showReframe ? (
+        <div className="mt-4">
+          <ReframePanel
+            idea={syntheticIdea}
+            settings={state.settings}
+            filter={reframeFilter}
+            fallbackSummary={publicSummary}
+          />
+        </div>
+      ) : null}
 
       <p className="mt-6 text-center text-xs text-zinc-500">
         {cashcowMode
