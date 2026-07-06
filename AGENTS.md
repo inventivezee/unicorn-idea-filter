@@ -3,3 +3,48 @@
 
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
+
+# Unicorn Idea Filter — project brief
+
+Startup-idea scoring app, LIVE in production (Vercel **Pro** + Supabase + Stripe; private repo `github.com/inventivezee/unicorn-idea-filter`). Founders describe an idea; AI scores it through hard gates + weighted 0–5 criteria + a confidence multiplier into a decision (GO/BUILD … KILL/REFRAME). Scored ideas publish to a shared public database (Explore); anyone can fork a public idea or run the reframe generator on its published verdict. $19/mo subscription gates premium models, private ideas, and custom-filter design. Admin console at /admin (ADMIN_EMAILS).
+
+## Stack & commands
+
+Next.js 16 App Router, TypeScript strict, Tailwind v4, Vitest. Supabase via `@supabase/ssr` (NO direct client writes — every DB write goes through service-role API routes with ownership checks in `src/lib/db/*`).
+
+- `npx tsc --noEmit && npm test && npm run build` — run all three before any commit.
+- `npm run migrate` / `migrate:status` / `migrate:baseline <v>` — applies `supabase/migrations/*.sql` to the REMOTE db via the Supabase Management API. Needs `SUPABASE_ACCESS_TOKEN` + `SUPABASE_PROJECT_REF` in `.env.local` (local-only secret, never deploy). Ad-hoc SQL: `node scripts/migrate.mjs sql "select …"`. A preflight aborts if the target db lacks `public.ideas` (the PAT can reach every project on the account — the ref is the only target selector). DB is baselined at 009; add new migrations as `010_name.sql`.
+- Local dev has NO AI keys and NO Supabase env → runs in local-only mode. AI and cloud paths are only verifiable on the deployment. Never point local dev at the production database.
+
+## The three instruments
+
+| Instrument | Accent | Per-idea state | Public? |
+|---|---|---|---|
+| Unicorn | teal | `idea.gates/scores/confidence/ai` | published via `public_ideas` view |
+| Cash Cow ($20M EBITDA) | amber | `idea.cashcow` (jsonb block) | published (sanitized cc_* columns) |
+| Custom (founder-designed) | violet | `idea.custom[filterId]` + spec snapshot | **NEVER** — owner + admin only |
+
+Custom filter DESIGN is premium+login gated and runs a three-model background chain (`src/lib/ai/design-chain.ts`): GPT-5.5 Pro (background mode, effort xhigh) → Claude Fable 5 (effort max, via Message Batches — batches reject the `fallbacks` param; refusals retry manually on Opus) → GPT-5.5 Pro final pass. State lives in a `drafts` row; advanced by client polling (`/api/filter-design/status`) AND an every-minute Vercel cron (`/api/cron/advance-designs`, gated by `CRON_SECRET`). Terminal transitions email the owner via Resend (`src/lib/email.ts`).
+
+## Hard invariants — do not break
+
+1. **Spend safety:** every paid provider call in the design chain must sit behind a CAS-won, budget-counted claim (`pending_submit` → `in_flight`, submit counters bumped at claim time, `MAX_SUBMITS_PER_STAGE`). Never add a provider submission outside this protocol; concurrent pollers/crons race constantly and must not double-bill.
+2. **Privacy:** `public_ideas` view is the ONLY public surface. `computePublished` must never look at `idea.custom`. Founder backgrounds, rationales, and custom-filter verdicts are never public. Drafts are owner + admin only.
+3. **Publishing side-effect:** `computePublished` publishes an idea the moment ANY gate/score exists — this is why forks copy text only (a verdict-carrying fork would instantly republish a duplicate) and why `applyCustomToIdea` never touches `published`.
+4. **Anthropic structured-output schemas must stay lean** — the constrained-decoding grammar has a hard size limit (`schema-size.test.ts` guards budgets; keep scoring semantics in prompts, not schemas).
+5. **Migration drift tolerance:** writes go through `writeToleratingMissingColumns` (PGRST204 strips unknown columns and retries) — new features must degrade, never lose user data, when a migration hasn't run yet.
+6. **Payload caps are escape-aware:** the drafts payload cap measures `JSON.stringify` length; user text and model output stored in chain state must pass through `capEscaped`/`truncateDesign` (quotes/control chars serialize at 2–6×).
+7. **Clarifications are instrument-tagged** (`"unicorn" | "cashcow" | "custom:<id>"`) via `hasClarificationsFor`; custom spec normalization (`normalizeCustomFilterSpec`) resequences ids `g1../c1..` and largest-remainder-rescales weights to exactly 100 — routes must use the NORMALIZED spec, never the raw client body.
+8. **Vercel-Pro-only config:** `maxDuration = 800` and the `* * * * *` cron in `vercel.json` fail the build on a Hobby account.
+9. Anonymous identity = `anon_key` (localStorage); the shared private-mode fallback key is rejected server-side (`anonKeyFromBody`) — never treat it as an ownership identity. Sign-in claims anon ideas AND drafts (auth callback).
+
+## Env vars
+
+Vercel (production): `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` (both required for the design chain), `NEXT_PUBLIC_SUPABASE_URL/ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `STRIPE_*`, `NEXT_PUBLIC_APP_URL`, `ADMIN_EMAILS`, `CRON_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM` (verified Resend domain).
+`.env.local` (local only, gitignored): `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF` — migration tooling only.
+
+## Working conventions in this repo
+
+- Adversarially review substantive changes before pushing (concurrency, spend, privacy have bitten before — the CAS protocol exists because reviews found real double-billing races).
+- Commit messages explain the why; push to `main` deploys production via Vercel.
+- The engine layers are pure and unit-tested (`engine.test.ts`, `cashcow/engine.test.ts`, `custom/engine.test.ts`); fixture decisions in tests are contracts — don't change thresholds casually.
