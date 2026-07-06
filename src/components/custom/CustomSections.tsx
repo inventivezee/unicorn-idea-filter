@@ -16,6 +16,8 @@ import {
 } from "@/lib/custom/engine";
 import type { CustomDecision, CustomGateStatus } from "@/lib/custom/engine";
 import { FlagIcon, Section, fmtScore } from "@/components/ui";
+import { ReframeButton } from "@/components/idea/ReframeButton";
+import { isWeakVerdict } from "@/lib/engine";
 import type {
   CustomBlock,
   CustomFilterSpec,
@@ -435,6 +437,12 @@ export function CustomComputedPanel({
           <span className="text-xs font-medium text-zinc-500">Decision</span>
           <CustomDecisionChip decision={dec} />
         </div>
+
+        {isWeakVerdict(dec) ? (
+          <div>
+            <ReframeButton />
+          </div>
+        ) : null}
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-medium text-zinc-500">Gates</span>
           <CustomGateChip status={status} />

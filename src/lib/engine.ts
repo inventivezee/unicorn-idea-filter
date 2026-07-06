@@ -74,6 +74,15 @@ export function decision(input: {
   return "KILL";
 }
 
+/**
+ * Weak verdicts — the decisions for which "reframe" is the ladder's own advice.
+ * String-based so it applies to the unicorn, cash-cow, AND custom decision
+ * unions alike (they share these labels). Keep in sync with ReframePanel.
+ */
+export function isWeakVerdict(dec: string | null | undefined): boolean {
+  return dec === "KILL / REFRAME" || dec === "PARK / NARROW" || dec === "KILL";
+}
+
 export interface RiskEntry {
   id: CriterionId;
   pointsLost: number;

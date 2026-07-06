@@ -6,14 +6,15 @@
 // reframe can be added to the pipeline as a new idea linked back to this one.
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getAnonKey } from "@/lib/anon";
 import { ccDecision } from "@/lib/cashcow/engine";
 import { emptyCashCowBlock } from "@/lib/cashcow/engine";
 import { customDecision, emptyCustomBlock } from "@/lib/custom/engine";
-import { decision } from "@/lib/engine";
+import { decision, isWeakVerdict } from "@/lib/engine";
 import { useStore } from "@/lib/store";
 import { Button, Section } from "@/components/ui";
+import { REFRAME_EVENT } from "./ReframeButton";
 import type {
   CustomFilterSpec,
   FilterMode,
@@ -79,8 +80,47 @@ export function ReframePanel({
         confidence: idea.confidence,
         weights: settings.weights,
       });
-  const weak =
-    dec === "KILL / REFRAME" || dec === "PARK / NARROW" || dec === "KILL";
+  const weak = isWeakVerdict(dec);
+
+  // A reframe button can live anywhere on the page (under the verdict, in the
+  // AI summary). It dispatches REFRAME_EVENT; this panel — wherever it's
+  // mounted — scrolls into view and starts generating. An owner arriving from
+  // their public idea page comes in via ?reframe=1 and is handled the same way.
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const startRef = useRef<() => void>(() => {});
+  // Sync the latest "start" action into a ref (in an effect, never during
+  // render) so distant reframe buttons and the ?reframe=1 deep-link trigger it
+  // without stale closures. Guarded on `weak` so an owner who lands on
+  // /idea/{id}?reframe=1 in a non-weak instrument doesn't fire a wasted premium
+  // call or force the (otherwise hidden) panel open.
+  useEffect(() => {
+    startRef.current = () => {
+      if (!weak) return;
+      panelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      void generate();
+    };
+  });
+  useEffect(() => {
+    const handler = () => startRef.current();
+    window.addEventListener(REFRAME_EVENT, handler);
+    return () => window.removeEventListener(REFRAME_EVENT, handler);
+  }, []);
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (autoStartedRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("reframe") !== "1") return;
+    autoStartedRef.current = true;
+    params.delete("reframe");
+    const q = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + (q ? `?${q}` : ""),
+    );
+    startRef.current();
+  }, []);
+
   if (!weak && !reframes) return null;
 
   async function generate() {
@@ -169,6 +209,7 @@ export function ReframePanel({
   }
 
   return (
+    <div ref={panelRef}>
     <Section
       title="Reframe this idea"
       description={
@@ -258,5 +299,6 @@ export function ReframePanel({
         </div>
       ) : null}
     </Section>
+    </div>
   );
 }

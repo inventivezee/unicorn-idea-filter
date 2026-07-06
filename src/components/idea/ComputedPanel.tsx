@@ -9,6 +9,7 @@ import {
   killerFlags,
   rawScore,
   topRisks,
+  isWeakVerdict,
 } from "@/lib/engine";
 import {
   DecisionChip,
@@ -17,6 +18,7 @@ import {
   Section,
   fmtScore,
 } from "@/components/ui";
+import { ReframeButton } from "./ReframeButton";
 import type { CriterionId, Idea } from "@/lib/types";
 
 const inputCls =
@@ -84,6 +86,12 @@ export function ComputedPanel({
         <DecisionChip decision={computed.dec} />
         <GateStatusChip status={computed.status} />
       </div>
+
+      {isWeakVerdict(computed.dec) ? (
+        <div className="mt-3">
+          <ReframeButton />
+        </div>
+      ) : null}
 
       <div className="mt-4 border-t border-zinc-100 pt-3">
         <div className="text-xs font-medium text-zinc-500">Top risks</div>

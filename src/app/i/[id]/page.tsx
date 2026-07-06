@@ -23,6 +23,7 @@ import {
 } from "@/lib/cashcow/engine";
 import { CcDecisionChip } from "@/components/cashcow/CcSections";
 import { ReframePanel } from "@/components/idea/ReframePanel";
+import { ReframeButton } from "@/components/idea/ReframeButton";
 import { CRITERIA, DEFAULT_WEIGHTS } from "@/lib/criteria";
 import { emptyCashCowBlock } from "@/lib/cashcow/engine";
 import { newIdea } from "@/lib/defaults";
@@ -30,6 +31,7 @@ import type { PublicIdeaRow } from "@/lib/db/types";
 import {
   KILLER_FLAG_COPY,
   decision,
+  isWeakVerdict,
   gateStatus,
   killerFlags,
   type Gates,
@@ -426,6 +428,12 @@ export default function PublicIdeaPage() {
   // the verdict is weak.
   const showReframe =
     reframeFilter === "cashcow" ? hasCcData : hasUnicornData;
+  // Reframe entry points shown beside the verdict/summary when it's weak.
+  const reframeWeak =
+    showReframe && isWeakVerdict(reframeFilter === "cashcow" ? ccDec : dec);
+  // The owner reframes from their private editor (full data) — the button
+  // navigates there and auto-starts; everyone else runs it inline here.
+  const reframeHref = ownsIdea ? `/idea/${idea.id}?reframe=1` : undefined;
 
   return (
     <div>
@@ -487,6 +495,11 @@ export default function PublicIdeaPage() {
                     <p className="whitespace-pre-wrap text-sm text-zinc-700">
                       {idea.cc_summary}
                     </p>
+                    {reframeWeak ? (
+                      <div className="mt-3">
+                        <ReframeButton href={reframeHref} />
+                      </div>
+                    ) : null}
                     <ScoredBy
                       model={idea.cc_model}
                       analyzedAt={idea.cc_analyzed_at}
@@ -574,6 +587,11 @@ export default function PublicIdeaPage() {
                   <p className="whitespace-pre-wrap text-sm text-zinc-700">
                     {idea.ai_summary}
                   </p>
+                  {reframeWeak ? (
+                    <div className="mt-3">
+                      <ReframeButton href={reframeHref} />
+                    </div>
+                  ) : null}
                   <ScoredBy
                     model={idea.ai_model}
                     analyzedAt={idea.ai_analyzed_at}
@@ -651,6 +669,11 @@ export default function PublicIdeaPage() {
                     </dd>
                   </div>
                 </dl>
+                {reframeWeak ? (
+                  <div className="mt-3">
+                    <ReframeButton href={reframeHref} />
+                  </div>
+                ) : null}
                 <ScoredBy
                   model={idea.cc_model}
                   analyzedAt={idea.cc_analyzed_at}
@@ -681,6 +704,11 @@ export default function PublicIdeaPage() {
                   </dd>
                 </div>
               </dl>
+              {reframeWeak ? (
+                <div className="mt-3">
+                  <ReframeButton href={reframeHref} />
+                </div>
+              ) : null}
               <ScoredBy
                 model={idea.ai_model}
                 analyzedAt={idea.ai_analyzed_at}
@@ -690,7 +718,7 @@ export default function PublicIdeaPage() {
         </div>
       </div>
 
-      {showReframe ? (
+      {showReframe && !ownsIdea ? (
         <div className="mt-4">
           <ReframePanel
             idea={syntheticIdea}

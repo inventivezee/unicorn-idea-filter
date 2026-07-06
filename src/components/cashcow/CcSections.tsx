@@ -17,6 +17,8 @@ import {
 } from "@/lib/cashcow/engine";
 import type { CcDecision, CcGateStatus } from "@/lib/cashcow/engine";
 import { FlagIcon, Section, fmtScore } from "@/components/ui";
+import { ReframeButton } from "@/components/idea/ReframeButton";
+import { isWeakVerdict } from "@/lib/engine";
 import type {
   CashCowBlock,
   CcCriterionId,
@@ -385,6 +387,12 @@ export function CcComputedPanel({ idea }: { idea: Idea }) {
           <span className="text-xs font-medium text-zinc-500">Decision</span>
           <CcDecisionChip decision={decision} />
         </div>
+
+        {isWeakVerdict(decision) ? (
+          <div>
+            <ReframeButton />
+          </div>
+        ) : null}
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-medium text-zinc-500">Gates</span>
           <CcGateStatusChip status={status} />
