@@ -23,7 +23,7 @@ import {
 } from "@/lib/ai/server";
 import {
   ANON_ANALYSES_PER_DAY,
-  FREE_ANALYSES_PER_MONTH,
+  FREE_ANALYSES_PER_DAY,
   isPremiumModel,
   STANDARD_WEB_SEARCH_CAP,
 } from "@/lib/entitlements";
@@ -154,12 +154,12 @@ export async function POST(request: Request) {
       if (caller.user) {
         const { data: allowed } = await admin.rpc("consume_free_analysis", {
           p_user: caller.user.id,
-          p_limit: FREE_ANALYSES_PER_MONTH,
+          p_limit: FREE_ANALYSES_PER_DAY,
         });
         if (!allowed) {
           return Response.json(
             {
-              error: `You've used all ${FREE_ANALYSES_PER_MONTH} free AI runs this month — upgrade for unlimited generation and analyses.`,
+              error: `You've used all ${FREE_ANALYSES_PER_DAY} free AI runs today — upgrade for unlimited generation and analyses.`,
               upgrade: true,
             },
             { status: 402 },
@@ -185,7 +185,7 @@ export async function POST(request: Request) {
         if (!allowed) {
           return Response.json(
             {
-              error: `Anonymous visitors get ${ANON_ANALYSES_PER_DAY} AI runs per day — sign in for ${FREE_ANALYSES_PER_MONTH} free per month, or subscribe for unlimited.`,
+              error: `Anonymous visitors get ${ANON_ANALYSES_PER_DAY} AI runs per day — sign in for ${FREE_ANALYSES_PER_DAY} free per day, or subscribe for unlimited.`,
               upgrade: true,
             },
             { status: 402 },

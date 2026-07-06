@@ -22,8 +22,8 @@ export function isPremiumModel(model: string): boolean {
 
 /** Anonymous visitors: full analyses per day (per IP and per device key). */
 export const ANON_ANALYSES_PER_DAY = 3;
-/** Free signed-in accounts: full analyses per calendar month. */
-export const FREE_ANALYSES_PER_MONTH = 10;
+/** Free signed-in accounts: full analyses per UTC day. */
+export const FREE_ANALYSES_PER_DAY = 20;
 
 /**
  * Web searches a non-subscriber ANALYSIS may run (hard-capped via the tool's

@@ -1,7 +1,7 @@
 // Profile + entitlements for the signed-in caller.
 import { readJsonBody } from "@/lib/ai/server";
 import {
-  FREE_ANALYSES_PER_MONTH,
+  FREE_ANALYSES_PER_DAY,
   PREMIUM_MODELS,
   type Entitlements,
   type SubscriptionStatus,
@@ -44,11 +44,10 @@ export async function GET() {
     });
   }
   const p = caller.profile;
-  const sameMonth =
-    new Date(p.analyses_reset_at).getUTCMonth() === new Date().getUTCMonth() &&
-    new Date(p.analyses_reset_at).getUTCFullYear() ===
-      new Date().getUTCFullYear();
-  const used = sameMonth ? p.analyses_used : 0;
+  const sameDay =
+    new Date(p.analyses_reset_at).toISOString().slice(0, 10) ===
+    new Date().toISOString().slice(0, 10);
+  const used = sameDay ? p.analyses_used : 0;
   const entitlements: Entitlements = {
     signedIn: true,
     email: caller.user.email ?? null,
@@ -59,7 +58,7 @@ export async function GET() {
     subscriptionStatus: (p.subscription_status as SubscriptionStatus) ?? "none",
     analysesRemaining: caller.subscribed
       ? null
-      : Math.max(0, FREE_ANALYSES_PER_MONTH - used),
+      : Math.max(0, FREE_ANALYSES_PER_DAY - used),
     premiumModels: [...PREMIUM_MODELS],
   };
   return Response.json({

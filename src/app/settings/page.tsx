@@ -9,7 +9,7 @@ import { getAnonKey } from "@/lib/anon";
 import { ANTHROPIC_MODELS, generateId, OPENAI_MODELS } from "@/lib/defaults";
 import { sumWeights } from "@/lib/engine";
 import {
-  FREE_ANALYSES_PER_MONTH,
+  FREE_ANALYSES_PER_DAY,
   isPremiumModel,
   SUBSCRIPTION_PRICE_LABEL,
 } from "@/lib/entitlements";
@@ -868,7 +868,7 @@ export default function SettingsPage() {
                       <span className="font-medium">
                         Unlimited AI analyses
                       </span>{" "}
-                      — free tier gets {FREE_ANALYSES_PER_MONTH}/month
+                      — free tier gets {FREE_ANALYSES_PER_DAY}/day
                     </li>
                   </ul>
                   {entitlements.analysesRemaining !== null ? (
@@ -876,8 +876,8 @@ export default function SettingsPage() {
                       <span className="tnum">
                         {entitlements.analysesRemaining}
                       </span>{" "}
-                      of <span className="tnum">{FREE_ANALYSES_PER_MONTH}</span>{" "}
-                      free analyses left this month
+                      of <span className="tnum">{FREE_ANALYSES_PER_DAY}</span>{" "}
+                      free analyses left today
                     </p>
                   ) : null}
                   <div className="mt-3 flex flex-wrap items-center gap-3">

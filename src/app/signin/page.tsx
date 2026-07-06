@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import { Button, EmptyState } from "@/components/ui";
 import { getAnonKey } from "@/lib/anon";
-import { FREE_ANALYSES_PER_MONTH } from "@/lib/entitlements";
+import { FREE_ANALYSES_PER_DAY } from "@/lib/entitlements";
 import { useStore } from "@/lib/store";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
@@ -171,7 +171,7 @@ export default function SignInPage() {
 
         <p className="mt-4 text-xs leading-relaxed text-zinc-500">
           A free account keeps your ideas across devices, gives you{" "}
-          {FREE_ANALYSES_PER_MONTH} free AI analyses a month, and unlocks
+          {FREE_ANALYSES_PER_DAY} free AI analyses a day, and unlocks
           subscriptions.
         </p>
       </div>

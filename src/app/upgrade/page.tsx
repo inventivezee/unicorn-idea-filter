@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { Button, PageHeader, Section } from "@/components/ui";
 import {
-  FREE_ANALYSES_PER_MONTH,
+  FREE_ANALYSES_PER_DAY,
   SUBSCRIPTION_PRICE_LABEL,
 } from "@/lib/entitlements";
 import { useStore } from "@/lib/store";
@@ -22,7 +22,7 @@ const REASONS: Record<string, string> = {
 const BENEFITS = [
   {
     title: "Unlimited AI analyses",
-    body: `Free accounts get ${FREE_ANALYSES_PER_MONTH} analyses a month; anonymous visitors get 3 a day. Subscribers run as many as they need (fair use).`,
+    body: `Free accounts get ${FREE_ANALYSES_PER_DAY} analyses a day; anonymous visitors get 3 a day. Subscribers run as many as they need (fair use).`,
   },
   {
     title: "Premium reasoning",
@@ -129,8 +129,8 @@ function UpgradeInner() {
           remaining !== null &&
           entitlements.signedIn ? (
             <span className="mt-1 block text-xs">
-              You have {remaining} of {FREE_ANALYSES_PER_MONTH} free analyses
-              left this month.
+              You have {remaining} of {FREE_ANALYSES_PER_DAY} free analyses
+              left today.
             </span>
           ) : null}
         </div>
@@ -178,8 +178,8 @@ function UpgradeInner() {
       </Section>
 
       <p className="mt-4 text-center text-xs text-zinc-400">
-        You can keep using the free tier — {FREE_ANALYSES_PER_MONTH} analyses a
-        month with Sonnet 5 and GPT-5.5 at medium effort.
+        You can keep using the free tier — {FREE_ANALYSES_PER_DAY} analyses a
+        day with Sonnet 5 and GPT-5.5 at medium effort.
       </p>
     </div>
   );
