@@ -418,8 +418,14 @@ export default function PublicIdeaPage() {
   });
   const publicSummary =
     (reframeFilter === "cashcow" ? idea.cc_summary : idea.ai_summary) ?? "";
+  // Reframe is offered to everyone on a weak public verdict — including the
+  // idea's own author. (It used to be gated on !ownsIdea, which hid the panel
+  // the moment the owner was signed in, even though reframing just seeds NEW
+  // ideas in the viewer's pipeline from the sanitized public verdict — no
+  // ownership or publishing concern.) The panel itself still self-hides unless
+  // the verdict is weak.
   const showReframe =
-    !ownsIdea && (reframeFilter === "cashcow" ? hasCcData : hasUnicornData);
+    reframeFilter === "cashcow" ? hasCcData : hasUnicornData;
 
   return (
     <div>
