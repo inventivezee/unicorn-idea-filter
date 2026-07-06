@@ -187,6 +187,14 @@ export default function ExplorePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, sort, page, reloadKey, cashcowMode]);
 
+  // Mode changed → restart from page 0 so ranking matches the instrument.
+  useEffect(() => {
+    setPage(0);
+    setIdeas([]);
+    setTotal(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cashcowMode]);
+
   if (!hydrated) return null;
 
   const header = (
@@ -210,14 +218,6 @@ export default function ExplorePage() {
       </div>
     );
   }
-
-  // Mode changed → restart from page 0 so ranking matches the instrument.
-  useEffect(() => {
-    setPage(0);
-    setIdeas([]);
-    setTotal(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cashcowMode]);
 
   function changeSort(next: FeedSort) {
     if (next === sort) return;
