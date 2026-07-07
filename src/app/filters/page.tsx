@@ -951,8 +951,8 @@ export default function FiltersPage() {
       ) : null}
 
       <p className="mt-6 text-center text-xs text-zinc-400">
-        Custom filters, their verdicts, and drafts are visible only to you and
-        the site admin —{" "}
+        Custom filters, their verdicts, and drafts are private — never shown in
+        the public database. See the{" "}
         <Link href="/privacy" className="underline hover:text-zinc-600">
           privacy policy
         </Link>
