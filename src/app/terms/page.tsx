@@ -6,7 +6,7 @@ export const metadata: Metadata = {
 };
 
 const UPDATED = "July 4, 2026";
-const CONTACT = "hk@innovateabundance.com";
+const CONTACT = "support@innovateabundance.com";
 
 function Section({
   title,
