@@ -524,10 +524,25 @@ async function executeStep(
             : buildScoringResearchPrompt();
     const phase = turnKeyFor(task.status);
     const used = task.turns?.[phase] ?? 0;
+    // Continuity guard: a loop STARTED on one provider must finish on it —
+    // its serialized state is provider-shaped, and a mid-phase switch (e.g.
+    // tasks in flight when the dual-panel scoring deployed) would feed that
+    // state to the wrong API. New phases pick up the panel routing.
+    let turnModel = model;
+    if (ps.loop && !feedbackMode) {
+      if (ps.loop.kind === "openai" && model.provider !== "openai") {
+        turnModel = SCORER_OPENAI;
+      } else if (
+        ps.loop.kind === "anthropic" &&
+        model.provider !== "anthropic"
+      ) {
+        turnModel = SCORER_ANTHROPIC;
+      }
+    }
     const result = await runResearchTurn({
-      provider: model.provider,
-      model: model.model,
-      effort: model.provider === "openrouter" ? undefined : "max",
+      provider: turnModel.provider,
+      model: turnModel.model,
+      effort: turnModel.provider === "openrouter" ? undefined : "max",
       system,
       prompt,
       state: ps.loop ?? initialLoopState(model.provider, system, prompt),
