@@ -8,7 +8,7 @@
 // (spend counted BEFORE the provider call — invariant #1), and a claim is
 // stealable only after CLAIM_LEASE_MS of heartbeat silence.
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { CLAIM_LEASE_MS } from "@/lib/discovery/config";
+import { CLAIM_LEASE_MS, RUN_DEADLINE_MS } from "@/lib/discovery/config";
 
 export type RunStatus = "running" | "done" | "failed" | "cancelled";
 export type TaskStatus =
@@ -65,7 +65,7 @@ export class DiscoveryAccessError extends Error {
 
 /** Hard ceiling on a task's serialized phase_state — the engine windows to
  *  TASK_STATE_CHAR_BUDGET well below this; breaching here is a code bug. */
-const MAX_TASK_STATE_CHARS = 200_000;
+const MAX_TASK_STATE_CHARS = 2_400_000; // 1.5× the window budget; breach = code bug (jsonb TOASTs fine)
 
 function isUniqueViolation(error: { code?: string }): boolean {
   return error.code === "23505";
@@ -95,6 +95,9 @@ export async function createRun(
       guidelines: input.guidelines,
       use_founder_background: input.useFounderBackground,
       budget: { totalTurns: 0, browserMinutes: 0 },
+      // Explicit insert overrides the column's 24h default — deep runs
+      // need the full window (RUN_DEADLINE_MS).
+      deadline_at: new Date(Date.now() + RUN_DEADLINE_MS).toISOString(),
     })
     .select("*")
     .single<DiscoveryRunRow>();

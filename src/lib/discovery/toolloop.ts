@@ -31,6 +31,43 @@ import { TASK_STATE_CHAR_BUDGET } from "./config";
 
 const FABLE_MODELS = /^claude-(fable-5|mythos-5)/;
 
+/** Prompt caching for the append-only research loop: cache_control on the
+ *  system prompt and the last message makes every turn a prefix cache hit —
+ *  at 400k-token windows this is the difference between ~$4 and ~$0.45 a
+ *  turn. Applied at REQUEST time only (never persisted into loop state). */
+function cachedSystem(system: string): Anthropic.TextBlockParam[] {
+  return [
+    { type: "text", text: system, cache_control: { type: "ephemeral" } },
+  ];
+}
+function cachedMessages(
+  messages: Anthropic.MessageParam[],
+): Anthropic.MessageParam[] {
+  if (messages.length === 0) return messages;
+  const out = messages.slice();
+  const last = out[out.length - 1];
+  const content = last.content;
+  if (typeof content === "string") {
+    out[out.length - 1] = {
+      ...last,
+      content: [
+        { type: "text", text: content, cache_control: { type: "ephemeral" } },
+      ],
+    };
+  } else if (Array.isArray(content) && content.length > 0) {
+    const blocks = content.slice();
+    const tail = blocks[blocks.length - 1];
+    if (typeof tail !== "string") {
+      blocks[blocks.length - 1] = {
+        ...tail,
+        cache_control: { type: "ephemeral" },
+      } as (typeof blocks)[number];
+    }
+    out[out.length - 1] = { ...last, content: blocks };
+  }
+  return out;
+}
+
 /** OpenAI's Responses effort enum tops out at "xhigh" — "max" is an
  *  Anthropic-only level; clamp at the boundary (matches server.ts's ceiling). */
 function clampOpenAIEffort(
@@ -220,10 +257,10 @@ async function anthropicTurn(
     model: opts.model,
     max_tokens: 32000,
     thinking: { type: "adaptive" as const },
-    system: opts.system,
+    system: cachedSystem(opts.system),
     ...(opts.effort ? { output_config: { effort: opts.effort } } : {}),
     tools,
-    messages: state.messages,
+    messages: cachedMessages(state.messages),
   };
   // Streamed under the hood: the SDK REQUIRES streaming for requests whose
   // max_tokens imply >10 min of generation ("Streaming is required for
@@ -382,7 +419,11 @@ async function openaiTurn(
 }
 
 async function openrouterResearch(
-  opts: { model: string; session: BrowserHandle },
+  opts: {
+    model: string;
+    session: BrowserHandle;
+    effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  },
   state: Extract<LoopState, { kind: "openrouter" }>,
 ): Promise<ResearchTurnResult> {
   stripOldImages(state);
@@ -400,6 +441,11 @@ async function openrouterResearch(
     model: opts.model,
     messages: state.messages,
     tools,
+    ...(opts.effort
+      ? { reasoningEffort: (opts.effort === "max" || opts.effort === "xhigh"
+          ? "high"
+          : opts.effort) as "low" | "medium" | "high" }
+      : {}),
   });
   state.messages.push(
     turn.assistantMessage as unknown as ORMessage,
@@ -524,7 +570,7 @@ async function anthropicSynthesisAttempt(
       model: opts.model,
       max_tokens: 32000,
       thinking: { type: "adaptive" as const },
-      system,
+      system: cachedSystem(system),
       output_config: {
         ...(opts.effort ? { effort: opts.effort } : {}),
         ...(enforceFormat

@@ -281,18 +281,19 @@ export function verdictPasses(verdict: AnalyzeResponse): boolean {
 }
 
 function verdictSummaryText(verdict: AnalyzeResponse): string {
+  // The FULL verdict — a reframer rescuing an idea deserves everything the
+  // scorer concluded, strengths included (they must be preserved, not just
+  // weaknesses patched).
   const dec = verdictDecision(verdict) ?? "UNKNOWN";
-  const failedGates = Object.entries(verdict.gates)
-    .filter(([, g]) => g.value === "N")
-    .map(([gid, g]) => `- FAILED ${gid}: ${g.rationale}`)
+  const gates = Object.entries(verdict.gates)
+    .map(([gid, g]) => `- ${gid} [${g.value}]: ${g.rationale}`)
     .join("\n");
-  const weakScores = Object.entries(verdict.scores)
-    .filter(([, s]) => s.score <= 2)
-    .map(([cid, s]) => `- ${cid} scored ${s.score}: ${s.rationale}`)
+  const scores = Object.entries(verdict.scores)
+    .map(([cid, s]) => `- ${cid}: ${s.score}/5 — ${s.rationale}`)
     .join("\n");
-  return `Decision: ${dec}\n\n${verdict.summary}\n\n${failedGates}\n${weakScores}`.slice(
+  return `Decision: ${dec}\n\n${verdict.summary}\n\nConfidence: ${verdict.confidence} — ${verdict.confidenceRationale}\n\nGates:\n${gates}\n\nScores:\n${scores}\n\n30-day validation test: ${verdict.validationTest30d}`.slice(
     0,
-    4000,
+    20000,
   );
 }
 
@@ -303,6 +304,7 @@ interface StepContext {
   admin: SupabaseClient;
   run: DiscoveryRunRow;
   founderBackground: string;
+  coFounders: Array<{ name: string; background: string }>;
   session: BrowserHandle | null;
 }
 
@@ -514,7 +516,7 @@ async function executeStep(
       founderBackground: ctx.run.use_founder_background
         ? ctx.founderBackground
         : "",
-      coFounders: [],
+      coFounders: ctx.run.use_founder_background ? ctx.coFounders : [],
       evidenceMemo: ps.memo ?? "",
     });
     const raw =
@@ -712,6 +714,13 @@ async function advanceTask(
           });
           return;
         }
+        // A dead session (timeout/disconnect) must never masquerade as a
+        // live one — recreate and re-charge instead of feeding every task
+        // "Target closed" errors for the rest of the invocation.
+        if (holder.session && !holder.session.browser.isConnected()) {
+          await releaseBrowserSession(holder.session);
+          holder.session = null;
+        }
         if (!holder.session) {
           try {
             holder.session = await createBrowserSession();
@@ -754,7 +763,23 @@ async function advanceTask(
           handle = null;
         }
         if (!handle) {
-          handle = await createTaskPage(holder.session, model.vision ?? false);
+          try {
+            handle = await createTaskPage(holder.session, model.vision ?? false);
+          } catch (err) {
+            // Dead browser between the isConnected check and newPage —
+            // treat as transient (next iteration recreates the session)
+            // and NEVER let it reject the whole worker pool.
+            await releaseBrowserSession(holder.session);
+            holder.session = null;
+            await logEvent(
+              ctx.admin,
+              ctx.run.id,
+              task.idx,
+              "browser_error",
+              `page create failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            continue;
+          }
         }
         // Persist the session + page ids on the task before use (leak audit
         // trail + live-view targeting; clears any earlier failure note).
@@ -933,15 +958,29 @@ export async function advanceDiscoveryRun(
     return { runId: run.id, status: "failed", advancedTasks: 0 };
   }
 
-  // Founder background (fetched once per invocation).
+  // Founding team (fetched once per invocation) — background AND
+  // co-founders; scoring judges fmf on the strongest founder, so dropping
+  // co-founders systematically mis-scored founder-market fit.
   let founderBackground = "";
+  let coFounders: Array<{ name: string; background: string }> = [];
   if (run.use_founder_background) {
     const { data } = await admin
       .from("profiles")
-      .select("founder_background")
+      .select("founder_background, co_founders")
       .eq("id", run.owner_id)
-      .maybeSingle<{ founder_background: string | null }>();
+      .maybeSingle<{
+        founder_background: string | null;
+        co_founders: Array<{ name?: string; background?: string }> | null;
+      }>();
     founderBackground = data?.founder_background ?? "";
+    coFounders = (data?.co_founders ?? [])
+      .filter((c) => c && typeof c.background === "string" && c.background.trim())
+      .map((c) => ({ name: c.name ?? "", background: c.background! }));
+    if (coFounders.length > 0) {
+      founderBackground += coFounders
+        .map((c) => `\n\nCo-founder${c.name ? ` (${c.name})` : ""}: ${c.background}`)
+        .join("");
+    }
   }
 
   const tasks = await fetchTasks(admin, run.id);
@@ -979,7 +1018,7 @@ export async function advanceDiscoveryRun(
   // Advance several tasks CONCURRENTLY (each with its own page on the
   // shared browser) — sequential advancement dedicated a whole invocation
   // to one task and left the tail queued for tens of minutes.
-  const CONCURRENCY = 4;
+  const CONCURRENCY = 12;
   const queue = [...active];
   try {
     await Promise.all(
@@ -991,7 +1030,7 @@ export async function advanceDiscoveryRun(
           if (!claimAvailable(task)) continue;
           advanced++;
           await advanceTask(
-            { admin, run, founderBackground },
+            { admin, run, founderBackground, coFounders },
             task,
             invocationDeadline,
             holder,

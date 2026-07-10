@@ -47,10 +47,10 @@ export function normalizeGeneratedIdea(raw: unknown): GeneratedIdea | null {
   const idea: GeneratedIdea = {
     name: str("name", 80),
     domain: str("domain", 200),
-    businessModel: str("businessModel", 200),
-    buyerICP: str("buyerICP", 500),
-    initialWedge: str("initialWedge", 500),
-    thesisNotes: str("thesisNotes", 6000),
+    businessModel: str("businessModel", 500),
+    buyerICP: str("buyerICP", 1500),
+    initialWedge: str("initialWedge", 1500),
+    thesisNotes: str("thesisNotes", 20000),
   };
   return idea.name && idea.thesisNotes ? idea : null;
 }
@@ -122,7 +122,7 @@ Domain: ${idea.domain}
 Business model: ${idea.businessModel}
 Buyer/ICP: ${idea.buyerICP}
 Initial wedge: ${idea.initialWedge}
-Thesis: ${idea.thesisNotes.slice(0, 2000)}
+Thesis: ${idea.thesisNotes}
 
 When you have enough evidence for a calibrated verdict, STOP calling tools and write a plain-text EVIDENCE MEMO (under 1000 words): what you verified, what you refuted, competitors found, and the decisive facts — each tagged with where you found it.`;
 }
@@ -179,7 +179,7 @@ Domain: ${opts.idea.domain}
 Business model: ${opts.idea.businessModel}
 Buyer/ICP: ${opts.idea.buyerICP}
 Initial wedge: ${opts.idea.initialWedge}
-Thesis: ${opts.idea.thesisNotes.slice(0, 1500)}
+Thesis: ${opts.idea.thesisNotes}
 
 Why it failed:
 ${opts.verdictSummary}

@@ -51,7 +51,7 @@ export const GENERATORS: DiscoveryModel[] = [
 
 /** Run composition (owner-specified): 20 candidates — 30% Fable 5, 30%
  *  GPT-5.6 Sol, the rest evenly split across the OpenRouter panel. */
-export const TASKS_PER_RUN = 20;
+export const TASKS_PER_RUN = 40;
 const HOUSE_SLOTS = Math.ceil(TASKS_PER_RUN * 0.3); // 6 each
 
 export function buildRunPanel(): DiscoveryModel[] {
@@ -146,28 +146,31 @@ export function pickRescorer(
 // (~$1000+/run accepted). The engine nudges agents to wrap up two turns
 // before a cap, so caps are a backstop rather than a common death.
 export const TURN_CAPS = {
-  research: 60,
-  synth: 10,    // generation-synthesis SUBMITS (polls are free reads)
-  resynth: 10,  // reframe-synthesis submits (own budget — never starved by gen)
-  score: 40,
-  reframe: 40,
-  rescore: 40,
+  research: 300,
+  synth: 20,    // generation-synthesis SUBMITS (polls are free reads)
+  resynth: 20,  // reframe-synthesis submits (own budget — never starved by gen)
+  score: 150,   // the adversarial validator gets real depth, not 2/3 of it
+  reframe: 150,
+  rescore: 150,
 } as const;
 export type TurnPhase = keyof typeof TURN_CAPS;
 
 /** Hard ceiling on total turns across ALL tasks in a run (20 tasks × ~200
  *  worst-case phase turns) — the last line of the spend envelope. */
-export const RUN_TOTAL_TURN_CAP = 4000;
+export const RUN_TOTAL_TURN_CAP = 32_000;
 
 /** Browserbase: minutes are charged pessimistically (a session's FULL
  *  timeout is added to the run budget inside the claim CAS that precedes
  *  creation — never refunded). */
-export const BB_SESSION_TIMEOUT_SECONDS = 300; // 5 min, self-terminates
+/** Must OUTLIVE the 30-min worker invocation — at 300s the shared session
+ *  died 5 minutes into 25-minute invocations and every later browser call
+ *  hit a dead target. Self-terminates on CDP disconnect (no keepAlive). */
+export const BB_SESSION_TIMEOUT_SECONDS = 1800;
 /** One session is SHARED by all tasks within a cron invocation and charged
  *  once (pessimistically, at full timeout) — 180 covers ~36 browser-bearing
  *  invocations per run (~$0.40 of browser-hours), the real cost lever being
  *  model turns which TURN_CAPS bound. */
-export const BB_RUN_MINUTES_CAP = 1440;
+export const BB_RUN_MINUTES_CAP = 180_000; // ~3k browser-hours ≈ $300-750 — noise at this envelope
 
 /** Lease: a task claim is stealable only when its heartbeat is older than
  *  this. Must exceed the worst single turn (max-effort reasoning call). */
@@ -176,9 +179,9 @@ export const CLAIM_LEASE_MS = 15 * 60 * 1000;
 /** Wall-clock guards: stop starting new turns when the remaining invocation
  *  budget can't fit the worst case for that provider. */
 export const WORST_TURN_MS = {
-  premium: 240_000,   // max-effort Anthropic/OpenAI reasoning turn
-  openrouter: 90_000,
-  synthesis: 300_000, // forced-schema synthesis / scoring call
+  premium: 720_000,   // max-effort turn streaming 32k tokens over a huge window
+  openrouter: 240_000,
+  synthesis: 720_000, // forced-schema synthesis / scoring call
 } as const;
 
 /** Cron work budget per invocation. Every worstCaseMs step bound MUST be
@@ -192,14 +195,15 @@ export const CRON_TIME_BUDGET_MS = 1_500_000;
  *  a small budget gave agents amnesia (oldest exchanges trimmed away).
  *  Postgres TOASTs large jsonb fine; the cost is input tokens, which the
  *  owner has explicitly accepted. State clears when a phase completes. */
-export const TASK_STATE_CHAR_BUDGET = 140_000;
+export const TASK_STATE_CHAR_BUDGET = 1_600_000; // ≈400k tokens — full phase retention; models hold 1M
 /** Per tool-result content cap (chars) before it enters loop history —
  *  16k keeps most articles/reports intact instead of cutting them at
  *  ~1000 words. */
-export const TOOL_RESULT_CHAR_CAP = 16_000;
+export const TOOL_RESULT_CHAR_CAP = 60_000; // a full 25-page PDF / 10-K section survives intact
 
-export const RUN_DEADLINE_MS = 24 * 60 * 60 * 1000;
-export const PHASE_DEADLINE_MS = 8 * 60 * 60 * 1000; // anchored at first claim
+/** Deadlines are crash-detection backstops, not throughput levers. */
+export const RUN_DEADLINE_MS = 96 * 60 * 60 * 1000;
+export const PHASE_DEADLINE_MS = 24 * 60 * 60 * 1000; // anchored at first claim
 
 /** Pass bar: decision ladder values that count as passing (≥ VALIDATE FAST). */
 export const PASSING_DECISIONS = new Set(["BUILD / INCUBATE", "VALIDATE FAST"]);

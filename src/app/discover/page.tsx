@@ -209,6 +209,7 @@ export default function DiscoverPage() {
             </span>
             <textarea
               rows={3}
+              maxLength={20000}
               value={guidelines}
               onChange={(e) => setGuidelines(e.target.value)}
               placeholder="e.g. vertical AI for healthcare back-offices; climate fintech; anything touching construction"

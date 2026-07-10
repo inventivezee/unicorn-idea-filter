@@ -49,12 +49,21 @@ export async function openrouterTurn(opts: {
   schemaName?: string;
   schema?: Record<string, unknown>;
   maxTokens?: number;
+  /** OpenRouter-normalized reasoning effort (DeepSeek/Qwen/Gemini support
+   *  it; omit for models that don't). */
+  reasoningEffort?: "low" | "medium" | "high";
 }): Promise<ORTurnResult> {
   try {
     const response = await client().chat.completions.create({
       model: opts.model,
       messages: opts.messages,
-      max_tokens: opts.maxTokens ?? 8000,
+      max_tokens: opts.maxTokens ?? 32_000,
+      ...(opts.reasoningEffort
+        ? ({ reasoning: { effort: opts.reasoningEffort } } as Record<
+            string,
+            unknown
+          >)
+        : {}),
       ...(opts.tools?.length ? { tools: opts.tools } : {}),
       ...(opts.schema
         ? {

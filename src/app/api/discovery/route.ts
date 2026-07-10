@@ -72,7 +72,7 @@ export async function POST(request: Request) {
   }
   const guidelines =
     typeof body.guidelines === "string"
-      ? body.guidelines.trim().slice(0, 2000)
+      ? body.guidelines.trim().slice(0, 20000)
       : "";
   const useFounderBackground = body.useFounderBackground !== false; // default ON
 
