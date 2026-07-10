@@ -698,10 +698,13 @@ async function advanceTask(
         if (!handle) {
           handle = await createTaskPage(holder.session);
         }
-        // Persist the session id on the task before use (leak audit trail;
-        // clears any earlier failure note).
+        // Persist the session + page ids on the task before use (leak audit
+        // trail + live-view targeting; clears any earlier failure note).
         const withSession = await casUpdateTask(ctx.admin, task.id, task.rev, {
-          bb: { sessionId: holder.session.sessionId },
+          bb: {
+            sessionId: holder.session.sessionId,
+            pageId: handle.targetId ?? null,
+          },
           error: null,
           claim: { token, heartbeat_at: new Date().toISOString() },
         });

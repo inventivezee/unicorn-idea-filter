@@ -8,8 +8,8 @@ import {
   fetchTasks,
 } from "@/lib/db/discovery";
 import {
+  pageDebugUrl,
   releaseSessionById,
-  sessionDebugUrl,
 } from "@/lib/discovery/browserbase";
 import { taskActivity } from "@/lib/discovery/engine";
 import {
@@ -52,9 +52,10 @@ export async function GET(
             (t.bb as { sessionId?: string }).sessionId,
         )
         .map(async (t) => {
-          const sid = (t.bb as { sessionId?: string }).sessionId!;
-          if (!watchUrls.has(sid)) {
-            watchUrls.set(sid, await sessionDebugUrl(sid));
+          const bb = t.bb as { sessionId?: string; pageId?: string | null };
+          const key = `${bb.sessionId}:${bb.pageId ?? ""}`;
+          if (!watchUrls.has(key)) {
+            watchUrls.set(key, await pageDebugUrl(bb.sessionId!, bb.pageId ?? null));
           }
         }),
     );
@@ -65,7 +66,8 @@ export async function GET(
       createdAt: run.created_at,
       budget: run.budget,
       tasks: tasks.map((t) => {
-        const sid = (t.bb as { sessionId?: string }).sessionId ?? null;
+        const bb = t.bb as { sessionId?: string; pageId?: string | null };
+        const sid = bb.sessionId ?? null;
         return {
           idx: t.idx,
           status: t.status,
@@ -82,7 +84,9 @@ export async function GET(
               )
             : null,
           activity: taskActivity(t.phase_state),
-          watchUrl: sid ? (watchUrls.get(sid) ?? null) : null,
+          watchUrl: sid
+            ? (watchUrls.get(`${sid}:${bb.pageId ?? ""}`) ?? null)
+            : null,
         };
       }),
     });

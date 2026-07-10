@@ -347,6 +347,9 @@ function ActiveRun({
   onCancel: () => void;
 }) {
   const tasks = run.tasks ?? [];
+  const [watchIdx, setWatchIdx] = useState<number | null>(null);
+  const [viewNonce, setViewNonce] = useState(0);
+  const watched = tasks.find((t) => t.idx === watchIdx) ?? null;
   const terminal = tasks.filter(
     (t) => t.status === "done" || t.status === "failed",
   ).length;
@@ -425,14 +428,15 @@ function ActiveRun({
                 </Link>
               ) : null}
               {t.watchUrl ? (
-                <a
-                  href={t.watchUrl}
-                  target="_blank"
-                  rel="noreferrer"
+                <button
+                  type="button"
+                  onClick={() =>
+                    setWatchIdx((cur) => (cur === t.idx ? null : t.idx))
+                  }
                   className="text-xs text-cyan-700 underline-offset-2 hover:underline"
                 >
-                  Watch browser live ↗
-                </a>
+                  {watchIdx === t.idx ? "Hide agent view" : "Watch agent ▸"}
+                </button>
               ) : null}
             </div>
           </div>
@@ -441,6 +445,52 @@ function ActiveRun({
           <p className="text-sm text-zinc-500">Spinning up candidates…</p>
         ) : null}
       </div>
+
+      {watched?.watchUrl ? (
+        <div className="mt-4">
+          <div className="mb-1 flex items-center justify-between">
+            <p className="text-xs font-medium text-zinc-600">
+              Agent view — {watched.model.split("/").pop()}
+              {watched.ideaName ? ` · ${watched.ideaName}` : ""}
+              <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-normal text-zinc-500">
+                view-only
+              </span>
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setViewNonce((n) => n + 1)}
+                className="text-xs text-zinc-500 hover:text-zinc-900"
+                title="Reload the view if it looks blank"
+              >
+                ⟳ Reload view
+              </button>
+              <button
+                type="button"
+                onClick={() => setWatchIdx(null)}
+                className="text-xs text-zinc-500 hover:text-zinc-900"
+              >
+                ✕ Close
+              </button>
+            </div>
+          </div>
+          <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-zinc-200 bg-zinc-900">
+            {/* pointer-events-none makes the live view strictly view-only —
+                the agent drives; the viewer can never click through. */}
+            <iframe
+              key={`${watched.idx}-${viewNonce}`}
+              src={watched.watchUrl}
+              className="pointer-events-none h-full w-full border-0"
+              sandbox="allow-scripts allow-same-origin"
+              title="Agent browser (view-only)"
+            />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-3 py-1.5 text-[11px] text-white/90">
+              The agent is driving this browser — watching{" "}
+              {watched.model.split("/").pop()} research live.
+            </div>
+          </div>
+        </div>
+      ) : null}
     </Section>
   );
 }

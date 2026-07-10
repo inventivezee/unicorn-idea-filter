@@ -22,6 +22,9 @@ import {
 export interface BrowserHandle {
   sessionId: string;
   page: Page;
+  /** CDP target id of THIS task's tab — the live view must point at the
+   *  agent's page, not the session's default about:blank page. */
+  targetId?: string;
 }
 
 export interface BrowserSession extends BrowserHandle {
@@ -70,7 +73,18 @@ export async function createTaskPage(
     session.browser.contexts()[0] ?? (await session.browser.newContext());
   const page = await context.newPage();
   await blockHeavyResources(page);
-  return { sessionId: session.sessionId, page };
+  let targetId: string | undefined;
+  try {
+    const cdp = await context.newCDPSession(page);
+    const info = (await cdp.send("Target.getTargetInfo")) as {
+      targetInfo?: { targetId?: string };
+    };
+    targetId = info.targetInfo?.targetId;
+    await cdp.detach();
+  } catch {
+    // Live view degrades to the session-level URL.
+  }
+  return { sessionId: session.sessionId, page, targetId };
 }
 
 export async function closeTaskPage(handle: BrowserHandle | null): Promise<void> {
@@ -81,16 +95,35 @@ export async function closeTaskPage(handle: BrowserHandle | null): Promise<void>
   }
 }
 
-/** Live-view link for the owner ("watch the agent browse"). Best-effort. */
-export async function sessionDebugUrl(
+/** Live-view link for the owner ("watch the agent browse"). The session's
+ *  debug endpoint lists every PAGE; we must return the URL for the task's
+ *  own tab (matched by CDP target id) — the session-level URL points at the
+ *  default page, which sits on about:blank forever. Best-effort. */
+export async function pageDebugUrl(
   sessionId: string,
+  pageId: string | null,
 ): Promise<string | null> {
   try {
     const bb = await bbClient();
-    const debug = await bb.sessions.debug(sessionId);
+    const debug = (await bb.sessions.debug(sessionId)) as {
+      debuggerFullscreenUrl?: string;
+      debuggerUrl?: string;
+      pages?: Array<{
+        id?: string;
+        url?: string;
+        debuggerFullscreenUrl?: string;
+        debuggerUrl?: string;
+      }>;
+    };
+    const pages = debug.pages ?? [];
+    const byId = pageId ? pages.find((p) => p.id === pageId) : undefined;
+    // Fallback: any page actually browsing (not the blank default tab).
+    const active = byId ?? pages.find((p) => p.url && p.url !== "about:blank");
     return (
-      (debug as { debuggerFullscreenUrl?: string }).debuggerFullscreenUrl ??
-      (debug as { debuggerUrl?: string }).debuggerUrl ??
+      active?.debuggerFullscreenUrl ??
+      active?.debuggerUrl ??
+      debug.debuggerFullscreenUrl ??
+      debug.debuggerUrl ??
       null
     );
   } catch {
