@@ -459,6 +459,9 @@ async function executeStep(
   status?: TaskStatus;
   phase_state?: Record<string, unknown>;
   error?: string | null;
+  /** Latest published reframe attempt (per-attempt ids since every scored
+   *  attempt publishes). */
+  idea_reframe_id?: string;
   /** Stop this task's chunk after persisting (e.g. background job still
    *  pending — the next cron tick is the poll cadence). */
   yieldChunk?: boolean;
@@ -811,24 +814,9 @@ async function executeStep(
       summary: verdict.summary?.slice(0, 1200) ?? "",
     }),
   );
-  if (isRescore && !passes && attempt < MAX_REFRAME_LOOPS) {
-    return {
-      status: "reframing",
-      phase_state: {
-        idea: ps.idea,
-        verdictSummary: verdictSummaryText(verdict),
-        reframeAttempt: attempt + 1,
-        reframeHistory: [
-          ...(ps.reframeHistory ?? []),
-          {
-            name: ps.idea!.name,
-            summary: verdictSummaryText(verdict).slice(0, 1500),
-          },
-        ],
-      } as Record<string, unknown>,
-    };
-  }
-  const ideaId = isRescore ? task.idea_reframe_id! : task.idea_original_id!;
+  const ideaId = isRescore
+    ? reframeAttemptIdeaId(task.run_id, task.idx, Math.max(1, attempt))
+    : task.idea_original_id!;
   const fields = verdictToIdeaFields(ps.idea!, verdict, ideaId);
   await insertIdea(
     ctx.admin,
@@ -849,20 +837,31 @@ async function executeStep(
   } catch {
     // Migration drift — provenance degrades, idea stands.
   }
-  if (!isRescore && !passes) {
+  if (!passes && (isRescore ? attempt < MAX_REFRAME_LOOPS : true)) {
     // Rescue path: iterative reframes (bounded by attempt count + the
-    // reframe/rescore turn budgets, whichever binds first).
+    // reframe/rescore turn budgets, whichever binds first). The verdict
+    // just published stays on Explore; the next attempt gets its own id.
     return {
+      ...(isRescore ? { idea_reframe_id: ideaId } : {}),
       status: "reframing",
       phase_state: {
         idea: ps.idea,
         verdictSummary: verdictSummaryText(verdict),
-        reframeAttempt: 1,
-        reframeHistory: [],
+        reframeAttempt: isRescore ? attempt + 1 : 1,
+        reframeHistory: isRescore
+          ? [
+              ...(ps.reframeHistory ?? []),
+              {
+                name: ps.idea!.name,
+                summary: verdictSummaryText(verdict).slice(0, 1500),
+              },
+            ]
+          : [],
       } as Record<string, unknown>,
     };
   }
   return {
+    ...(isRescore ? { idea_reframe_id: ideaId } : {}),
     status: "done",
     // The loop trail survives the task for future analysis.
     phase_state: (ps.reframeHistory?.length
@@ -1561,6 +1560,19 @@ export async function sweepNotifications(admin: SupabaseClient): Promise<void> {
 }
 
 /** Deterministic idea ids for a new run's tasks. */
+/** Every rescored reframe ATTEMPT publishes as its own idea (owner rule:
+ *  everything scored publishes). Attempt 1 keeps the task row's original
+ *  pre-assigned reframe id so crash retries and pre-existing publishes
+ *  converge; later attempts derive deterministically from the attempt no. */
+export function reframeAttemptIdeaId(
+  runId: string,
+  idx: number,
+  attempt: number,
+): string {
+  if (attempt <= 1) return taskIdeaIds(runId, idx).reframe;
+  return deterministicUuid(`${runId}:${idx}:reframe:${attempt}`);
+}
+
 export function taskIdeaIds(runId: string, idx: number): {
   original: string;
   reframe: string;

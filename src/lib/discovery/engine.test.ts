@@ -21,6 +21,7 @@ import {
 } from "./config";
 import {
   deterministicUuid,
+  reframeAttemptIdeaId,
   taskIdeaIds,
   verdictDecision,
   verdictPasses,
@@ -137,6 +138,25 @@ describe("cross-vendor scoring policy", () => {
     expect(house / N).toBeGreaterThan(0.5);
     expect(house / N).toBeLessThan(0.7);
     expect(others / N).toBeGreaterThan(0.3);
+  });
+});
+
+describe("reframeAttemptIdeaId", () => {
+  it("attempt 1 keeps the task row's pre-assigned reframe id", () => {
+    expect(reframeAttemptIdeaId("run-1", 3, 1)).toBe(
+      taskIdeaIds("run-1", 3).reframe,
+    );
+    expect(reframeAttemptIdeaId("run-1", 3, 0)).toBe(
+      taskIdeaIds("run-1", 3).reframe,
+    );
+  });
+
+  it("later attempts get distinct deterministic ids", () => {
+    const ids = [1, 2, 3].map((a) => reframeAttemptIdeaId("run-1", 3, a));
+    expect(new Set(ids).size).toBe(3);
+    expect(reframeAttemptIdeaId("run-1", 3, 2)).toBe(
+      reframeAttemptIdeaId("run-1", 3, 2),
+    );
   });
 });
 
