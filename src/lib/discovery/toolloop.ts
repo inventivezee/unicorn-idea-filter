@@ -175,7 +175,7 @@ async function anthropicTurn(
   }));
   const params = {
     model: opts.model,
-    max_tokens: 16000,
+    max_tokens: 32000,
     thinking: { type: "adaptive" as const },
     system: opts.system,
     ...(opts.effort ? { output_config: { effort: opts.effort } } : {}),
@@ -397,7 +397,7 @@ async function anthropicSynthesisAttempt(
       : `${opts.system}\n\nRespond with ONLY a single valid JSON object exactly matching this JSON Schema — no prose, no markdown fences:\n${JSON.stringify(opts.schema)}`;
     const params = {
       model: opts.model,
-      max_tokens: 16000,
+      max_tokens: 32000,
       thinking: { type: "adaptive" as const },
       system,
       output_config: {

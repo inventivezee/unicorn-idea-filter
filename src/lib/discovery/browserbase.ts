@@ -266,7 +266,7 @@ async function googleSearch(
     const usable = results.filter(
       (r) => r.title && /^https?:\/\//i.test(r.url) && !r.url.includes("google."),
     );
-    return usable.length > 0 ? usable.slice(0, 8) : null;
+    return usable.length > 0 ? usable.slice(0, 10) : null;
   } catch {
     return null;
   }
@@ -310,22 +310,106 @@ async function toolWebSearch(page: Page, query: string): Promise<string> {
   return "Search is temporarily unavailable — try again in a moment or open a URL you already know.";
 }
 
+/** Industry reports live in PDFs — extract text server-side (pdfjs, same
+ *  dependency the CV upload uses client-side) instead of returning the
+ *  empty innerText of Chrome's PDF viewer. */
+async function extractPdfText(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(20_000),
+      headers: { "User-Agent": "Mozilla/5.0 (research agent)" },
+    });
+    if (!res.ok) return null;
+    const ct = res.headers.get("content-type") ?? "";
+    if (!ct.includes("pdf") && !url.toLowerCase().split("?")[0].endsWith(".pdf")) {
+      return null;
+    }
+    const data = new Uint8Array(await res.arrayBuffer());
+    const pdfjs = (await import(
+      "pdfjs-dist/legacy/build/pdf.mjs"
+    )) as unknown as {
+      getDocument: (opts: object) => { promise: Promise<PdfDoc> };
+    };
+    const doc = await pdfjs.getDocument({ data, isEvalSupported: false }).promise;
+    const pages: string[] = [];
+    const maxPages = Math.min(doc.numPages, 25);
+    for (let i = 1; i <= maxPages; i++) {
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      pages.push(
+        (content.items as Array<{ str?: string }>)
+          .map((item) => item.str ?? "")
+          .join(" "),
+      );
+    }
+    const text = pages.join("\n\n").trim();
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
+interface PdfDoc {
+  numPages: number;
+  getPage: (n: number) => Promise<{
+    getTextContent: () => Promise<{ items: unknown[] }>;
+  }>;
+}
+
+function readableText(raw: string): string {
+  return raw.replace(/\n{3,}/g, "\n\n").replace(/[ \t]{2,}/g, " ").trim();
+}
+
+async function extractPageText(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    for (const sel of ["script", "style", "noscript", "svg", "nav", "footer"]) {
+      document.querySelectorAll(sel).forEach((el) => el.remove());
+    }
+    // Prefer the page's main content over its chrome (menus, cookie
+    // banners, related-article rails all count against the result cap).
+    const main = document.querySelector("article, main, [role='main']");
+    const mainText = (main as HTMLElement | null)?.innerText ?? "";
+    if (mainText.trim().length >= 500) return mainText;
+    return document.body?.innerText ?? "";
+  });
+}
+
 async function toolOpenPage(page: Page, url: string): Promise<string> {
   if (!/^https?:\/\//i.test(url)) {
     return "Error: only absolute http(s) URLs can be opened.";
   }
-  await page.goto(url, { timeout: NAV_TIMEOUT_MS, waitUntil: "domcontentloaded" });
-  const text = await page.evaluate(() => {
-    for (const sel of ["script", "style", "noscript", "svg", "nav", "footer"]) {
-      document.querySelectorAll(sel).forEach((el) => el.remove());
-    }
-    return document.body?.innerText ?? "";
+  // PDFs first — Chrome's viewer renders no extractable innerText.
+  if (url.toLowerCase().split("?")[0].endsWith(".pdf")) {
+    const pdfText = await extractPdfText(url);
+    if (pdfText) return capResult(readableText(pdfText));
+    return "This PDF couldn't be read — try a different source for the same data.";
+  }
+  const response = await page.goto(url, {
+    timeout: NAV_TIMEOUT_MS,
+    waitUntil: "domcontentloaded",
   });
-  const cleaned = text.replace(/\n{3,}/g, "\n\n").replace(/[ \t]{2,}/g, " ").trim();
+  const contentType = response?.headers()["content-type"] ?? "";
+  if (contentType.includes("pdf")) {
+    const pdfText = await extractPdfText(url);
+    if (pdfText) return capResult(readableText(pdfText));
+    return "This PDF couldn't be read — try a different source for the same data.";
+  }
+  let cleaned = readableText(await extractPageText(page));
+  if (cleaned.length < 200) {
+    // JS-rendered page: give the app a moment to paint, then re-extract.
+    await page
+      .waitForLoadState("networkidle", { timeout: 6_000 })
+      .catch(() => {});
+    cleaned = readableText(await extractPageText(page));
+  }
   if (!cleaned) return "The page rendered no readable text.";
-  return cleaned.length > TOOL_RESULT_CHAR_CAP
-    ? `${cleaned.slice(0, TOOL_RESULT_CHAR_CAP)}\n\n[truncated at ${TOOL_RESULT_CHAR_CAP} chars]`
-    : cleaned;
+  return capResult(cleaned);
+}
+
+function capResult(text: string): string {
+  return text.length > TOOL_RESULT_CHAR_CAP
+    ? `${text.slice(0, TOOL_RESULT_CHAR_CAP)}\n\n[truncated at ${TOOL_RESULT_CHAR_CAP} chars]`
+    : text;
 }
 
 /**

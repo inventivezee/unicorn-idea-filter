@@ -182,11 +182,15 @@ export const WORST_TURN_MS = {
 export const CRON_TIME_BUDGET_MS = 600_000;
 
 /** Per-task serialized agent-loop state budget (chars of JSON.stringify).
- *  10 tasks × this must stay far under any row-size concern; state is
- *  cleared the moment a phase completes. */
-export const TASK_STATE_CHAR_BUDGET = 45_000;
-/** Per tool-result content cap (chars) before it enters loop history. */
-export const TOOL_RESULT_CHAR_CAP = 6_000;
+ *  Sized for research QUALITY: at 60-turn research with 16k tool results,
+ *  a small budget gave agents amnesia (oldest exchanges trimmed away).
+ *  Postgres TOASTs large jsonb fine; the cost is input tokens, which the
+ *  owner has explicitly accepted. State clears when a phase completes. */
+export const TASK_STATE_CHAR_BUDGET = 140_000;
+/** Per tool-result content cap (chars) before it enters loop history —
+ *  16k keeps most articles/reports intact instead of cutting them at
+ *  ~1000 words. */
+export const TOOL_RESULT_CHAR_CAP = 16_000;
 
 export const RUN_DEADLINE_MS = 24 * 60 * 60 * 1000;
 export const PHASE_DEADLINE_MS = 8 * 60 * 60 * 1000; // anchored at first claim

@@ -65,7 +65,7 @@ export class DiscoveryAccessError extends Error {
 
 /** Hard ceiling on a task's serialized phase_state — the engine windows to
  *  TASK_STATE_CHAR_BUDGET well below this; breaching here is a code bug. */
-const MAX_TASK_STATE_CHARS = 80_000;
+const MAX_TASK_STATE_CHARS = 200_000;
 
 function isUniqueViolation(error: { code?: string }): boolean {
   return error.code === "23505";
