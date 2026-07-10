@@ -110,6 +110,26 @@ export const REFRAMER_OPENAI: DiscoveryModel = {
 /** Cross-vendor rule: the scorer's company must differ from the company
  *  that produced the text being scored. OpenRouter vendors can be scored
  *  by either house scorer — alternate by idx for balance. */
+/** Dual-panel A/B test (owner decision): who drafts and who reviews.
+ *  A: Fable drafts -> Sol reviews -> Fable finalizes.
+ *  B: Sol drafts -> Fable reviews -> Sol finalizes.
+ *  Deterministic per (runId, idx) — mid-phase reassignment would corrupt
+ *  loop state; recorded in scoring_variant events for later analysis. */
+export type ScoringVariant = "A" | "B";
+
+export function scoringVariant(runId: string, idx: number): ScoringVariant {
+  return fnv1a(`${runId}:scorepanel:${idx}`) % 2 === 0 ? "A" : "B";
+}
+
+export function scoringPanel(variant: ScoringVariant): {
+  drafter: DiscoveryModel;
+  reviewer: DiscoveryModel;
+} {
+  return variant === "A"
+    ? { drafter: SCORER_ANTHROPIC, reviewer: SCORER_OPENAI }
+    : { drafter: SCORER_OPENAI, reviewer: SCORER_ANTHROPIC };
+}
+
 export function pickScorer(generator: DiscoveryModel, idx: number): DiscoveryModel {
   if (generator.vendor === "openai") return SCORER_ANTHROPIC;
   if (generator.vendor === "anthropic") return SCORER_OPENAI;

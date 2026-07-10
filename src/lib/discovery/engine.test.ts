@@ -9,6 +9,8 @@ import {
   DEFAULT_TASKS_PER_RUN,
   MAX_TASKS_PER_RUN,
   buildRunPanel,
+  scoringPanel,
+  scoringVariant,
   roundForIdx,
   SCORER_ANTHROPIC,
   SCORER_OPENAI,
@@ -135,6 +137,33 @@ describe("cross-vendor scoring policy", () => {
     expect(house / N).toBeGreaterThan(0.5);
     expect(house / N).toBeLessThan(0.7);
     expect(others / N).toBeGreaterThan(0.3);
+  });
+});
+
+describe("scoring A/B variants", () => {
+  it("is deterministic per (runId, idx)", () => {
+    for (let idx = 0; idx < 5; idx++) {
+      expect(scoringVariant("run-x", idx)).toBe(scoringVariant("run-x", idx));
+    }
+  });
+
+  it("splits roughly 50/50 across seeds", () => {
+    let a = 0;
+    const N = 2000;
+    for (let i = 0; i < N; i++) {
+      if (scoringVariant(`run-${i}`, i % 3) === "A") a++;
+    }
+    expect(a / N).toBeGreaterThan(0.4);
+    expect(a / N).toBeLessThan(0.6);
+  });
+
+  it("panel roles: A = Fable drafts / Sol reviews; B = the reverse", () => {
+    const a = scoringPanel("A");
+    expect(a.drafter.model).toBe("claude-fable-5");
+    expect(a.reviewer.model).toBe("gpt-5.6-sol");
+    const b = scoringPanel("B");
+    expect(b.drafter.model).toBe("gpt-5.6-sol");
+    expect(b.reviewer.model).toBe("claude-fable-5");
   });
 });
 

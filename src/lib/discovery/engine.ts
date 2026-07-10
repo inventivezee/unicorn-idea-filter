@@ -52,6 +52,8 @@ import {
   MAX_REFRAME_LOOPS,
   SCORER_ANTHROPIC,
   SCORER_OPENAI,
+  scoringPanel,
+  scoringVariant,
   WORST_TURN_MS,
   PASSING_DECISIONS,
   PHASE_DEADLINE_MS,
@@ -245,8 +247,14 @@ function phaseModel(task: DiscoveryTaskRow): DiscoveryModel {
   // drafts, GPT-5.6 Sol reviews with its own browser access, Fable
   // finalizes weighing the feedback.
   const ps = task.phase_state as PhaseState;
-  if (ps.verdictDraft && !ps.feedback) return SCORER_OPENAI;
-  return SCORER_ANTHROPIC;
+  const panel = scoringPanel(scoringVariant(task.run_id, task.idx));
+  if (ps.verdictDraft && !ps.feedback) return panel.reviewer;
+  return panel.drafter;
+}
+
+function drafterProviderOf(task: DiscoveryTaskRow): "anthropic" | "openai" {
+  const { drafter } = scoringPanel(scoringVariant(task.run_id, task.idx));
+  return drafter.provider === "anthropic" ? "anthropic" : "openai";
 }
 
 function nextStep(task: DiscoveryTaskRow): Step | null {
@@ -476,7 +484,7 @@ async function executeStep(
       phase_state: {
         idea,
         loop: initialLoopState(
-          "anthropic", // Fable runs evidence gathering in the dual panel
+          drafterProviderOf(task), // the variant's drafter gathers evidence
           system,
           buildScoringResearchPrompt(),
         ),
@@ -659,9 +667,11 @@ async function executeStep(
   }
 
   if (step.kind === "score_sync") {
-    // Dual panel: Fable drafts; after Sol's feedback, Fable finalizes.
+    // Dual panel: the variant's drafter drafts AND finalizes; the other
+    // house model reviews in between.
+    const variant = scoringVariant(task.run_id, task.idx);
     const isFinal = Boolean(ps.verdictDraft && ps.feedback);
-    const scorer = SCORER_ANTHROPIC;
+    const scorer = scoringPanel(variant).drafter;
     const system = buildScoringSynthesisSystem();
     const prompt = buildScoringSynthesisPrompt({
       idea: ps.idea!,
@@ -678,17 +688,44 @@ async function executeStep(
           }
         : {}),
     });
-    const raw = await runSynthesisSync({
-      provider: "anthropic",
-      model: scorer.model,
-      effort: "max",
-      system,
-      prompt,
-      schemaName: "idea_analysis",
-      schema: ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
-    });
-    const verdict = normalizeAnalysis(raw as RawAnalysis, 0, "anthropic", scorer.model);
+    const raw =
+      scorer.provider === "anthropic"
+        ? await runSynthesisSync({
+            provider: "anthropic",
+            model: scorer.model,
+            effort: "max",
+            system,
+            prompt,
+            schemaName: "idea_analysis",
+            schema: ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
+          })
+        : await openaiSynthesisSync({
+            model: scorer.model,
+            effort: "max",
+            system,
+            prompt,
+            schemaName: "idea_analysis",
+            schema: ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
+          });
+    const verdict = normalizeAnalysis(
+      raw as RawAnalysis,
+      0,
+      scorer.provider === "anthropic" ? "anthropic" : "openai",
+      scorer.model,
+    );
     if (!isFinal) {
+      await logEvent(
+        ctx.admin,
+        ctx.run.id,
+        task.idx,
+        "scoring_variant",
+        JSON.stringify({
+          variant,
+          stage: task.status,
+          drafter: scorer.model,
+          reviewer: scoringPanel(variant).reviewer.model,
+        }),
+      );
       return {
         phase_state: { ...ps, verdictDraft: verdict } as Record<
           string,
@@ -727,6 +764,7 @@ async function executeStep(
       idea: ps.idea!.name,
       decision: verdictDecision(verdict),
       passes,
+      variant: scoringVariant(task.run_id, task.idx),
       summary: verdict.summary?.slice(0, 1200) ?? "",
     }),
   );
@@ -805,7 +843,7 @@ function afterIdeaSynthesis(
         reframeAttempt: ps.reframeAttempt ?? 1,
         reframeHistory: ps.reframeHistory ?? [],
         loop: initialLoopState(
-          "anthropic", // Fable runs evidence gathering in the dual panel
+          drafterProviderOf(task), // the variant's drafter gathers evidence
           buildScoringResearchSystem(idea),
           buildScoringResearchPrompt(),
         ),
