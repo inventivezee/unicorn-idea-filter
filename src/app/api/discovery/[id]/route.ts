@@ -7,7 +7,11 @@ import {
   fetchOwnedRun,
   fetchTasks,
 } from "@/lib/db/discovery";
-import { releaseSessionById } from "@/lib/discovery/browserbase";
+import {
+  releaseSessionById,
+  sessionDebugUrl,
+} from "@/lib/discovery/browserbase";
+import { taskActivity } from "@/lib/discovery/engine";
 import {
   adminClient,
   cloudConfigured,
@@ -35,23 +39,52 @@ export async function GET(
       id,
     );
     const tasks = await fetchTasks(admin, run.id);
+    // Live-view links only for tasks actively holding a claim (each debug
+    // lookup is an API call — don't fan out over terminal tasks).
+    const watchUrls = new Map<string, string | null>();
+    await Promise.all(
+      tasks
+        .filter(
+          (t) =>
+            t.claim?.heartbeat_at &&
+            Date.now() - new Date(t.claim.heartbeat_at).getTime() <
+              5 * 60 * 1000 &&
+            (t.bb as { sessionId?: string }).sessionId,
+        )
+        .map(async (t) => {
+          const sid = (t.bb as { sessionId?: string }).sessionId!;
+          if (!watchUrls.has(sid)) {
+            watchUrls.set(sid, await sessionDebugUrl(sid));
+          }
+        }),
+    );
     return Response.json({
       id: run.id,
       status: run.status,
       guidelines: run.guidelines,
       createdAt: run.created_at,
       budget: run.budget,
-      tasks: tasks.map((t) => ({
-        idx: t.idx,
-        status: t.status,
-        model: (t.generator as { model?: string }).model ?? "",
-        error: t.error,
-        ideaName:
-          (t.phase_state as { idea?: { name?: string } }).idea?.name ?? null,
-        originalId: t.idea_original_id,
-        reframeId: t.idea_reframe_id,
-        turns: t.turns,
-      })),
+      tasks: tasks.map((t) => {
+        const sid = (t.bb as { sessionId?: string }).sessionId ?? null;
+        return {
+          idx: t.idx,
+          status: t.status,
+          model: (t.generator as { model?: string }).model ?? "",
+          error: t.error,
+          ideaName:
+            (t.phase_state as { idea?: { name?: string } }).idea?.name ?? null,
+          originalId: t.idea_original_id,
+          reframeId: t.idea_reframe_id,
+          turns: t.turns,
+          claimAgeSec: t.claim?.heartbeat_at
+            ? Math.round(
+                (Date.now() - new Date(t.claim.heartbeat_at).getTime()) / 1000,
+              )
+            : null,
+          activity: taskActivity(t.phase_state),
+          watchUrl: sid ? (watchUrls.get(sid) ?? null) : null,
+        };
+      }),
     });
   } catch (err) {
     if (err instanceof DiscoveryAccessError) {

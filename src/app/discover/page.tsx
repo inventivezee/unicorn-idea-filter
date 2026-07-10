@@ -19,6 +19,9 @@ interface TaskView {
   ideaName: string | null;
   originalId: string | null;
   reframeId: string | null;
+  activity?: Array<{ kind: "thought" | "tool"; text: string }>;
+  watchUrl?: string | null;
+  claimAgeSec?: number | null;
 }
 
 interface RunView {
@@ -69,7 +72,18 @@ export default function DiscoverPage() {
       const res = await fetch("/api/discovery");
       if (!res.ok) return;
       const data = (await res.json()) as { runs?: RunView[] };
-      setRuns(data.runs ?? []);
+      let runs = data.runs ?? [];
+      // The active run gets the detailed view (activity feed + live browser
+      // links) from its own endpoint.
+      const activeId = runs.find((r) => r.status === "running")?.id;
+      if (activeId) {
+        const detail = await fetch(`/api/discovery/${activeId}`);
+        if (detail.ok) {
+          const d = (await detail.json()) as RunView;
+          runs = runs.map((r) => (r.id === activeId ? { ...r, ...d } : r));
+        }
+      }
+      setRuns(runs);
     } catch {
       // Transient — next poll retries.
     } finally {
@@ -382,14 +396,45 @@ function ActiveRun({
                   ? (t.error ?? "Failed")
                   : "Working…")}
             </p>
-            {t.status === "done" && t.originalId ? (
-              <Link
-                href={`/idea/${t.originalId}`}
-                className="text-xs text-cyan-700 underline-offset-2 hover:underline"
-              >
-                Open idea →
-              </Link>
+            {t.error && t.status !== "failed" ? (
+              <p className="mt-0.5 text-[11px] leading-snug text-amber-700">
+                ⚠ {t.error.slice(0, 140)}
+              </p>
             ) : null}
+            {t.activity && t.activity.length > 0 ? (
+              <div className="mt-1.5 space-y-0.5 border-l-2 border-cyan-100 pl-2">
+                {t.activity.slice(-3).map((a, i) => (
+                  <p
+                    key={i}
+                    className="truncate text-[11px] leading-snug text-zinc-500"
+                    title={a.text}
+                  >
+                    {a.kind === "tool" ? "🔎 " : "💭 "}
+                    {a.text}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+            <div className="mt-1 flex items-center gap-3">
+              {t.status === "done" && t.originalId ? (
+                <Link
+                  href={`/idea/${t.originalId}`}
+                  className="text-xs text-cyan-700 underline-offset-2 hover:underline"
+                >
+                  Open idea →
+                </Link>
+              ) : null}
+              {t.watchUrl ? (
+                <a
+                  href={t.watchUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-cyan-700 underline-offset-2 hover:underline"
+                >
+                  Watch browser live ↗
+                </a>
+              ) : null}
+            </div>
           </div>
         ))}
         {tasks.length === 0 ? (

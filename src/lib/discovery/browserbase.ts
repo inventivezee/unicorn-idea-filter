@@ -16,10 +16,16 @@ import {
   TOOL_RESULT_CHAR_CAP,
 } from "./config";
 
-export interface BrowserSession {
+/** What a tool executor needs: one page (tab) + the session id. Concurrent
+ *  tasks each get their OWN page on the shared browser — a single Page
+ *  cannot serve two navigations at once. */
+export interface BrowserHandle {
   sessionId: string;
-  browser: Browser;
   page: Page;
+}
+
+export interface BrowserSession extends BrowserHandle {
+  browser: Browser;
 }
 
 async function bbClient(): Promise<Browserbase> {
@@ -38,18 +44,58 @@ export async function createBrowserSession(): Promise<BrowserSession> {
   const browser = await chromium.connectOverCDP(session.connectUrl);
   const context = browser.contexts()[0] ?? (await browser.newContext());
   const page = context.pages()[0] ?? (await context.newPage());
-  // Residential proxy data bills per GB — don't pull pixels we never read.
+  await blockHeavyResources(page);
+  return { sessionId: session.id, browser, page };
+}
+
+/** Residential proxy data bills per GB — don't pull pixels we never read.
+ *  Both callbacks reject routinely when a navigation cancels in-flight
+ *  requests or the session closes — swallow to avoid unhandled rejections. */
+async function blockHeavyResources(page: Page): Promise<void> {
   await page.route("**/*", (route) => {
     const kind = route.request().resourceType();
-    // Both reject routinely when a navigation cancels in-flight requests or
-    // the session closes — swallow to avoid unhandled rejections.
     if (kind === "image" || kind === "media" || kind === "font") {
       route.abort().catch(() => {});
     } else {
       route.continue().catch(() => {});
     }
   });
-  return { sessionId: session.id, browser, page };
+}
+
+/** A fresh tab on the shared browser for one task's chunk. */
+export async function createTaskPage(
+  session: BrowserSession,
+): Promise<BrowserHandle> {
+  const context =
+    session.browser.contexts()[0] ?? (await session.browser.newContext());
+  const page = await context.newPage();
+  await blockHeavyResources(page);
+  return { sessionId: session.sessionId, page };
+}
+
+export async function closeTaskPage(handle: BrowserHandle | null): Promise<void> {
+  try {
+    await handle?.page.close();
+  } catch {
+    // Session may already be gone.
+  }
+}
+
+/** Live-view link for the owner ("watch the agent browse"). Best-effort. */
+export async function sessionDebugUrl(
+  sessionId: string,
+): Promise<string | null> {
+  try {
+    const bb = await bbClient();
+    const debug = await bb.sessions.debug(sessionId);
+    return (
+      (debug as { debuggerFullscreenUrl?: string }).debuggerFullscreenUrl ??
+      (debug as { debuggerUrl?: string }).debuggerUrl ??
+      null
+    );
+  } catch {
+    return null;
+  }
 }
 
 /** Best-effort: sessions also self-terminate on timeout / CDP disconnect. */
@@ -187,7 +233,7 @@ async function toolOpenPage(page: Page, url: string): Promise<string> {
  * research friction, not a phase failure).
  */
 export async function execBrowserTool(
-  session: BrowserSession,
+  session: BrowserHandle,
   name: string,
   args: Record<string, unknown>,
 ): Promise<string> {

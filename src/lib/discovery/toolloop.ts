@@ -20,7 +20,7 @@ import {
 import {
   BROWSER_TOOL_DEFS,
   execBrowserTool,
-  type BrowserSession,
+  type BrowserHandle,
 } from "./browserbase";
 import { TASK_STATE_CHAR_BUDGET } from "./config";
 
@@ -121,7 +121,7 @@ export async function runResearchTurn(opts: {
   system: string;
   prompt: string;
   state: LoopState;
-  session: BrowserSession;
+  session: BrowserHandle;
 }): Promise<ResearchTurnResult> {
   if (opts.state.kind === "anthropic") return anthropicTurn(opts, opts.state);
   if (opts.state.kind === "openrouter") return openrouterResearch(opts, opts.state);
@@ -133,7 +133,7 @@ async function anthropicTurn(
     model: string;
     effort?: string;
     system: string;
-    session: BrowserSession;
+    session: BrowserHandle;
   },
   state: Extract<LoopState, { kind: "anthropic" }>,
 ): Promise<ResearchTurnResult> {
@@ -198,7 +198,7 @@ async function openaiTurn(
     effort?: "low" | "medium" | "high" | "xhigh" | "max";
     system: string;
     prompt: string;
-    session: BrowserSession;
+    session: BrowserHandle;
   },
   state: Extract<LoopState, { kind: "openai" }>,
 ): Promise<ResearchTurnResult> {
@@ -261,7 +261,7 @@ async function openaiTurn(
 }
 
 async function openrouterResearch(
-  opts: { model: string; session: BrowserSession },
+  opts: { model: string; session: BrowserHandle },
   state: Extract<LoopState, { kind: "openrouter" }>,
 ): Promise<ResearchTurnResult> {
   const tools: ORTool[] = BROWSER_TOOL_DEFS.map((t) => ({

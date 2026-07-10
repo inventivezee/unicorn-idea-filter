@@ -60,8 +60,11 @@ import {
   type TurnPhase,
 } from "./config";
 import {
+  closeTaskPage,
   createBrowserSession,
+  createTaskPage,
   releaseBrowserSession,
+  type BrowserHandle,
   type BrowserSession,
 } from "./browserbase";
 import {
@@ -292,7 +295,7 @@ interface StepContext {
   admin: SupabaseClient;
   run: DiscoveryRunRow;
   founderBackground: string;
-  session: BrowserSession | null;
+  session: BrowserHandle | null;
 }
 
 /** One Browserbase session shared by ALL tasks within an invocation —
@@ -301,6 +304,9 @@ interface StepContext {
 export interface SessionHolder {
   session: BrowserSession | null;
   overBudget: boolean;
+  /** Consecutive create failures this invocation (mirrored per-task in
+   *  bb.failCount — 3 strikes fails the task terminally). */
+  createFailed: boolean;
 }
 
 /** Executes the claimed step; returns the phase_state/status patch. */
@@ -576,6 +582,7 @@ async function advanceTask(
   holder: SessionHolder,
 ): Promise<void> {
   let task = taskIn;
+  let handle: BrowserHandle | null = null;
   const token = randomUUID();
   try {
     for (;;) {
@@ -624,36 +631,56 @@ async function advanceTask(
         return;
       }
 
-      // Browser session — SHARED across all tasks this invocation; charged
-      // pessimistically ONCE, before creation. bumpRunBudget null = CAS
-      // contention (transient — retry next tick), NOT over-budget.
+      // Browser session — SHARED across all tasks this invocation, one
+      // fresh PAGE per task. Created FIRST, charged on success (a failed
+      // create consumes nothing at Browserbase — charging first leaked the
+      // whole minutes budget when creation was failing). Creation failures
+      // are recorded ON THE TASK so the owner can see them; three strikes
+      // fails the task terminally instead of retrying forever.
       if (needsBrowser(step)) {
-        if (holder.overBudget) {
+        if (holder.overBudget || holder.createFailed) {
+          const failCount = ((task.bb?.failCount as number) ?? 0) + 1;
+          const terminal = holder.overBudget || failCount >= 3;
           await casUpdateTask(ctx.admin, task.id, task.rev, {
-            status: "failed",
-            error: "Browser-minutes budget exhausted for this run.",
+            ...(terminal ? { status: "failed" as const, phase_state: {} } : {}),
+            error: holder.overBudget
+              ? "Browser-minutes budget exhausted for this run."
+              : `Browser session failed (attempt ${failCount}/3): ${String(
+                  (holder as { lastError?: string }).lastError ?? "unknown",
+                ).slice(0, 300)}`,
+            bb: { ...task.bb, failCount },
             claim: null,
-            phase_state: {},
           });
           return;
         }
         if (!holder.session) {
+          try {
+            holder.session = await createBrowserSession();
+          } catch (err) {
+            holder.createFailed = true;
+            (holder as { lastError?: string }).lastError =
+              err instanceof Error ? err.message : String(err);
+            continue; // record on the task via the branch above
+          }
           const minutes = Math.ceil(BB_SESSION_TIMEOUT_SECONDS / 60);
           const run = await bumpRunBudget(ctx.admin, ctx.run.id, {
             browserMinutes: minutes,
           });
-          if (!run) return; // contention — release via finally, retry later
           const total =
-            (run.budget as { browserMinutes?: number })?.browserMinutes ?? 0;
-          if (total > BB_RUN_MINUTES_CAP) {
+            (run?.budget as { browserMinutes?: number })?.browserMinutes ?? 0;
+          if (run && total > BB_RUN_MINUTES_CAP) {
             holder.overBudget = true;
-            continue; // fail the task via the branch above
+            continue;
           }
-          holder.session = await createBrowserSession();
         }
-        // Persist the session id on the task before use (leak audit trail).
+        if (!handle) {
+          handle = await createTaskPage(holder.session);
+        }
+        // Persist the session id on the task before use (leak audit trail;
+        // clears any earlier failure note).
         const withSession = await casUpdateTask(ctx.admin, task.id, task.rev, {
           bb: { sessionId: holder.session.sessionId },
+          error: null,
           claim: { token, heartbeat_at: new Date().toISOString() },
         });
         if (!withSession) return;
@@ -714,11 +741,7 @@ async function advanceTask(
       // EXECUTE (the paid call — its budget slot is already claimed).
       let patch: Awaited<ReturnType<typeof executeStep>>;
       try {
-        patch = await executeStep(
-          { ...ctx, session: holder.session },
-          task,
-          step,
-        );
+        patch = await executeStep({ ...ctx, session: handle }, task, step);
       } catch (err) {
         // Record and release; the bumped counter bounds retries.
         const msg = err instanceof Error ? err.message : String(err);
@@ -753,6 +776,7 @@ async function advanceTask(
       if (patch.yieldChunk) return; // e.g. background job pending — next tick polls
     }
   } finally {
+    await closeTaskPage(handle);
     // The shared session is released by advanceDiscoveryRun, not here.
     // Release the claim if we still own the row (best-effort).
     try {
@@ -838,19 +862,34 @@ export async function advanceDiscoveryRun(
   }
 
   let advanced = 0;
-  const holder: SessionHolder = { session: null, overBudget: false };
+  const holder: SessionHolder = {
+    session: null,
+    overBudget: false,
+    createFailed: false,
+  };
+  // Advance several tasks CONCURRENTLY (each with its own page on the
+  // shared browser) — sequential advancement dedicated a whole invocation
+  // to one task and left the tail queued for tens of minutes.
+  const CONCURRENCY = 4;
+  const queue = [...active];
   try {
-    for (const task of active) {
-      if (Date.now() > invocationDeadline - 30_000) break;
-      if (!claimAvailable(task)) continue;
-      advanced++;
-      await advanceTask(
-        { admin, run, founderBackground },
-        task,
-        invocationDeadline,
-        holder,
-      );
-    }
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
+        for (;;) {
+          const task = queue.shift();
+          if (!task) return;
+          if (Date.now() > invocationDeadline - 30_000) return;
+          if (!claimAvailable(task)) continue;
+          advanced++;
+          await advanceTask(
+            { admin, run, founderBackground },
+            task,
+            invocationDeadline,
+            holder,
+          );
+        }
+      }),
+    );
   } finally {
     await releaseBrowserSession(holder.session);
   }
@@ -912,6 +951,58 @@ async function notifyOwner(
   } catch {
     // Mail failure never breaks the run (at-most-once semantics).
   }
+}
+
+/** Owner-facing activity feed: the last few things a task's agent did,
+ *  extracted from its persisted loop state. System prompts are NEVER
+ *  included (they can carry the founder background); tool results are
+ *  summarized, not echoed. */
+export function taskActivity(
+  phaseState: Record<string, unknown>,
+): Array<{ kind: "thought" | "tool"; text: string }> {
+  const out: Array<{ kind: "thought" | "tool"; text: string }> = [];
+  const push = (kind: "thought" | "tool", text: string) => {
+    const t = text.trim();
+    if (t) out.push({ kind, text: t.slice(0, 280) });
+  };
+  const loop = (phaseState as { loop?: LoopState }).loop;
+  if (loop?.kind === "anthropic") {
+    for (const m of loop.messages) {
+      if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+      for (const block of m.content) {
+        if (typeof block === "string") continue;
+        if (block.type === "text") push("thought", block.text);
+        if (block.type === "tool_use") {
+          const input = block.input as { query?: string; url?: string };
+          push("tool", `${block.name}: ${input?.query ?? input?.url ?? ""}`);
+        }
+      }
+    }
+  } else if (loop?.kind === "openrouter") {
+    for (const m of loop.messages) {
+      const msg = m as {
+        role?: string;
+        content?: unknown;
+        tool_calls?: Array<{
+          function?: { name?: string; arguments?: string };
+        }>;
+      };
+      if (msg.role !== "assistant") continue;
+      if (typeof msg.content === "string") push("thought", msg.content);
+      for (const tc of msg.tool_calls ?? []) {
+        push(
+          "tool",
+          `${tc.function?.name ?? "tool"}: ${(tc.function?.arguments ?? "").slice(0, 120)}`,
+        );
+      }
+    }
+  } else if (loop?.kind === "openai" && loop.lastText) {
+    push("thought", loop.lastText);
+  }
+  const brief = (phaseState as { brief?: string; memo?: string });
+  if (brief.brief) push("thought", `RESEARCH BRIEF: ${brief.brief}`);
+  if (brief.memo) push("thought", `EVIDENCE MEMO: ${brief.memo}`);
+  return out.slice(-5);
 }
 
 /** Crash between the terminal status flip and the send can drop the email —
