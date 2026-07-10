@@ -50,6 +50,8 @@ import {
   BB_RUN_MINUTES_CAP,
   BB_SESSION_TIMEOUT_SECONDS,
   MAX_REFRAME_LOOPS,
+  SCORER_ANTHROPIC,
+  SCORER_OPENAI,
   WORST_TURN_MS,
   PASSING_DECISIONS,
   PHASE_DEADLINE_MS,
@@ -83,6 +85,8 @@ import {
   IDEA_GEN_SCHEMA,
   buildCritiqueSystem,
   buildDiscoveryResearchPrompt,
+  buildScoringFeedbackPrompt,
+  buildScoringFeedbackSystem,
   buildDiscoveryResearchSystem,
   buildGenerationSynthesisPrompt,
   buildGenerationSynthesisSystem,
@@ -114,6 +118,10 @@ interface PhaseState {
   critique?: string;
   synthJobId?: string;
   verdictSummary?: string;
+  /** Dual-model scoring: Fable's draft, then Sol's review memo, then the
+   *  final verdict. */
+  verdictDraft?: AnalyzeResponse;
+  feedback?: string;
   verdict?: AnalyzeResponse;
   reframeAttempt?: number;
   reframeHistory?: Array<{ name: string; summary: string }>;
@@ -231,9 +239,14 @@ function scorerOf(task: DiscoveryTaskRow): DiscoveryModel {
 function phaseModel(task: DiscoveryTaskRow): DiscoveryModel {
   const status = task.status;
   if (status === "researching" || status === "pending") return generatorOf(task);
-  if (status === "scoring") return scorerOf(task);
   if (status === "reframing") return pickReframer(task.run_id, task.idx);
-  return pickRescorer(pickReframer(task.run_id, task.idx), task.idx);
+  // Scoring/rescoring is ALWAYS the dual-model house panel (owner decision,
+  // supersedes the cross-vendor scorer rule): Fable 5 max researches and
+  // drafts, GPT-5.6 Sol reviews with its own browser access, Fable
+  // finalizes weighing the feedback.
+  const ps = task.phase_state as PhaseState;
+  if (ps.verdictDraft && !ps.feedback) return SCORER_OPENAI;
+  return SCORER_ANTHROPIC;
 }
 
 function nextStep(task: DiscoveryTaskRow): Step | null {
@@ -251,6 +264,9 @@ function nextStep(task: DiscoveryTaskRow): Step | null {
   if (!researchDone) return { kind: "research_turn", phase };
   const model = phaseModel(task);
   if (status === "scoring" || status === "rescoring") {
+    // Dual-model panel: draft (Fable) → feedback loop (Sol, with browser)
+    // → final (Fable). The feedback loop rides the research_turn machinery.
+    if (ps.verdictDraft && !ps.feedback) return { kind: "research_turn", phase };
     return { kind: "score_sync", phase };
   }
   // Generation only: one red-team pass over the brief before synthesis.
@@ -454,14 +470,13 @@ async function executeStep(
 
   if (step.kind === "begin_scoring") {
     const idea = ps.idea!;
-    const scorer = scorerOf(task);
     const system = buildScoringResearchSystem(idea);
     return {
       status: "scoring",
       phase_state: {
         idea,
         loop: initialLoopState(
-          scorer.provider === "anthropic" ? "anthropic" : "openai",
+          "anthropic", // Fable runs evidence gathering in the dual panel
           system,
           buildScoringResearchPrompt(),
         ),
@@ -472,6 +487,10 @@ async function executeStep(
   if (step.kind === "research_turn") {
     const model = phaseModel(task);
     const isReframe = task.status === "reframing";
+    const feedbackMode =
+      (task.status === "scoring" || task.status === "rescoring") &&
+      Boolean(ps.verdictDraft) &&
+      !ps.feedback;
     const system =
       task.status === "researching"
         ? buildDiscoveryResearchSystem({
@@ -486,14 +505,23 @@ async function executeStep(
           ? buildReframeResearchSystem({
               idea: ps.idea!,
               verdictSummary: ps.verdictSummary ?? "",
+              history: ps.reframeHistory,
             })
-          : buildScoringResearchSystem(ps.idea!);
+          : feedbackMode
+            ? buildScoringFeedbackSystem({
+                idea: ps.idea!,
+                draftVerdict: verdictSummaryText(ps.verdictDraft!),
+                evidenceMemo: ps.memo ?? "",
+              })
+            : buildScoringResearchSystem(ps.idea!);
     const prompt =
       task.status === "researching"
         ? buildDiscoveryResearchPrompt(ctx.run.guidelines)
         : isReframe
           ? "Begin your reframe research now."
-          : buildScoringResearchPrompt();
+          : feedbackMode
+            ? buildScoringFeedbackPrompt()
+            : buildScoringResearchPrompt();
     const phase = turnKeyFor(task.status);
     const used = task.turns?.[phase] ?? 0;
     const result = await runResearchTurn({
@@ -511,14 +539,16 @@ async function executeStep(
     const patch: PhaseState = { ...ps, loop: result.state };
     if (result.done) {
       const finalText = result.state.lastText ?? "";
-      if (task.status === "scoring" || task.status === "rescoring") {
+      if (feedbackMode) {
+        // Reviewer memo done — evidence memo/transcript stay untouched.
+        patch.feedback = finalText || "(no feedback produced)";
+      } else if (task.status === "scoring" || task.status === "rescoring") {
         patch.memo = finalText || "(no memo produced)";
+        patch.researchLog = transcriptFromLoop(result.state);
       } else {
         patch.brief = finalText || "(no brief produced)";
+        patch.researchLog = transcriptFromLoop(result.state);
       }
-      // The transcript rides into synthesis — compression must not cost
-      // evidence. The loop itself is done.
-      patch.researchLog = transcriptFromLoop(result.state);
       patch.loop = undefined;
     }
     return { phase_state: patch as Record<string, unknown> };
@@ -543,6 +573,10 @@ async function executeStep(
 
   if (step.kind === "synth_submit") {
     const isReframe = task.status === "reframing";
+    const feedbackMode =
+      (task.status === "scoring" || task.status === "rescoring") &&
+      Boolean(ps.verdictDraft) &&
+      !ps.feedback;
     const jobId = await openaiSynthesisSubmit({
       model: phaseModel(task).model,
       system: isReframe
@@ -585,6 +619,10 @@ async function executeStep(
   if (step.kind === "synth_sync") {
     const model = phaseModel(task);
     const isReframe = task.status === "reframing";
+    const feedbackMode =
+      (task.status === "scoring" || task.status === "rescoring") &&
+      Boolean(ps.verdictDraft) &&
+      !ps.feedback;
     const raw = await runSynthesisSync({
       provider: model.provider as "anthropic" | "openrouter",
       model: model.model,
@@ -606,10 +644,9 @@ async function executeStep(
   }
 
   if (step.kind === "score_sync") {
-    const scorer =
-      task.status === "rescoring"
-        ? pickRescorer(pickReframer(task.run_id, task.idx), task.idx)
-        : scorerOf(task);
+    // Dual panel: Fable drafts; after Sol's feedback, Fable finalizes.
+    const isFinal = Boolean(ps.verdictDraft && ps.feedback);
+    const scorer = SCORER_ANTHROPIC;
     const system = buildScoringSynthesisSystem();
     const prompt = buildScoringSynthesisPrompt({
       idea: ps.idea!,
@@ -619,37 +656,39 @@ async function executeStep(
       coFounders: ctx.run.use_founder_background ? ctx.coFounders : [],
       evidenceMemo: ps.memo ?? "",
       researchLog: ps.researchLog,
+      ...(isFinal
+        ? {
+            draftVerdict: verdictSummaryText(ps.verdictDraft!),
+            reviewerFeedback: ps.feedback,
+          }
+        : {}),
     });
-    const raw =
-      scorer.provider === "anthropic"
-        ? await runSynthesisSync({
-            provider: "anthropic",
-            model: scorer.model,
-            effort: "max",
-            system,
-            prompt,
-            schemaName: "idea_analysis",
-            schema: ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
-          })
-        : await openaiSynthesisSync({
-            model: scorer.model,
-            effort: "max",
-            system,
-            prompt,
-            schemaName: "idea_analysis",
-            schema: ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
-          });
-    const verdict = normalizeAnalysis(
-      raw as RawAnalysis,
-      0,
-      scorer.provider === "anthropic" ? "anthropic" : "openai",
-      scorer.model,
-    );
+    const raw = await runSynthesisSync({
+      provider: "anthropic",
+      model: scorer.model,
+      effort: "max",
+      system,
+      prompt,
+      schemaName: "idea_analysis",
+      schema: ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
+    });
+    const verdict = normalizeAnalysis(raw as RawAnalysis, 0, "anthropic", scorer.model);
+    if (!isFinal) {
+      return {
+        phase_state: { ...ps, verdictDraft: verdict } as Record<
+          string,
+          unknown
+        >,
+      };
+    }
     return {
-      phase_state: { ...ps, verdict, memo: undefined } as Record<
-        string,
-        unknown
-      >,
+      phase_state: {
+        ...ps,
+        verdict,
+        verdictDraft: undefined,
+        feedback: undefined,
+        memo: undefined,
+      } as Record<string, unknown>,
     };
   }
 
@@ -743,7 +782,6 @@ function afterIdeaSynthesis(
   idea: GeneratedIdea,
 ): { status: TaskStatus; phase_state: Record<string, unknown> } {
   if (task.status === "reframing") {
-    const rescorer = pickRescorer(pickReframer(task.run_id, task.idx), task.idx);
     const ps = task.phase_state as PhaseState;
     return {
       status: "rescoring",
@@ -752,7 +790,7 @@ function afterIdeaSynthesis(
         reframeAttempt: ps.reframeAttempt ?? 1,
         reframeHistory: ps.reframeHistory ?? [],
         loop: initialLoopState(
-          rescorer.provider === "anthropic" ? "anthropic" : "openai",
+          "anthropic", // Fable runs evidence gathering in the dual panel
           buildScoringResearchSystem(idea),
           buildScoringResearchPrompt(),
         ),
