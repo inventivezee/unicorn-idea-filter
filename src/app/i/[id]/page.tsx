@@ -28,6 +28,13 @@ import { CRITERIA, DEFAULT_WEIGHTS } from "@/lib/criteria";
 import { emptyCashCowBlock } from "@/lib/cashcow/engine";
 import { newIdea } from "@/lib/defaults";
 import type { PublicIdeaRow } from "@/lib/db/types";
+
+interface LineageEntry {
+  id: string;
+  name: string;
+  reframe_attempt: number;
+  raw_score: number | null;
+}
 import {
   KILLER_FLAG_COPY,
   decision,
@@ -271,6 +278,7 @@ export default function PublicIdeaPage() {
   const { hydrated, cloud, state } = useStore();
   const cashcowMode = state.settings.filterMode === "cashcow";
   const [idea, setIdea] = useState<PublicIdeaRow | null>(null);
+  const [lineage, setLineage] = useState<LineageEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -304,8 +312,12 @@ export default function PublicIdeaPage() {
           }
           throw new Error(message);
         }
-        const data = (await res.json()) as { idea: PublicIdeaRow };
+        const data = (await res.json()) as {
+          idea: PublicIdeaRow;
+          lineage?: LineageEntry[];
+        };
         setIdea(data.idea);
+        setLineage(data.lineage ?? []);
         setLoading(false);
       } catch (e) {
         if (controller.signal.aborted) return;
@@ -447,6 +459,37 @@ export default function PublicIdeaPage() {
             {" · added "}
             <span className="tnum">{fmtDate(idea.created_at)}</span>
           </p>
+          {(idea.reframe_attempt ?? 0) > 0 ? (
+            <p className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
+              <span className="inline-block rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 font-medium text-violet-700">
+                {idea.reframe_attempt}× reframed
+              </span>
+              {lineage.length > 0 ? (
+                <>
+                  <span>lineage:</span>
+                  {lineage.map((entry) => (
+                    <span key={entry.id}>
+                      ←{" "}
+                      <Link
+                        href={`/i/${entry.id}`}
+                        className="font-medium text-violet-700 underline-offset-2 hover:underline"
+                        title={
+                          entry.raw_score !== null
+                            ? `Scored ${Math.round(entry.raw_score * 10) / 10}`
+                            : undefined
+                        }
+                      >
+                        {entry.reframe_attempt > 0
+                          ? `reframe #${entry.reframe_attempt}`
+                          : "original"}
+                        {entry.name ? ` (${entry.name.slice(0, 40)})` : ""}
+                      </Link>
+                    </span>
+                  ))}
+                </>
+              ) : null}
+            </p>
+          ) : null}
         </div>
         {ownsIdea ? (
           <Link

@@ -414,6 +414,14 @@ export default function ExplorePage() {
                               Discovered
                             </span>
                           ) : null}
+                          {(row.reframe_attempt ?? 0) > 0 ? (
+                            <span
+                              className="mr-1.5 inline-block rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700"
+                              title="A rescue reframe — open the idea to walk its lineage back to the original"
+                            >
+                              {row.reframe_attempt}× reframed
+                            </span>
+                          ) : null}
                           {row.author_handle ?? "Anonymous founder"}
                         </td>
                         <td

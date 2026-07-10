@@ -74,6 +74,10 @@ export interface PublicIdeaRow {
   cc_analyzed_at?: string | null;
   /** 'discovery' for AI-discovered ideas (migration 011) — absent before. */
   origin?: string | null;
+  /** Reframe lineage (migration 013): parent idea + attempt number
+   *  (0/null = original). */
+  reframe_of?: string | null;
+  reframe_attempt?: number | null;
 }
 
 export interface ProfileRow {

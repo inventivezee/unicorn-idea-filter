@@ -828,14 +828,31 @@ async function executeStep(
     },
     fields,
   );
-  // Best-effort provenance (server-only columns; tolerate pre-migration).
-  try {
+  // Best-effort provenance + lineage (server-only columns; tolerate
+  // pre-migration deploys). reframe_of chains each attempt to its
+  // predecessor so the UI can walk back to the original.
+  const attemptNo = isRescore ? Math.max(1, attempt) : 0;
+  const provenance: Record<string, unknown> = {
+    discovery_run_id: ctx.run.id,
+    origin: "discovery",
+    reframe_attempt: attemptNo,
+    reframe_of: isRescore
+      ? attemptNo <= 1
+        ? task.idea_original_id
+        : reframeAttemptIdeaId(task.run_id, task.idx, attemptNo - 1)
+      : null,
+  };
+  const { error: provErr } = await ctx.admin
+    .from("ideas")
+    .update(provenance)
+    .eq("id", ideaId);
+  if (provErr) {
+    // Migration 013 not applied yet — degrade to the 011 columns
+    // (supabase returns drift as {error}, it does not throw).
     await ctx.admin
       .from("ideas")
       .update({ discovery_run_id: ctx.run.id, origin: "discovery" })
       .eq("id", ideaId);
-  } catch {
-    // Migration drift — provenance degrades, idea stands.
   }
   if (!passes && (isRescore ? attempt < MAX_REFRAME_LOOPS : true)) {
     // Rescue path: iterative reframes (bounded by attempt count + the
