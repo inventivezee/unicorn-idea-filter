@@ -1087,9 +1087,16 @@ async function advanceTask(
           "step_error",
           `${step.kind} in ${task.status}: ${msg}\n${stack}`,
         );
+        // Provider quota/rate-limit outages: HOLD the claim so the lease
+        // doubles as a ~15-min backoff (immediate re-claims would burn the
+        // turn budget against a billing problem). Self-heals: the claim
+        // goes stale after CLAIM_LEASE_MS and the task resumes.
+        const quotaOutage = /quota|billing|rate.?limit|429/i.test(msg);
         const failed = await casUpdateTask(ctx.admin, task.id, task.rev, {
           error: msg.slice(0, 500),
-          claim: null,
+          claim: quotaOutage
+            ? { token: "quota-backoff", heartbeat_at: new Date().toISOString() }
+            : null,
         });
         if (failed) task = failed;
         return;
