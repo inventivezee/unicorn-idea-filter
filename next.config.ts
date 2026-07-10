@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // playwright-core drives Browserbase over CDP from route handlers (the
+  // discovery engine); its dynamic requires break under bundling, so load
+  // it via native require at runtime instead.
+  serverExternalPackages: ["playwright-core"],
 };
 
 export default nextConfig;

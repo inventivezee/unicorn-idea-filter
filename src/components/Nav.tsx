@@ -9,6 +9,7 @@ import { Logo } from "@/components/Logo";
 const LINKS = [
   { href: "/", label: "Pipeline" },
   { href: "/explore", label: "Explore" },
+  { href: "/discover", label: "Discover" },
   { href: "/compare", label: "Compare" },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/settings", label: "Settings" },

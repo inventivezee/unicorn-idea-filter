@@ -366,6 +366,14 @@ export default function ExplorePage() {
                           )}
                         </td>
                         <td className="max-w-[160px] truncate px-3 py-2.5 text-zinc-600">
+                          {row.origin === "discovery" ? (
+                            <span
+                              className="mr-1.5 inline-block rounded border border-cyan-200 bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700"
+                              title="Originated by the autonomous discovery engine"
+                            >
+                              Discovered
+                            </span>
+                          ) : null}
                           {row.author_handle ?? "Anonymous founder"}
                         </td>
                         <td

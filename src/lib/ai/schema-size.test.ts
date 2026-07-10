@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { IDEA_GEN_SCHEMA } from "@/lib/discovery/prompts";
 import {
   ANALYSIS_SCHEMA,
   CC_ANALYSIS_SCHEMA,
@@ -28,6 +29,8 @@ describe("AI schema size budget", () => {
     expect(JSON.stringify(IDEAS_GEN_SCHEMA).length).toBeLessThan(1200);
     expect(JSON.stringify(REFRAME_SCHEMA).length).toBeLessThan(800);
     expect(JSON.stringify(FILTER_DESIGN_SCHEMA).length).toBeLessThan(2500);
+    // Discovery generation/reframe synthesis output (six flat strings).
+    expect(JSON.stringify(IDEA_GEN_SCHEMA).length).toBeLessThan(600);
   });
 
   it("custom analysis schema stays under budget at max spec size", () => {

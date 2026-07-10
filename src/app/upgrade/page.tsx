@@ -17,6 +17,8 @@ const REASONS: Record<string, string> = {
     "That model is available to subscribers. Subscribe to use the premium models.",
   private:
     "Keeping an idea out of the public database is a subscriber feature.",
+  discovery:
+    "Autonomous idea discovery is a subscriber feature — AI agents research the market and deliver scored ideas to your pipeline.",
 };
 
 const BENEFITS = [
