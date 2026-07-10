@@ -6,7 +6,10 @@ import { CRON_TIME_BUDGET_MS, discoveryConfigured } from "@/lib/discovery/config
 import { listActiveRuns, pruneEvents } from "@/lib/db/discovery";
 import { adminClient, cloudConfigured } from "@/lib/supabase/server";
 
-export const maxDuration = 800; // Vercel Pro (GA limit; build fails on Hobby)
+// 30-min extended duration (Vercel Pro beta for Node.js runtimes) — the
+// research worker gets the longest window Vercel offers; the wall-clock
+// budget below leaves 5 min of headroom before the hard kill.
+export const maxDuration = 1800;
 
 const TIME_BUDGET_MS = CRON_TIME_BUDGET_MS;
 

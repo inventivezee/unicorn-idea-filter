@@ -225,13 +225,21 @@ async function anthropicTurn(
     tools,
     messages: state.messages,
   };
+  // Streamed under the hood: the SDK REQUIRES streaming for requests whose
+  // max_tokens imply >10 min of generation ("Streaming is required for
+  // operations that may take longer than 10 minutes"), which max-effort
+  // 32k-token research turns do. finalMessage() gives the same Message.
   const response = FABLE_MODELS.test(opts.model)
-    ? ((await client.beta.messages.create({
-        ...(params as unknown as Record<string, unknown>),
-        betas: ["server-side-fallback-2026-06-01"],
-        fallbacks: [{ model: "claude-opus-4-8" }],
-      } as unknown as Parameters<typeof client.beta.messages.create>[0])) as unknown as Anthropic.Message)
-    : await client.messages.create(params as Anthropic.MessageCreateParamsNonStreaming);
+    ? ((await client.beta.messages
+        .stream({
+          ...(params as unknown as Record<string, unknown>),
+          betas: ["server-side-fallback-2026-06-01"],
+          fallbacks: [{ model: "claude-opus-4-8" }],
+        } as unknown as Parameters<typeof client.beta.messages.stream>[0])
+        .finalMessage()) as unknown as Anthropic.Message)
+    : await client.messages
+        .stream(params as Anthropic.MessageCreateParamsNonStreaming)
+        .finalMessage();
 
   if (response.stop_reason === "refusal") {
     throw new UserFacingError("The model declined this research task.");
@@ -507,12 +515,16 @@ async function anthropicSynthesisAttempt(
       messages: [{ role: "user" as const, content: opts.prompt }],
     };
     const response = FABLE_MODELS.test(opts.model)
-      ? ((await client.beta.messages.create({
-          ...(params as unknown as Record<string, unknown>),
-          betas: ["server-side-fallback-2026-06-01"],
-          fallbacks: [{ model: "claude-opus-4-8" }],
-        } as unknown as Parameters<typeof client.beta.messages.create>[0])) as unknown as Anthropic.Message)
-      : await client.messages.create(params as Anthropic.MessageCreateParamsNonStreaming);
+      ? ((await client.beta.messages
+          .stream({
+            ...(params as unknown as Record<string, unknown>),
+            betas: ["server-side-fallback-2026-06-01"],
+            fallbacks: [{ model: "claude-opus-4-8" }],
+          } as unknown as Parameters<typeof client.beta.messages.stream>[0])
+          .finalMessage()) as unknown as Anthropic.Message)
+      : await client.messages
+          .stream(params as Anthropic.MessageCreateParamsNonStreaming)
+          .finalMessage();
     if (response.stop_reason === "refusal") {
       throw new UserFacingError("The model declined the synthesis step.");
     }

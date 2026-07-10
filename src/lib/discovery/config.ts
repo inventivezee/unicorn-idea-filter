@@ -183,8 +183,9 @@ export const WORST_TURN_MS = {
 
 /** Cron work budget per invocation. Every worstCaseMs step bound MUST be
  *  strictly smaller than this or the step can never be claimed (guarded by
- *  a unit test). maxDuration=800s leaves headroom above it. */
-export const CRON_TIME_BUDGET_MS = 600_000;
+ *  a unit test). maxDuration=1800s (Vercel Pro 30-min beta) leaves 5 min
+ *  of headroom above it. */
+export const CRON_TIME_BUDGET_MS = 1_500_000;
 
 /** Per-task serialized agent-loop state budget (chars of JSON.stringify).
  *  Sized for research QUALITY: at 60-turn research with 16k tool results,
