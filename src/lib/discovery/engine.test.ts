@@ -5,6 +5,10 @@ import { CRITERION_IDS, GATE_IDS } from "@/lib/types";
 import type { AnalyzeResponse, GateId } from "@/lib/types";
 import {
   GENERATORS,
+  OPENROUTER_GENERATORS,
+  TASKS_PER_RUN,
+  buildRunPanel,
+  roundForIdx,
   SCORER_ANTHROPIC,
   SCORER_OPENAI,
   TASK_STATE_CHAR_BUDGET,
@@ -94,16 +98,68 @@ describe("cross-vendor scoring policy", () => {
 
   it("rescorer vendor always differs from the reframer vendor", () => {
     // THE cross-vendor rule for reframes: whoever writes the reframe never
-    // grades it — for every scorer that could have produced the failing
-    // verdict.
-    for (const gen of GENERATORS) {
-      for (let idx = 0; idx < 10; idx++) {
-        const scorer = pickScorer(gen, idx);
-        const reframer = pickReframer(scorer);
-        const rescorer = pickRescorer(reframer);
+    // grades it — across many (run, task) seeds.
+    for (let seed = 0; seed < 50; seed++) {
+      for (let idx = 0; idx < 20; idx++) {
+        const reframer = pickReframer(`run-${seed}`, idx);
+        const rescorer = pickRescorer(reframer, idx);
         expect(rescorer.vendor).not.toBe(reframer.vendor);
+        expect([SCORER_ANTHROPIC, SCORER_OPENAI]).toContain(rescorer);
       }
     }
+  });
+
+  it("reframer is deterministic per (run, idx) and follows the 60/40 policy", () => {
+    // Same seed → same reframer on every cron tick (a mid-phase model
+    // switch would corrupt the task's agent-loop state).
+    for (let idx = 0; idx < 20; idx++) {
+      expect(pickReframer("run-a", idx)).toBe(pickReframer("run-a", idx));
+    }
+    // Distribution: ~60% house (Fable/Sol rotating by idx parity), ~40%
+    // other models — measured over many seeds, generous tolerance.
+    let house = 0;
+    let others = 0;
+    const N = 2000;
+    for (let i = 0; i < N; i++) {
+      const r = pickReframer(`run-${i}`, i);
+      if (r.vendor === "anthropic" || r.vendor === "openai") {
+        house++;
+        // Within the house bucket the two rotate by task parity.
+        expect(r.vendor).toBe(i % 2 === 0 ? "anthropic" : "openai");
+      } else {
+        others++;
+        expect(OPENROUTER_GENERATORS).toContain(r);
+      }
+    }
+    expect(house / N).toBeGreaterThan(0.5);
+    expect(house / N).toBeLessThan(0.7);
+    expect(others / N).toBeGreaterThan(0.3);
+  });
+});
+
+describe("run panel composition", () => {
+  it("has 20 slots: >=30% Fable, >=30% Sol, rest evenly split", () => {
+    const panel = buildRunPanel();
+    expect(panel.length).toBe(TASKS_PER_RUN);
+    expect(panel.length).toBeGreaterThanOrEqual(20);
+    const count = (model: string) =>
+      panel.filter((m) => m.model === model).length;
+    expect(count("claude-fable-5") / panel.length).toBeGreaterThanOrEqual(0.3);
+    expect(count("gpt-5.6-sol") / panel.length).toBeGreaterThanOrEqual(0.3);
+    const otherCounts = OPENROUTER_GENERATORS.map((m) => count(m.model));
+    // Evenly distributed: all equal.
+    expect(new Set(otherCounts).size).toBe(1);
+    expect(otherCounts[0]).toBeGreaterThan(0);
+  });
+
+  it("roundForIdx numbers each model's occurrences from 1", () => {
+    const panel = buildRunPanel();
+    const seen = new Map<string, number>();
+    panel.forEach((m, idx) => {
+      const n = (seen.get(m.model) ?? 0) + 1;
+      seen.set(m.model, n);
+      expect(roundForIdx(idx)).toBe(n);
+    });
   });
 });
 

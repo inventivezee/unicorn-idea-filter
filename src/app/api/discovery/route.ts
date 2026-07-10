@@ -11,8 +11,7 @@ import {
 } from "@/lib/db/discovery";
 import { taskIdeaIds } from "@/lib/discovery/engine";
 import {
-  GENERATORS,
-  ROUNDS_PER_GENERATOR,
+  buildRunPanel,
   discoveryConfigured,
   globalDailyCap,
   pickScorer,
@@ -126,26 +125,24 @@ export async function POST(request: Request) {
         }
       }
 
-      // 3. Tasks: one per generator per round, scorer picked cross-vendor,
-      //    deterministic idea ids assigned NOW (crash-safe publishing).
-      const rows = [];
-      for (let round = 0; round < ROUNDS_PER_GENERATOR; round++) {
-        for (let g = 0; g < GENERATORS.length; g++) {
-          const idx = round * GENERATORS.length + g;
-          const ids = taskIdeaIds(run.id, idx);
-          rows.push({
-            run_id: run.id,
-            idx,
-            generator: GENERATORS[g] as unknown as Record<string, unknown>,
-            scorer: pickScorer(GENERATORS[g], idx) as unknown as Record<
-              string,
-              unknown
-            >,
-            idea_original_id: ids.original,
-            idea_reframe_id: ids.reframe,
-          });
-        }
-      }
+      // 3. Tasks from the weighted panel (30% Sol / 30% Fable / rest even),
+      //    scorer picked cross-vendor, deterministic idea ids assigned NOW
+      //    (crash-safe publishing).
+      const panel = buildRunPanel();
+      const rows = panel.map((generator, idx) => {
+        const ids = taskIdeaIds(run.id, idx);
+        return {
+          run_id: run.id,
+          idx,
+          generator: generator as unknown as Record<string, unknown>,
+          scorer: pickScorer(generator, idx) as unknown as Record<
+            string,
+            unknown
+          >,
+          idea_original_id: ids.original,
+          idea_reframe_id: ids.reframe,
+        };
+      });
       await createTasks(admin, rows);
     } catch (err) {
       await admin

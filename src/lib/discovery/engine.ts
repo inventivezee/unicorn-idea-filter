@@ -55,6 +55,7 @@ import {
   TURN_CAPS,
   pickReframer,
   pickRescorer,
+  roundForIdx,
   type DiscoveryModel,
   type TurnPhase,
 } from "./config";
@@ -156,8 +157,8 @@ function phaseModel(task: DiscoveryTaskRow): DiscoveryModel {
   const status = task.status;
   if (status === "researching" || status === "pending") return generatorOf(task);
   if (status === "scoring") return scorerOf(task);
-  if (status === "reframing") return pickReframer(scorerOf(task));
-  return pickRescorer(pickReframer(scorerOf(task)));
+  if (status === "reframing") return pickReframer(task.run_id, task.idx);
+  return pickRescorer(pickReframer(task.run_id, task.idx), task.idx);
 }
 
 function nextStep(task: DiscoveryTaskRow): Step | null {
@@ -317,7 +318,7 @@ async function executeStep(
 }> {
   const ps = task.phase_state as PhaseState;
   const gen = generatorOf(task);
-  const round = Math.floor(task.idx / 5) + 1;
+  const round = roundForIdx(task.idx);
 
   if (step.kind === "init") {
     const system = buildDiscoveryResearchSystem({
@@ -461,7 +462,7 @@ async function executeStep(
   if (step.kind === "score_sync") {
     const scorer =
       task.status === "rescoring"
-        ? pickRescorer(pickReframer(scorerOf(task)))
+        ? pickRescorer(pickReframer(task.run_id, task.idx), task.idx)
         : scorerOf(task);
     const system = buildScoringSynthesisSystem();
     const prompt = buildScoringSynthesisPrompt({
@@ -549,7 +550,7 @@ function afterIdeaSynthesis(
   idea: GeneratedIdea,
 ): { status: TaskStatus; phase_state: Record<string, unknown> } {
   if (task.status === "reframing") {
-    const rescorer = pickRescorer(pickReframer(scorerOf(task)));
+    const rescorer = pickRescorer(pickReframer(task.run_id, task.idx), task.idx);
     return {
       status: "rescoring",
       phase_state: {
