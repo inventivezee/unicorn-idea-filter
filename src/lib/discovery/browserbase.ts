@@ -213,33 +213,101 @@ function decodeDdgUrl(href: string): string {
   }
 }
 
-async function toolWebSearch(page: Page, query: string): Promise<string> {
-  await page.goto(
-    `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
-    { timeout: NAV_TIMEOUT_MS, waitUntil: "domcontentloaded" },
+interface SearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+function formatResults(results: SearchResult[], engine: string): string {
+  return (
+    results
+      .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`)
+      .join("\n") + `\n(results via ${engine})`
   );
-  const blocked = await page.$("form[action*='anomaly'], .anomaly-modal");
-  if (blocked) {
-    return "Search is temporarily rate-limited — try again in a moment or open a URL you already know.";
+}
+
+/** Google first — we're on a real browser with residential proxies, so we
+ *  look like a real user and get Google-quality results. Returns null when
+ *  Google interferes (captcha/consent/unparseable), so the caller can fall
+ *  back to DuckDuckGo instead of surfacing an error to the agent. */
+async function googleSearch(
+  page: Page,
+  query: string,
+): Promise<SearchResult[] | null> {
+  try {
+    await page.goto(
+      `https://www.google.com/search?q=${encodeURIComponent(query)}&num=10&hl=en`,
+      { timeout: NAV_TIMEOUT_MS, waitUntil: "domcontentloaded" },
+    );
+    if (page.url().includes("/sorry/")) return null; // rate-limit interstitial
+    // EU-style consent wall (rare on US residential IPs, cheap to handle).
+    const consent = await page.$("#L2AGLb, button[aria-label*='Accept']");
+    if (consent) {
+      await consent.click().catch(() => {});
+      await page.waitForLoadState("domcontentloaded").catch(() => {});
+    }
+    if (await page.$("#captcha-form, form[action*='sorry']")) return null;
+    const results = await page.$$eval("#search h3", (headings) =>
+      headings.slice(0, 12).map((h) => {
+        const a = h.closest("a") as HTMLAnchorElement | null;
+        // Snippet: the nearest result container's descriptive text block.
+        const container = h.closest("div[data-hveid], div.g");
+        const snippetEl = container?.querySelector(
+          "div[data-sncf], .VwiC3b, div[style*='-webkit-line-clamp']",
+        );
+        return {
+          title: h.textContent?.trim() ?? "",
+          url: a?.href ?? "",
+          snippet: snippetEl?.textContent?.trim() ?? "",
+        };
+      }),
+    );
+    const usable = results.filter(
+      (r) => r.title && /^https?:\/\//i.test(r.url) && !r.url.includes("google."),
+    );
+    return usable.length > 0 ? usable.slice(0, 8) : null;
+  } catch {
+    return null;
   }
-  const results = await page.$$eval(".result", (nodes) =>
-    nodes.slice(0, 8).map((n) => {
-      const a = n.querySelector<HTMLAnchorElement>(".result__a");
-      const s = n.querySelector(".result__snippet");
-      return {
-        title: a?.textContent?.trim() ?? "",
-        url: a?.href ?? "",
-        snippet: s?.textContent?.trim() ?? "",
-      };
-    }),
-  );
-  const usable = results
-    .filter((r) => r.title && r.url)
-    .map((r) => ({ ...r, url: decodeDdgUrl(r.url) }));
-  if (usable.length === 0) return "No results found for that query.";
-  return usable
-    .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`)
-    .join("\n");
+}
+
+async function ddgSearch(
+  page: Page,
+  query: string,
+): Promise<SearchResult[] | null> {
+  try {
+    await page.goto(
+      `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+      { timeout: NAV_TIMEOUT_MS, waitUntil: "domcontentloaded" },
+    );
+    if (await page.$("form[action*='anomaly'], .anomaly-modal")) return null;
+    const results = await page.$$eval(".result", (nodes) =>
+      nodes.slice(0, 8).map((n) => {
+        const a = n.querySelector<HTMLAnchorElement>(".result__a");
+        const s = n.querySelector(".result__snippet");
+        return {
+          title: a?.textContent?.trim() ?? "",
+          url: a?.href ?? "",
+          snippet: s?.textContent?.trim() ?? "",
+        };
+      }),
+    );
+    const usable = results
+      .filter((r) => r.title && r.url)
+      .map((r) => ({ ...r, url: decodeDdgUrl(r.url) }));
+    return usable.length > 0 ? usable : null;
+  } catch {
+    return null;
+  }
+}
+
+async function toolWebSearch(page: Page, query: string): Promise<string> {
+  const google = await googleSearch(page, query);
+  if (google) return formatResults(google, "Google");
+  const ddg = await ddgSearch(page, query);
+  if (ddg) return formatResults(ddg, "DuckDuckGo — Google was unavailable");
+  return "Search is temporarily unavailable — try again in a moment or open a URL you already know.";
 }
 
 async function toolOpenPage(page: Page, url: string): Promise<string> {
