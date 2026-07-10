@@ -354,20 +354,33 @@ function formatResults(results: SearchResult[], engine: string): string {
   );
 }
 
+type SearchVertical = "web" | "news" | "scholar" | "patents";
+
+interface SearchOpts {
+  vertical: SearchVertical;
+  recency?: "week" | "month" | "year";
+  country?: string;
+}
+
 /** Google first — we're on a real browser with residential proxies, so we
  *  look like a real user and get Google-quality results. Returns null when
  *  Google interferes (captcha/consent/unparseable), so the caller can fall
- *  back to DuckDuckGo instead of surfacing an error to the agent. */
-async function googleSearch(
+ *  back to DuckDuckGo instead of surfacing an error to the agent. One SERP
+ *  per call; the paginator drives `start`. */
+async function googleSerp(
   page: Page,
   query: string,
   num: number,
+  opts: SearchOpts,
+  start: number,
 ): Promise<SearchResult[] | null> {
   try {
-    await page.goto(
-      `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en`,
-      { timeout: NAV_TIMEOUT_MS, waitUntil: "domcontentloaded" },
-    );
+    let url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${Math.min(100, num)}&hl=en`;
+    if (opts.vertical === "news") url += "&tbm=nws";
+    if (opts.recency) url += `&tbs=qdr:${opts.recency.charAt(0)}`;
+    if (opts.country) url += `&gl=${opts.country}`;
+    if (start > 0) url += `&start=${start}`;
+    await page.goto(url, { timeout: NAV_TIMEOUT_MS, waitUntil: "domcontentloaded" });
     if (page.url().includes("/sorry/")) return null; // rate-limit interstitial
     // EU-style consent wall (rare on US residential IPs, cheap to handle).
     const consent = await page.$("#L2AGLb, button[aria-label*='Accept']");
@@ -376,28 +389,164 @@ async function googleSearch(
       await page.waitForLoadState("domcontentloaded").catch(() => {});
     }
     if (await page.$("#captcha-form, form[action*='sorry']")) return null;
-    const results = await page.$$eval("#search h3", (headings) =>
-      headings.map((h) => {
-        const a = h.closest("a") as HTMLAnchorElement | null;
-        // Snippet: the nearest result container's descriptive text block.
-        const container = h.closest("div[data-hveid], div.g");
-        const snippetEl = container?.querySelector(
-          "div[data-sncf], .VwiC3b, div[style*='-webkit-line-clamp']",
-        );
+    const results =
+      opts.vertical === "news"
+        ? await page.$$eval(
+            "#search a[href^='http'], #rso a[href^='http']",
+            (anchors) =>
+              anchors.flatMap((a) => {
+                // News results are anchor cards with a heading inside.
+                const heading = a.querySelector("div[role='heading'], h3");
+                if (!heading) return [];
+                const container = a.closest("div[data-hveid]") ?? a;
+                const snippetEl = container.querySelector(
+                  ".GI74Re, div[style*='-webkit-line-clamp'], div[data-sncf]",
+                );
+                return [
+                  {
+                    title: heading.textContent?.trim() ?? "",
+                    url: (a as HTMLAnchorElement).href,
+                    snippet: snippetEl?.textContent?.trim() ?? "",
+                  },
+                ];
+              }),
+          )
+        : await page.$$eval("#search h3", (headings) =>
+            headings.map((h) => {
+              const a = h.closest("a") as HTMLAnchorElement | null;
+              // Snippet: the nearest result container's descriptive text block.
+              const container = h.closest("div[data-hveid], div.g");
+              const snippetEl = container?.querySelector(
+                "div[data-sncf], .VwiC3b, div[style*='-webkit-line-clamp']",
+              );
+              return {
+                title: h.textContent?.trim() ?? "",
+                url: a?.href ?? "",
+                snippet: snippetEl?.textContent?.trim() ?? "",
+              };
+            }),
+          );
+    return results.filter(
+      (r) => r.title && /^https?:\/\//i.test(r.url) && !r.url.includes("google."),
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** Google Scholar — .gs_rt titles/links + .gs_rs snippets. It rate-limits
+ *  aggressively; best-effort, null on interference. */
+async function scholarSerp(
+  page: Page,
+  query: string,
+  start: number,
+): Promise<SearchResult[] | null> {
+  try {
+    let url = `https://scholar.google.com/scholar?q=${encodeURIComponent(query)}&hl=en`;
+    if (start > 0) url += `&start=${start}`;
+    await page.goto(url, { timeout: NAV_TIMEOUT_MS, waitUntil: "domcontentloaded" });
+    if (page.url().includes("/sorry/")) return null;
+    if (await page.$("#gs_captcha_f, form[action*='sorry']")) return null;
+    const results = await page.$$eval(".gs_r", (nodes) =>
+      nodes.map((n) => {
+        const a = n.querySelector<HTMLAnchorElement>(".gs_rt a");
+        const s = n.querySelector(".gs_rs");
         return {
-          title: h.textContent?.trim() ?? "",
+          title: a?.textContent?.trim() ?? "",
           url: a?.href ?? "",
-          snippet: snippetEl?.textContent?.trim() ?? "",
+          snippet: s?.textContent?.trim() ?? "",
         };
       }),
     );
-    const usable = results.filter(
-      (r) => r.title && /^https?:\/\//i.test(r.url) && !r.url.includes("google."),
+    // No google.-domain exclusion here: [CITATION]-only rows simply have no
+    // link and fall out on the URL check.
+    return results.filter((r) => r.title && /^https?:\/\//i.test(r.url));
+  } catch {
+    return null;
+  }
+}
+
+/** Google Patents is a JS-heavy SPA — load it, give its XHRs a beat, then
+ *  parse whatever result items rendered. Best-effort by design; single
+ *  SERP (no reliable pagination params). */
+async function patentsSearch(
+  page: Page,
+  query: string,
+  num: number,
+): Promise<SearchResult[] | null> {
+  try {
+    await page.goto(
+      `https://patents.google.com/?q=${encodeURIComponent(query)}`,
+      { timeout: NAV_TIMEOUT_MS, waitUntil: "domcontentloaded" },
     );
+    await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => {});
+    const results = await page.$$eval(
+      "search-result-item, article.result, article",
+      (nodes) =>
+        nodes.flatMap((n) => {
+          const a =
+            n.querySelector<HTMLAnchorElement>("a[href*='/patent/']") ??
+            n.querySelector<HTMLAnchorElement>("a[href]");
+          if (!a) return [];
+          const title = (
+            n.querySelector("h3, h4, .result-title")?.textContent ??
+            a.textContent ??
+            ""
+          )
+            .replace(/\s+/g, " ")
+            .trim();
+          const snippet = (
+            n.querySelector(".abstract, .snippet, .htmlContent")?.textContent ??
+            ""
+          )
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 300);
+          return [{ title, url: a.href, snippet }];
+        }),
+    );
+    const seen = new Set<string>();
+    const usable = results.filter((r) => {
+      if (!r.title || !/^https?:\/\//i.test(r.url) || seen.has(r.url)) {
+        return false;
+      }
+      seen.add(r.url);
+      return true;
+    });
     return usable.length > 0 ? usable.slice(0, num) : null;
   } catch {
     return null;
   }
+}
+
+/** Google usually serves ~10 organic results per SERP no matter what num=
+ *  asks for. Make num REAL: keep fetching &start=10,20,… (dedupe by URL)
+ *  until we have `num` results, the SERPs run dry, or 5 extra pages —
+ *  whichever comes first. Null when the FIRST page yields nothing, so the
+ *  caller can fall back. */
+async function paginateSerps(
+  num: number,
+  fetchSerp: (start: number) => Promise<SearchResult[] | null>,
+): Promise<SearchResult[] | null> {
+  const seen = new Set<string>();
+  const acc: SearchResult[] = [];
+  for (let serp = 0; serp <= 5 && acc.length < num; serp++) {
+    const batch = await fetchSerp(serp * 10);
+    if (!batch || batch.length === 0) {
+      if (serp === 0) return null; // blocked or empty — caller may fall back
+      break;
+    }
+    let added = 0;
+    for (const r of batch) {
+      if (seen.has(r.url)) continue;
+      seen.add(r.url);
+      acc.push(r);
+      added += 1;
+      if (acc.length >= num) break;
+    }
+    if (added === 0) break; // pure repeats — deeper pages won't help
+  }
+  return acc.length > 0 ? acc : null;
 }
 
 async function ddgSearch(
@@ -435,44 +584,130 @@ async function toolWebSearch(
   page: Page,
   query: string,
   num: number,
+  opts: SearchOpts,
 ): Promise<string> {
-  const google = await googleSearch(page, query, num);
-  if (google) return formatResults(google, "Google");
-  const ddg = await ddgSearch(page, query, num);
-  if (ddg) return formatResults(ddg, "DuckDuckGo — Google was unavailable");
+  if (opts.vertical === "patents") {
+    const patents = await patentsSearch(page, query, num);
+    if (patents) return capResult(formatResults(patents, "Google Patents"));
+    return 'Google Patents returned nothing usable for that query — rephrase it or fall back to vertical "web".';
+  }
+  if (opts.vertical === "scholar") {
+    const scholar = await paginateSerps(num, (start) =>
+      scholarSerp(page, query, start),
+    );
+    if (scholar) return capResult(formatResults(scholar, "Google Scholar"));
+    return 'Google Scholar is blocking or empty right now — try again shortly or fall back to vertical "web".';
+  }
+  const google = await paginateSerps(num, (start) =>
+    googleSerp(page, query, num, opts, start),
+  );
+  if (google) {
+    return capResult(
+      formatResults(google, opts.vertical === "news" ? "Google News" : "Google"),
+    );
+  }
+  // DuckDuckGo can only stand in for plain web search.
+  if (opts.vertical === "web") {
+    const ddg = await ddgSearch(page, query, num);
+    if (ddg) {
+      return capResult(formatResults(ddg, "DuckDuckGo — Google was unavailable"));
+    }
+  }
   return "Search is temporarily unavailable — try again in a moment or open a URL you already know.";
+}
+
+/** "26-50" or "26" → 1-indexed inclusive range. Null when malformed. */
+function parsePdfPageRange(spec: string): { from: number; to: number } | null {
+  const m = /^(\d{1,4})(?:\s*-\s*(\d{1,4}))?$/.exec(spec.trim());
+  if (!m) return null;
+  const from = Number(m[1]);
+  const to = m[2] ? Number(m[2]) : from;
+  return from >= 1 && to >= from ? { from, to } : null;
+}
+
+/** Fetch PDF bytes THROUGH the browser first — page.context().request rides
+ *  the residential proxy and the session's cookies (paywalled/geo-fenced
+ *  reports often need both) — falling back to a plain server-side fetch. */
+async function fetchPdfBytes(
+  page: Page,
+  url: string,
+): Promise<{ data: Uint8Array; contentType: string } | null> {
+  try {
+    const res = await page
+      .context()
+      .request.get(url, { timeout: PDF_FETCH_TIMEOUT_MS });
+    if (res.ok()) {
+      return {
+        data: new Uint8Array(await res.body()),
+        contentType: res.headers()["content-type"] ?? "",
+      };
+    }
+  } catch {
+    // Fall through to the plain fetch.
+  }
+  try {
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(PDF_FETCH_TIMEOUT_MS),
+      headers: { "User-Agent": "Mozilla/5.0 (research agent)" },
+    });
+    if (!res.ok) return null;
+    return {
+      data: new Uint8Array(await res.arrayBuffer()),
+      contentType: res.headers.get("content-type") ?? "",
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Industry reports live in PDFs — extract text server-side (pdfjs, same
  *  dependency the CV upload uses client-side) instead of returning the
  *  empty innerText of Chrome's PDF viewer. */
-async function extractPdfText(url: string): Promise<string | null> {
+async function extractPdfText(
+  page: Page,
+  url: string,
+  range: { from: number; to: number } | null,
+): Promise<string | null> {
   try {
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(20_000),
-      headers: { "User-Agent": "Mozilla/5.0 (research agent)" },
-    });
-    if (!res.ok) return null;
-    const ct = res.headers.get("content-type") ?? "";
-    if (!ct.includes("pdf") && !url.toLowerCase().split("?")[0].endsWith(".pdf")) {
+    const fetched = await fetchPdfBytes(page, url);
+    if (!fetched) return null;
+    if (
+      !fetched.contentType.includes("pdf") &&
+      !url.toLowerCase().split("?")[0].endsWith(".pdf")
+    ) {
       return null;
     }
-    const data = new Uint8Array(await res.arrayBuffer());
     const pdfjs = (await import(
       "pdfjs-dist/legacy/build/pdf.mjs"
     )) as unknown as {
       getDocument: (opts: object) => { promise: Promise<PdfDoc> };
     };
-    const doc = await pdfjs.getDocument({ data, isEvalSupported: false }).promise;
+    const doc = await pdfjs.getDocument({
+      data: fetched.data,
+      isEvalSupported: false,
+    }).promise;
+    const first = Math.max(1, range?.from ?? 1);
+    if (first > doc.numPages) {
+      return `[this PDF has only ${doc.numPages} pages — the requested pdf_pages range starts beyond the end]`;
+    }
+    const last = Math.min(
+      doc.numPages,
+      range?.to ?? doc.numPages,
+      first + PDF_MAX_PAGES - 1,
+    );
     const pages: string[] = [];
-    const maxPages = Math.min(doc.numPages, 25);
-    for (let i = 1; i <= maxPages; i++) {
-      const page = await doc.getPage(i);
-      const content = await page.getTextContent();
+    for (let i = first; i <= last; i++) {
+      const pdfPage = await doc.getPage(i);
+      const content = await pdfPage.getTextContent();
       pages.push(
         (content.items as Array<{ str?: string }>)
           .map((item) => item.str ?? "")
           .join(" "),
+      );
+    }
+    if (last < doc.numPages) {
+      pages.push(
+        `[extracted pages ${first}-${last} of ${doc.numPages} — call open_page again with pdf_pages (e.g. "${last + 1}-${Math.min(doc.numPages, last + 25)}") for the rest]`,
       );
     }
     const text = pages.join("\n\n").trim();
@@ -498,6 +733,41 @@ async function extractPageText(page: Page): Promise<string> {
     for (const sel of ["script", "style", "noscript", "svg", "nav", "footer"]) {
       document.querySelectorAll(sel).forEach((el) => el.remove());
     }
+    // Serialize data tables to pipe-delimited markdown IN PLACE (each
+    // <table> becomes a <pre>), so rows/columns survive innerText
+    // flattening and land in document order. Idempotent across calls:
+    // replaced tables are no longer <table> elements.
+    const tables = Array.from(document.querySelectorAll("table")).slice(0, 20);
+    for (const table of tables) {
+      if (!table.isConnected) continue; // was nested in a replaced table
+      const rows = Array.from(
+        table.querySelectorAll(
+          ":scope > tr, :scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr",
+        ),
+      ).slice(0, 200);
+      const lines: string[] = [];
+      for (const tr of rows) {
+        const cells = Array.from(
+          tr.querySelectorAll(":scope > th, :scope > td"),
+        ).map((cell) => {
+          const el = cell as HTMLElement;
+          return (el.innerText || el.textContent || "")
+            .replace(/\s+/g, " ")
+            .replace(/\|/g, "/")
+            .trim();
+        });
+        if (cells.length === 0) continue;
+        lines.push(`| ${cells.join(" | ")} |`);
+        if (lines.length === 1) {
+          // Header separator (header row = th cells / first tr).
+          lines.push(`| ${cells.map(() => "---").join(" | ")} |`);
+        }
+      }
+      if (lines.length < 2) continue; // empty table — leave it alone
+      const pre = document.createElement("pre");
+      pre.textContent = `\n${lines.join("\n")}\n`;
+      table.replaceWith(pre);
+    }
     // Prefer the page's main content over its chrome (menus, cookie
     // banners, related-article rails all count against the result cap).
     const main = document.querySelector("article, main, [role='main']");
@@ -507,38 +777,161 @@ async function extractPageText(page: Page): Promise<string> {
   });
 }
 
-async function toolOpenPage(page: Page, url: string): Promise<string> {
+async function toolOpenPage(
+  page: Page,
+  url: string,
+  fromChar: number,
+  pdfPages?: string,
+): Promise<string> {
   if (!/^https?:\/\//i.test(url)) {
     return "Error: only absolute http(s) URLs can be opened.";
   }
+  let range: { from: number; to: number } | null = null;
+  if (pdfPages) {
+    range = parsePdfPageRange(pdfPages);
+    if (!range) return 'Error: pdf_pages must be a 1-indexed range like "26-50".';
+  }
+  const cacheKey = range ? `${url} pages=${pdfPages}` : url;
+  // Continuation reads serve from the LRU without re-navigating (which
+  // would also lose any scroll/click state the agent built up).
+  if (fromChar > 0) {
+    const cached = cacheGet(cacheKey);
+    if (cached !== undefined) return windowResult(cached, fromChar);
+  }
   // PDFs first — Chrome's viewer renders no extractable innerText.
-  if (url.toLowerCase().split("?")[0].endsWith(".pdf")) {
-    const pdfText = await extractPdfText(url);
-    if (pdfText) return capResult(readableText(pdfText));
+  if (range || url.toLowerCase().split("?")[0].endsWith(".pdf")) {
+    const pdfText = await extractPdfText(page, url, range);
+    if (pdfText) {
+      const clean = readableText(pdfText);
+      cachePut(cacheKey, clean);
+      return windowResult(clean, fromChar);
+    }
     return "This PDF couldn't be read — try a different source for the same data.";
   }
-  const response = await page.goto(url, {
-    timeout: NAV_TIMEOUT_MS,
-    waitUntil: "domcontentloaded",
-  });
-  const contentType = response?.headers()["content-type"] ?? "";
+  let contentType = "";
+  let timedOut = false;
+  try {
+    const response = await page.goto(url, {
+      timeout: NAV_TIMEOUT_MS,
+      waitUntil: "domcontentloaded",
+    });
+    contentType = response?.headers()["content-type"] ?? "";
+  } catch (err) {
+    // Slow page ≠ dead page: salvage whatever DOM already exists.
+    if (err instanceof Error && err.name === "TimeoutError") timedOut = true;
+    else throw err;
+  }
   if (contentType.includes("pdf")) {
-    const pdfText = await extractPdfText(url);
-    if (pdfText) return capResult(readableText(pdfText));
+    const pdfText = await extractPdfText(page, url, range);
+    if (pdfText) {
+      const clean = readableText(pdfText);
+      cachePut(cacheKey, clean);
+      return windowResult(clean, fromChar);
+    }
     return "This PDF couldn't be read — try a different source for the same data.";
   }
   let cleaned = readableText(await extractPageText(page));
-  if (cleaned.length < 200) {
+  if (cleaned.length < 200 && !timedOut) {
     // JS-rendered page: give the app a moment to paint, then re-extract.
     await page
       .waitForLoadState("networkidle", { timeout: 6_000 })
       .catch(() => {});
     cleaned = readableText(await extractPageText(page));
   }
-  if (!cleaned) return "The page rendered no readable text.";
-  return capResult(cleaned);
+  if (!cleaned) {
+    return timedOut
+      ? "Error: the page took too long to load and rendered no readable text — try a different source."
+      : "The page rendered no readable text.";
+  }
+  extractedLenByPage.set(page, cleaned.length);
+  cachePut(cacheKey, cleaned);
+  const body = windowResult(cleaned, fromChar);
+  return timedOut ? `[page load timed out — partial content]\n\n${body}` : body;
 }
 
+/** Scroll N viewport-heights, let lazy loaders settle, and return only the
+ *  text revealed since this page's last extraction watermark. */
+async function toolScrollPage(page: Page, pages: number): Promise<string> {
+  if (page.url() === "about:blank") {
+    return "Error: no page is open yet — call open_page first.";
+  }
+  for (let i = 0; i < pages; i++) {
+    await page
+      .evaluate(() => window.scrollBy(0, window.innerHeight))
+      .catch(() => {});
+    await page.waitForTimeout(700); // lazy loaders fire on scroll — let them land
+  }
+  const cleaned = readableText(await extractPageText(page));
+  const prev = extractedLenByPage.get(page) ?? 0;
+  const plural = pages === 1 ? "page" : "pages";
+  if (cleaned.length <= prev) {
+    extractedLenByPage.set(page, cleaned.length); // page shrank/rerendered — reset
+    return `[scrolled ${pages} ${plural} — no new text revealed; the page may already be fully loaded]`;
+  }
+  const tail = cleaned.slice(prev);
+  const out = tail.slice(0, TOOL_RESULT_CHAR_CAP);
+  extractedLenByPage.set(page, prev + out.length);
+  cachePut(page.url(), cleaned);
+  const more = tail.length > out.length ? "; scroll again for more" : "";
+  return `${out}\n\n[scrolled ${pages} ${plural} — ${out.length} new chars${more}]`;
+}
+
+/** Click the first VISIBLE element matching `text` (raw text match first,
+ *  then button/link accessible names), wait for the page to settle, and
+ *  return the fresh page text. Content failures return error text. */
+async function toolClickElement(page: Page, text: string): Promise<string> {
+  if (page.url() === "about:blank") {
+    return "Error: no page is open yet — call open_page first.";
+  }
+  const candidates = [
+    page.getByText(text, { exact: false }).filter({ visible: true }).first(),
+    page.getByRole("button", { name: text, exact: false }).first(),
+    page.getByRole("link", { name: text, exact: false }).first(),
+  ];
+  let clicked = false;
+  let lastErr = "no match";
+  for (const candidate of candidates) {
+    try {
+      await candidate.click({ timeout: 8_000 });
+      clicked = true;
+      break;
+    } catch (err) {
+      lastErr = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+    }
+  }
+  if (!clicked) {
+    return `Error: couldn't click an element matching "${text}" (${lastErr.slice(0, 160)}). Try the element's exact visible text, or scroll_page to bring it into view.`;
+  }
+  await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => {});
+  await page.waitForTimeout(800); // SPA transitions keep painting after "loaded"
+  const cleaned = readableText(await extractPageText(page));
+  if (!cleaned) return "Clicked — but the page now renders no readable text.";
+  extractedLenByPage.set(page, cleaned.length);
+  cachePut(page.url(), cleaned);
+  return windowResult(cleaned, 0);
+}
+
+/** Return the [from, from+CAP) window of a long text with a continuation
+ *  footer — never a dead-end truncation notice. */
+function windowResult(full: string, from: number): string {
+  const total = full.length;
+  if (total === 0) return full;
+  const start = Math.min(Math.max(0, from), total);
+  if (start >= total && start > 0) {
+    return `[from_char ${from} is past the end — the page text is ${total} chars long]`;
+  }
+  const end = Math.min(total, start + TOOL_RESULT_CHAR_CAP);
+  const slice = full.slice(start, end);
+  if (end < total) {
+    return `${slice}\n\n[chars ${start}-${end} of ${total} — call open_page with the same url and from_char: ${end} to continue]`;
+  }
+  return start > 0
+    ? `${slice}\n\n[chars ${start}-${end} of ${total} — end of page text]`
+    : slice;
+}
+
+/** Hard per-result cap for outputs with no continuation mechanism
+ *  (search-result lists). */
 function capResult(text: string): string {
   return text.length > TOOL_RESULT_CHAR_CAP
     ? `${text.slice(0, TOOL_RESULT_CHAR_CAP)}\n\n[truncated at ${TOOL_RESULT_CHAR_CAP} chars]`
@@ -569,25 +962,77 @@ export async function execBrowserTool(
       const num = Number.isFinite(rawNum)
         ? Math.min(100, Math.max(10, Math.round(rawNum)))
         : 10;
-      return { kind: "text", text: await toolWebSearch(session.page, q, num) };
+      const vertical: SearchVertical =
+        args.vertical === "news" ||
+        args.vertical === "scholar" ||
+        args.vertical === "patents"
+          ? args.vertical
+          : "web";
+      const recency =
+        args.recency === "week" ||
+        args.recency === "month" ||
+        args.recency === "year"
+          ? args.recency
+          : undefined;
+      const country =
+        typeof args.country === "string" && /^[a-zA-Z]{2}$/.test(args.country.trim())
+          ? args.country.trim().toLowerCase()
+          : undefined;
+      return {
+        kind: "text",
+        text: await toolWebSearch(session.page, q, num, {
+          vertical,
+          recency,
+          country,
+        }),
+      };
     }
     if (name === "open_page") {
       const url = typeof args.url === "string" ? args.url.slice(0, 2000) : "";
-      return { kind: "text", text: await toolOpenPage(session.page, url) };
+      const rawFrom = Number(args.from_char);
+      const fromChar =
+        Number.isFinite(rawFrom) && rawFrom > 0 ? Math.floor(rawFrom) : 0;
+      const pdfPages =
+        typeof args.pdf_pages === "string" && args.pdf_pages.trim()
+          ? args.pdf_pages.trim().slice(0, 20)
+          : undefined;
+      return {
+        kind: "text",
+        text: await toolOpenPage(session.page, url, fromChar, pdfPages),
+      };
+    }
+    if (name === "scroll_page") {
+      const rawPages = Number(args.pages);
+      const pages = Number.isFinite(rawPages)
+        ? Math.min(10, Math.max(1, Math.round(rawPages)))
+        : 1;
+      return { kind: "text", text: await toolScrollPage(session.page, pages) };
+    }
+    if (name === "click_element") {
+      const text =
+        typeof args.text === "string" ? args.text.trim().slice(0, 300) : "";
+      if (!text) {
+        return {
+          kind: "text",
+          text: "Error: click_element needs the visible text of the element to click.",
+        };
+      }
+      return { kind: "text", text: await toolClickElement(session.page, text) };
     }
     if (name === "view_page") {
       if (!session.vision) {
         return { kind: "text", text: "Error: view_page isn't available to this agent." };
       }
+      const fullPage = args.full_page === true;
       const shot = await session.page.screenshot({
         type: "jpeg",
-        quality: 70,
-        fullPage: false,
+        quality: 80,
+        fullPage,
       });
       return {
         kind: "image",
         dataB64: shot.toString("base64"),
-        note: `Screenshot of ${session.page.url()}`,
+        note: `Screenshot of ${session.page.url()}${fullPage ? " (full page)" : ""}`,
       };
     }
     return { kind: "text", text: `Error: unknown tool "${name}".` };

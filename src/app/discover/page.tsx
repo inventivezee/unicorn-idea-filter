@@ -8,7 +8,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, EmptyState, PageHeader, Section } from "@/components/ui";
-import { TASKS_PER_RUN } from "@/lib/discovery/config";
+import { MAX_TASKS_PER_RUN } from "@/lib/discovery/config";
 import { useStore } from "@/lib/store";
 
 interface TaskView {
@@ -59,6 +59,7 @@ export default function DiscoverPage() {
   const { cloud, hydrated, entitlements } = useStore();
   const [runs, setRuns] = useState<RunView[]>([]);
   const [guidelines, setGuidelines] = useState("");
+  const [candidates, setCandidates] = useState(1);
   const [useBackground, setUseBackground] = useState(true);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,7 +116,11 @@ export default function DiscoverPage() {
       const res = await fetch("/api/discovery", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ guidelines, useFounderBackground: useBackground }),
+        body: JSON.stringify({
+          guidelines,
+          candidates,
+          useFounderBackground: useBackground,
+        }),
       });
       const data = (await res.json().catch(() => null)) as {
         error?: string;
@@ -201,7 +206,7 @@ export default function DiscoverPage() {
       ) : (
         <Section
           title="Start a discovery run"
-          description={`Generates ~${TASKS_PER_RUN} candidate ideas across model vendors with live browser research, scores each one, and publishes the results to your pipeline. Runs take a while — close the tab, we'll email you.`}
+          description="Develops one candidate idea DEEPLY (up to three): live browser research, adversarial scoring, and up to 10 automatic reframe-and-rescore rescue loops. Quality over quantity. Runs take a while — close the tab, we'll email you."
         >
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-zinc-500">
@@ -216,6 +221,29 @@ export default function DiscoverPage() {
               className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
             />
           </label>
+          <div className="mt-3">
+            <span className="mb-1 block text-xs font-medium text-zinc-500">
+              Candidate ideas this run
+            </span>
+            <div className="flex gap-1.5">
+              {Array.from({ length: MAX_TASKS_PER_RUN }, (_, i) => i + 1).map(
+                (n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setCandidates(n)}
+                    className={`rounded border px-3 py-1 text-sm ${
+                      candidates === n
+                        ? "border-cyan-500 bg-cyan-50 text-cyan-700"
+                        : "border-zinc-300 bg-white text-zinc-600 hover:border-zinc-400"
+                    }`}
+                  >
+                    {n === 1 ? "1 (deepest)" : n}
+                  </button>
+                ),
+              )}
+            </div>
+          </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {INDUSTRY_CHIPS.map((chip) => (
               <button

@@ -51,16 +51,26 @@ export const GENERATORS: DiscoveryModel[] = [
 
 /** Run composition (owner-specified): 20 candidates — 30% Fable 5, 30%
  *  GPT-5.6 Sol, the rest evenly split across the OpenRouter panel. */
-export const TASKS_PER_RUN = 40;
-const HOUSE_SLOTS = Math.ceil(TASKS_PER_RUN * 0.3); // 6 each
+/** Quality over quantity (owner decision): a discovery run develops ONE
+ *  candidate deeply by default, up to three. House models (Fable 5 and
+ *  GPT-5.6 Sol) take the first two slots; slot three samples the
+ *  OpenRouter panel for diversity. */
+export const DEFAULT_TASKS_PER_RUN = 1;
+export const MAX_TASKS_PER_RUN = 3;
 
-export function buildRunPanel(): DiscoveryModel[] {
-  const panel: DiscoveryModel[] = [];
-  for (let i = 0; i < HOUSE_SLOTS; i++) panel.push(GEN_OPENAI);
-  for (let i = 0; i < HOUSE_SLOTS; i++) panel.push(GEN_ANTHROPIC);
-  const rest = TASKS_PER_RUN - panel.length;
-  for (let i = 0; i < rest; i++) {
-    panel.push(OPENROUTER_GENERATORS[i % OPENROUTER_GENERATORS.length]);
+export function buildRunPanel(count: number): DiscoveryModel[] {
+  const n = Math.min(MAX_TASKS_PER_RUN, Math.max(1, Math.round(count)));
+  const house =
+    Math.random() < 0.5
+      ? [GEN_ANTHROPIC, GEN_OPENAI]
+      : [GEN_OPENAI, GEN_ANTHROPIC];
+  const panel = house.slice(0, n);
+  if (n === 3) {
+    panel.push(
+      OPENROUTER_GENERATORS[
+        Math.floor(Math.random() * OPENROUTER_GENERATORS.length)
+      ],
+    );
   }
   return panel;
 }
@@ -68,7 +78,7 @@ export function buildRunPanel(): DiscoveryModel[] {
 /** Which occurrence of its model a slot is (1-based) — feeds the "pick a
  *  different wedge than your earlier attempt" diversity hint. */
 export function roundForIdx(idx: number): number {
-  const panel = buildRunPanel();
+  const panel = buildRunPanel(MAX_TASKS_PER_RUN);
   const model = panel[idx]?.model;
   let n = 1;
   for (let i = 0; i < idx; i++) {
@@ -81,8 +91,12 @@ export function roundForIdx(idx: number): number {
 export const SCORER_OPENAI: DiscoveryModel = {
   provider: "openai", model: "gpt-5.6-sol", vendor: "openai", vision: true,
 };
+/** Scoring runs on the house flagships only (owner decision): Fable 5 at
+ *  max effort or GPT-5.6 Sol — Opus 4.8 remains solely Fable's built-in
+ *  refusal fallback. Cross-vendor rule unchanged: Fable never scores a
+ *  Fable-generated idea. */
 export const SCORER_ANTHROPIC: DiscoveryModel = {
-  provider: "anthropic", model: "claude-opus-4-8", vendor: "anthropic", vision: true,
+  provider: "anthropic", model: "claude-fable-5", vendor: "anthropic", vision: true,
 };
 
 // Reframers (user-fixed): Fable 5 max or GPT-5.6 Sol pro-mode.
@@ -148,11 +162,17 @@ export function pickRescorer(
 export const TURN_CAPS = {
   research: 300,
   synth: 20,    // generation-synthesis SUBMITS (polls are free reads)
-  resynth: 20,  // reframe-synthesis submits (own budget — never starved by gen)
+  resynth: 40,  // reframe-synthesis submits (own budget — never starved by gen)
   score: 150,   // the adversarial validator gets real depth, not 2/3 of it
-  reframe: 150,
-  rescore: 150,
+  reframe: 600, // shared across up to MAX_REFRAME_LOOPS rescue loops
+  rescore: 600,
 } as const;
+
+/** Rescue loops: reframe → rescore, repeated until the idea passes or the
+ *  loop/turn budget is spent. Every loop is durably recorded
+ *  (discovery_events kind 'reframe_loop', excluded from pruning) for
+ *  future analysis. */
+export const MAX_REFRAME_LOOPS = 10;
 export type TurnPhase = keyof typeof TURN_CAPS;
 
 /** Hard ceiling on total turns across ALL tasks in a run (20 tasks × ~200

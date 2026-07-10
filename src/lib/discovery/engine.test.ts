@@ -6,7 +6,8 @@ import type { AnalyzeResponse, GateId } from "@/lib/types";
 import {
   GENERATORS,
   OPENROUTER_GENERATORS,
-  TASKS_PER_RUN,
+  DEFAULT_TASKS_PER_RUN,
+  MAX_TASKS_PER_RUN,
   buildRunPanel,
   roundForIdx,
   SCORER_ANTHROPIC,
@@ -137,29 +138,48 @@ describe("cross-vendor scoring policy", () => {
   });
 });
 
-describe("run panel composition", () => {
-  it("has 20 slots: >=30% Fable, >=30% Sol, rest evenly split", () => {
-    const panel = buildRunPanel();
-    expect(panel.length).toBe(TASKS_PER_RUN);
-    expect(panel.length).toBeGreaterThanOrEqual(20);
-    const count = (model: string) =>
-      panel.filter((m) => m.model === model).length;
-    expect(count("claude-fable-5") / panel.length).toBeGreaterThanOrEqual(0.3);
-    expect(count("gpt-5.6-sol") / panel.length).toBeGreaterThanOrEqual(0.3);
-    const otherCounts = OPENROUTER_GENERATORS.map((m) => count(m.model));
-    // Evenly distributed: all equal.
-    expect(new Set(otherCounts).size).toBe(1);
-    expect(otherCounts[0]).toBeGreaterThan(0);
+describe("run panel composition (quality mode: 1-3 deep candidates)", () => {
+  const HOUSE = ["claude-fable-5", "gpt-5.6-sol"];
+
+  it("defaults are sane: 1 candidate, 3 max", () => {
+    expect(DEFAULT_TASKS_PER_RUN).toBe(1);
+    expect(MAX_TASKS_PER_RUN).toBe(3);
   });
 
-  it("roundForIdx numbers each model's occurrences from 1", () => {
-    const panel = buildRunPanel();
-    const seen = new Map<string, number>();
-    panel.forEach((m, idx) => {
-      const n = (seen.get(m.model) ?? 0) + 1;
-      seen.set(m.model, n);
-      expect(roundForIdx(idx)).toBe(n);
-    });
+  it("1 candidate → a single house model", () => {
+    for (let i = 0; i < 50; i++) {
+      const panel = buildRunPanel(1);
+      expect(panel.length).toBe(1);
+      expect(HOUSE).toContain(panel[0].model);
+    }
+  });
+
+  it("2 candidates → exactly Fable + Sol", () => {
+    for (let i = 0; i < 50; i++) {
+      const models = buildRunPanel(2).map((m) => m.model);
+      expect(models.length).toBe(2);
+      expect(new Set(models)).toEqual(new Set(HOUSE));
+    }
+  });
+
+  it("3 candidates → both house models + one OpenRouter generator", () => {
+    for (let i = 0; i < 50; i++) {
+      const panel = buildRunPanel(3);
+      expect(panel.length).toBe(3);
+      const models = panel.map((m) => m.model);
+      expect(models).toContain("claude-fable-5");
+      expect(models).toContain("gpt-5.6-sol");
+      expect(OPENROUTER_GENERATORS.map((m) => m.model)).toContain(models[2]);
+    }
+  });
+
+  it("clamps out-of-range counts", () => {
+    expect(buildRunPanel(0).length).toBe(1);
+    expect(buildRunPanel(99).length).toBe(3);
+  });
+
+  it("roundForIdx is 1 for every slot (each model appears once)", () => {
+    for (let idx = 0; idx < 3; idx++) expect(roundForIdx(idx)).toBe(1);
   });
 });
 
@@ -238,7 +258,7 @@ describe("verdictDecision / verdictPasses", () => {
 // Loop-state trimming — history must fit the per-task budget without ever
 // losing the system prompt or the first user prompt.
 // ---------------------------------------------------------------------------
-const BIG = "x".repeat(5000);
+const BIG = "x".repeat(Math.ceil(TASK_STATE_CHAR_BUDGET / 12));
 
 describe("trimLoopState", () => {
   it("trims an openrouter state under budget, preserving system + first user", () => {
@@ -338,12 +358,12 @@ describe("normalizeGeneratedIdea", () => {
       ...valid,
       name: "N".repeat(300),
       domain: "D".repeat(300),
-      thesisNotes: "T".repeat(10_000),
+      thesisNotes: "T".repeat(30_000),
     });
     expect(idea).not.toBeNull();
     expect(idea!.name).toHaveLength(80);
     expect(idea!.domain).toHaveLength(200);
-    expect(idea!.thesisNotes).toHaveLength(6000);
+    expect(idea!.thesisNotes).toHaveLength(20000);
   });
 
   it("trims whitespace and drops non-string fields to empty", () => {

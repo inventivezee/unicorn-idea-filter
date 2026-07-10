@@ -49,6 +49,7 @@ import type {
 import {
   BB_RUN_MINUTES_CAP,
   BB_SESSION_TIMEOUT_SECONDS,
+  MAX_REFRAME_LOOPS,
   WORST_TURN_MS,
   PASSING_DECISIONS,
   PHASE_DEADLINE_MS,
@@ -660,7 +661,22 @@ async function executeStep(
   const isRescore = task.status === "rescoring";
   const attempt = ps.reframeAttempt ?? 0;
   const passes = verdictPasses(verdict);
-  if (isRescore && !passes && attempt < 3) {
+  // Every scoring loop is durably recorded for future analysis (excluded
+  // from event pruning).
+  await logEvent(
+    ctx.admin,
+    ctx.run.id,
+    task.idx,
+    "reframe_loop",
+    JSON.stringify({
+      attempt,
+      idea: ps.idea!.name,
+      decision: verdictDecision(verdict),
+      passes,
+      summary: verdict.summary?.slice(0, 1200) ?? "",
+    }),
+  );
+  if (isRescore && !passes && attempt < MAX_REFRAME_LOOPS) {
     return {
       status: "reframing",
       phase_state: {
@@ -711,7 +727,13 @@ async function executeStep(
       } as Record<string, unknown>,
     };
   }
-  return { status: "done", phase_state: {} };
+  return {
+    status: "done",
+    // The loop trail survives the task for future analysis.
+    phase_state: (ps.reframeHistory?.length
+      ? { loops: ps.reframeHistory }
+      : {}) as Record<string, unknown>,
+  };
 }
 
 /** After generation/reframe synthesis lands: route to scoring/rescoring. */

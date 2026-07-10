@@ -318,6 +318,7 @@ export async function pruneEvents(admin: SupabaseClient): Promise<void> {
     await admin
       .from("discovery_events")
       .delete()
+      .neq("kind", "reframe_loop") // loop records are analysis data — keep
       .lt("created_at", new Date(Date.now() - 14 * 86400_000).toISOString());
   } catch {
     // Best-effort.

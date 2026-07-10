@@ -76,7 +76,7 @@ export function buildDiscoveryResearchSystem(opts: {
 }): string {
   return `You are an elite startup scout inside the "Unicorn Idea Filter". Your mission: through REAL market research, originate ONE startup idea with a credible path to a $1B+ (unicorn/IPO-scale) company.
 
-You have browser tools — web_search, open_page, and (if you can see images) view_page for screenshots of charts, tables, and product UIs — running on a real browser. Use them extensively: market sizes, funding activity, emerging pain points, competitive gaps, regulatory shifts, technology inflections. Ground every claim in what you actually find; do not invent statistics.
+You have a REAL browser with powerful tools: web_search (Google; set num_results 10-100, plus optional vertical: news/scholar/patents, recency, country), open_page (reads pages AND full PDFs; long documents paginate — follow the from_char/pdf_pages continuation hints in the footers), scroll_page (reveal lazy-loaded content: reviews, feeds, tables), click_element (open pricing tabs, 'load more', accordions), and — if you can see images — view_page (screenshot; full_page: true for whole-page charts and tables). Use them extensively: market sizes, funding activity, emerging pain points, competitive gaps, regulatory shifts, technology inflections. Ground every claim in what you actually find; do not invent statistics.
 
 The idea will later be scored by an independent evaluator against this instrument:
 
@@ -135,7 +135,7 @@ export function buildCritiqueSystem(): string {
 // Scoring — research loop + synthesis reusing the canonical evaluator.
 // ---------------------------------------------------------------------------
 export function buildScoringResearchSystem(idea: GeneratedIdea): string {
-  return `You are the research arm of a rigorous venture evaluator. You will soon score this startup idea against a fixed instrument — first, gather INDEPENDENT evidence with your browser tools (web_search, open_page, and view_page for visual content like charts and pricing tables): validate or refute the market-size claims, find real competitors, check pricing norms, funding activity, and why-now signals. Be adversarial: hunt for the evidence that would KILL this idea, not just support it.
+  return `You are the research arm of a rigorous venture evaluator. You will soon score this startup idea against a fixed instrument — first, gather INDEPENDENT evidence. You have a REAL browser with powerful tools: web_search (Google; set num_results 10-100, plus optional vertical: news/scholar/patents, recency, country), open_page (reads pages AND full PDFs; long documents paginate — follow the from_char/pdf_pages continuation hints in the footers), scroll_page (reveal lazy-loaded content: reviews, feeds, tables), click_element (open pricing tabs, 'load more', accordions), and — if you can see images — view_page (screenshot; full_page: true for whole-page charts and tables). Use them to: validate or refute the market-size claims, find real competitors, check pricing norms, funding activity, and why-now signals. Be adversarial: hunt for the evidence that would KILL this idea, not just support it.
 
 Idea under evaluation:
 Name: ${idea.name}
@@ -198,7 +198,7 @@ export function buildReframeResearchSystem(opts: {
   verdictSummary: string;
   history?: Array<{ name: string; summary: string }>;
 }): string {
-  return `You rescue startup ideas that failed a venture-scale evaluation. The instrument judged this idea too weak; your job is to find — through REAL browser research (web_search, open_page, view_page) — a substantive reframe that attacks the verdict's specific weaknesses: a different buyer, wedge, business model, or scope that clears the bar the original missed.
+  return `You rescue startup ideas that failed a venture-scale evaluation. The instrument judged this idea too weak; your job is to find — through REAL browser research (search verticals, page reading with pagination, scrolling, clicking, PDFs, screenshots) — a substantive reframe that attacks the verdict's specific weaknesses: a different buyer, wedge, business model, or scope that clears the bar the original missed.
 
 Original idea:
 Name: ${opts.idea.name}
@@ -217,7 +217,7 @@ ${
         .join("\n\n")}`
     : ""
 }
-Research the failure points, then STOP calling tools and write a plain-text REFRAME BRIEF (under 1000 words): the pivot, the evidence it clears the failed bars, and what changed.`;
+Research the failure points, then STOP calling tools and write a plain-text REFRAME BRIEF (under 2000 words): up to THREE candidate pivots you found, each assessed against the specific bars the original failed; then your PICK — the strongest single reframe — with the evidence it clears those bars and what changed.`;
 }
 
 export function buildReframeSynthesisSystem(): string {

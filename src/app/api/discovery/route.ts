@@ -11,6 +11,8 @@ import {
 } from "@/lib/db/discovery";
 import { taskIdeaIds } from "@/lib/discovery/engine";
 import {
+  DEFAULT_TASKS_PER_RUN,
+  MAX_TASKS_PER_RUN,
   buildRunPanel,
   discoveryConfigured,
   globalDailyCap,
@@ -75,6 +77,13 @@ export async function POST(request: Request) {
       ? body.guidelines.trim().slice(0, 20000)
       : "";
   const useFounderBackground = body.useFounderBackground !== false; // default ON
+  const candidates = Math.min(
+    MAX_TASKS_PER_RUN,
+    Math.max(
+      1,
+      Math.round(Number(body.candidates) || DEFAULT_TASKS_PER_RUN),
+    ),
+  );
 
   const admin = adminClient();
   try {
@@ -128,7 +137,7 @@ export async function POST(request: Request) {
       // 3. Tasks from the weighted panel (30% Sol / 30% Fable / rest even),
       //    scorer picked cross-vendor, deterministic idea ids assigned NOW
       //    (crash-safe publishing).
-      const panel = buildRunPanel();
+      const panel = buildRunPanel(candidates);
       const rows = panel.map((generator, idx) => {
         const ids = taskIdeaIds(run.id, idx);
         return {
