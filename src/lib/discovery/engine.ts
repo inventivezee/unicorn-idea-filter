@@ -888,6 +888,7 @@ export async function advanceDiscoveryRun(
     session: null,
     overBudget: false,
     createFailed: false,
+    slotBusy: false,
   };
   // Advance several tasks CONCURRENTLY (each with its own page on the
   // shared browser) — sequential advancement dedicated a whole invocation
