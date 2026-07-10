@@ -304,9 +304,14 @@ interface StepContext {
 export interface SessionHolder {
   session: BrowserSession | null;
   overBudget: boolean;
-  /** Consecutive create failures this invocation (mirrored per-task in
-   *  bb.failCount — 3 strikes fails the task terminally). */
+  /** Hard create failure (bad keys, invalid params) — mirrored per-task in
+   *  bb.failCount; 3 strikes fails the task terminally. */
   createFailed: boolean;
+  /** The account's concurrent-session limit is taken (429) — TRANSIENT:
+   *  another invocation holds the slot; skip browser work this tick with
+   *  no strikes and try again next tick. */
+  slotBusy: boolean;
+  lastError?: string;
 }
 
 /** Executes the claimed step; returns the phase_state/status patch. */
@@ -638,6 +643,16 @@ async function advanceTask(
       // are recorded ON THE TASK so the owner can see them; three strikes
       // fails the task terminally instead of retrying forever.
       if (needsBrowser(step)) {
+        if (holder.slotBusy) {
+          // Another invocation holds the account's only session slot —
+          // leave a visible (non-terminal, non-strike) note and yield.
+          await casUpdateTask(ctx.admin, task.id, task.rev, {
+            error:
+              "Waiting for a free browser slot (Browserbase concurrent-session limit reached) — retrying automatically.",
+            claim: null,
+          });
+          return;
+        }
         if (holder.overBudget || holder.createFailed) {
           const failCount = ((task.bb?.failCount as number) ?? 0) + 1;
           const terminal = holder.overBudget || failCount >= 3;
@@ -646,7 +661,7 @@ async function advanceTask(
             error: holder.overBudget
               ? "Browser-minutes budget exhausted for this run."
               : `Browser session failed (attempt ${failCount}/3): ${String(
-                  (holder as { lastError?: string }).lastError ?? "unknown",
+                  holder.lastError ?? "unknown",
                 ).slice(0, 300)}`,
             bb: { ...task.bb, failCount },
             claim: null,
@@ -657,10 +672,17 @@ async function advanceTask(
           try {
             holder.session = await createBrowserSession();
           } catch (err) {
-            holder.createFailed = true;
-            (holder as { lastError?: string }).lastError =
-              err instanceof Error ? err.message : String(err);
-            continue; // record on the task via the branch above
+            const msg = err instanceof Error ? err.message : String(err);
+            // A concurrency-limit 429 is TRANSIENT (someone else has the
+            // slot) — never a strike. Everything else (bad keys, invalid
+            // params) is a hard failure with bounded strikes.
+            if (/429|concurrent/i.test(msg)) {
+              holder.slotBusy = true;
+            } else {
+              holder.createFailed = true;
+            }
+            holder.lastError = msg;
+            continue; // record on the task via the branches above
           }
           const minutes = Math.ceil(BB_SESSION_TIMEOUT_SECONDS / 60);
           const run = await bumpRunBudget(ctx.admin, ctx.run.id, {
