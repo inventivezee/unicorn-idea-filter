@@ -1,6 +1,7 @@
 // Public idea feed — reads only the public_ideas view (safe columns:
 // no founder data, no rationales, no private/unpublished rows).
 import { adminClient, cloudConfigured } from "@/lib/supabase/server";
+import { sectorByKey } from "@/lib/sectors";
 import type { PublicIdeaRow } from "@/lib/db/types";
 
 const PAGE_SIZE = 30;
@@ -18,6 +19,7 @@ export async function GET(request: Request) {
   // Which instrument's score ranks "top": unicorn raw_score (default) or the
   // cash-cow cc_raw_score (a view column from migration 006).
   const filter = url.searchParams.get("filter") === "cashcow" ? "cashcow" : "unicorn";
+  const sector = sectorByKey(url.searchParams.get("sector"));
 
   const admin = adminClient();
   const buildQuery = (topColumn: string) => {
@@ -25,6 +27,16 @@ export async function GET(request: Request) {
       .from("public_ideas")
       .select("*", { count: "exact" })
       .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
+    if (sector) {
+      // Keyword OR-match against domain and name. Keywords are a curated
+      // constant (src/lib/sectors.ts) — never raw user input — but escape
+      // PostgREST's or() delimiters anyway.
+      const ors = sector.keywords
+        .map((k) => k.replace(/[(),.%]/g, ""))
+        .flatMap((k) => [`domain.ilike.%${k}%`, `name.ilike.%${k}%`])
+        .join(",");
+      q = q.or(ors);
+    }
     q =
       sort === "top"
         ? q

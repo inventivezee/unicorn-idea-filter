@@ -20,6 +20,7 @@ import {
 } from "@/lib/cashcow/engine";
 import { CcDecisionChip } from "@/components/cashcow/CcSections";
 import type { PublicIdeaRow } from "@/lib/db/types";
+import { SECTORS } from "@/lib/sectors";
 import { decision, gateStatus, type Gates, type Scores } from "@/lib/engine";
 import { useStore } from "@/lib/store";
 import {
@@ -137,6 +138,7 @@ export default function ExplorePage() {
   const { hydrated, cloud, state } = useStore();
   const cashcowMode = state.settings.filterMode === "cashcow";
   const [sort, setSort] = useState<FeedSort>("new");
+  const [sector, setSector] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [ideas, setIdeas] = useState<PublicIdeaRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -152,7 +154,7 @@ export default function ExplorePage() {
     (async () => {
       try {
         const res = await fetch(
-          `/api/feed?page=${page}&sort=${sort}&filter=${cashcowMode ? "cashcow" : "unicorn"}`,
+          `/api/feed?page=${page}&sort=${sort}&filter=${cashcowMode ? "cashcow" : "unicorn"}${sector ? `&sector=${sector}` : ""}`,
           { signal: controller.signal },
         );
         if (!res.ok) {
@@ -185,7 +187,7 @@ export default function ExplorePage() {
     })();
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cloud, sort, page, reloadKey, cashcowMode]);
+  }, [cloud, sort, page, reloadKey, cashcowMode, sector]);
 
   // Mode changed → restart from page 0 so ranking matches the instrument.
   useEffect(() => {
@@ -222,6 +224,14 @@ export default function ExplorePage() {
   function changeSort(next: FeedSort) {
     if (next === sort) return;
     setSort(next);
+    setPage(0);
+    setIdeas([]);
+    setTotal(0);
+  }
+
+  function changeSector(next: string | null) {
+    if (next === sector) return;
+    setSector(next);
     setPage(0);
     setIdeas([]);
     setTotal(0);
@@ -268,6 +278,34 @@ export default function ExplorePage() {
         ) : null}
       </div>
 
+      <div className="mb-3 flex flex-wrap gap-1.5" aria-label="Sector filter">
+        <button
+          type="button"
+          onClick={() => changeSector(null)}
+          className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
+            sector === null
+              ? "border-teal-600 bg-teal-600 text-white"
+              : "border-zinc-300 bg-white text-zinc-600 hover:border-zinc-400"
+          }`}
+        >
+          All sectors
+        </button>
+        {SECTORS.map((s) => (
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => changeSector(s.key)}
+            className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
+              sector === s.key
+                ? "border-teal-600 bg-teal-600 text-white"
+                : "border-zinc-300 bg-white text-zinc-600 hover:border-zinc-400"
+            }`}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
       {error ? (
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           <span>{error}</span>
@@ -279,7 +317,9 @@ export default function ExplorePage() {
 
       {!initialLoading && !error && ideas.length === 0 ? (
         <EmptyState>
-          No public ideas yet — score one and it will show up here.
+          {sector
+            ? "No public ideas match this sector yet — try another, or clear the filter."
+            : "No public ideas yet — score one and it will show up here."}
         </EmptyState>
       ) : (
         <div className="rounded-lg border border-zinc-200 bg-white">
