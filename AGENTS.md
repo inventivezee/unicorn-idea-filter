@@ -13,7 +13,7 @@ Startup-idea scoring app, LIVE in production (Vercel **Pro** + Supabase + Stripe
 Next.js 16 App Router, TypeScript strict, Tailwind v4, Vitest. Supabase via `@supabase/ssr` (NO direct client writes — every DB write goes through service-role API routes with ownership checks in `src/lib/db/*`).
 
 - `npx tsc --noEmit && npm test && npm run build` — run all three before any commit.
-- `npm run migrate` / `migrate:status` / `migrate:baseline <v>` — applies `supabase/migrations/*.sql` to the REMOTE db via the Supabase Management API. Needs `SUPABASE_ACCESS_TOKEN` + `SUPABASE_PROJECT_REF` in `.env.local` (local-only secret, never deploy). Ad-hoc SQL: `node scripts/migrate.mjs sql "select …"`. A preflight aborts if the target db lacks `public.ideas` (the PAT can reach every project on the account — the ref is the only target selector). DB is baselined at 009; add new migrations as `010_name.sql`.
+- `npm run migrate` / `migrate:status` / `migrate:baseline <v>` — applies `supabase/migrations/*.sql` to the REMOTE db via the Supabase Management API. Needs `SUPABASE_ACCESS_TOKEN` + `SUPABASE_PROJECT_REF` in `.env.local` (local-only secret, never deploy). Ad-hoc SQL: `node scripts/migrate.mjs sql "select …"`. A preflight aborts if the target db lacks `public.ideas` (the PAT can reach every project on the account — the ref is the only target selector). DB is baselined at 009 and migrated through 011; add new migrations as `012_name.sql`.
 - Local dev has NO AI keys and NO Supabase env → runs in local-only mode. AI and cloud paths are only verifiable on the deployment. Never point local dev at the production database.
 
 ## The three instruments
@@ -26,6 +26,10 @@ Next.js 16 App Router, TypeScript strict, Tailwind v4, Vitest. Supabase via `@su
 
 Custom filter DESIGN is premium+login gated and runs a three-model background chain (`src/lib/ai/design-chain.ts`): GPT-5.5 Pro (background mode, effort xhigh) → Claude Fable 5 (effort max, via Message Batches — batches reject the `fallbacks` param; refusals retry manually on Opus) → GPT-5.5 Pro final pass. State lives in a `drafts` row; advanced by client polling (`/api/filter-design/status`) AND an every-minute Vercel cron (`/api/cron/advance-designs`, gated by `CRON_SECRET`). Terminal transitions email the owner via Resend (`src/lib/email.ts`).
 
+## Discovery (autonomous idea origination)
+
+New top-level Discover section (subscriber-gated): agents originate ~10 candidate ideas per run across five model vendors — `gpt-5.6-sol`, `claude-fable-5`, and DeepSeek/Qwen/Gemini via OpenRouter; model ids live ONLY in `src/lib/discovery/config.ts` — researching the live web through Browserbase real browsers (residential proxies; ONE session shared per cron invocation, no keepAlive). Candidates are scored through the canonical unicorn instrument under a hard cross-vendor rule (an idea is never scored by the vendor that generated it); failures get exactly one auto-reframe; everything scored publishes to the owner's pipeline and Explore (`origin='discovery'`, "Discovered" badge). State: `discovery_runs`/`discovery_tasks` (migration 011; `public_ideas` widened by exactly `origin`), advanced by a second every-minute cron `/api/cron/advance-discovery` (same `CRON_SECRET` contract). Spend protocol mirrors the design chain: turn counters bump inside the claim CAS before any provider call, 15-min lease/heartbeat on task rows, per-phase `TURN_CAPS` + `RUN_TOTAL_TURN_CAP` + a browser-minutes cap (charged pessimistically at claim time), background (pro-mode) jobs polled free at cron cadence, atomic publish at candidate-terminal with deterministic idea uuids (crash retries converge, no duplicates). `playwright-core`/`@browserbasehq/sdk` must stay LAZY-imported — module-scope imports 500'd every route that transitively touched `browserbase.ts` on Vercel — and `playwright-core` stays in `next.config.ts` `serverExternalPackages`.
+
 ## Hard invariants — do not break
 
 1. **Spend safety:** every paid provider call in the design chain must sit behind a CAS-won, budget-counted claim (`pending_submit` → `in_flight`, submit counters bumped at claim time, `MAX_SUBMITS_PER_STAGE`). Never add a provider submission outside this protocol; concurrent pollers/crons race constantly and must not double-bill.
@@ -37,10 +41,11 @@ Custom filter DESIGN is premium+login gated and runs a three-model background ch
 7. **Clarifications are instrument-tagged** (`"unicorn" | "cashcow" | "custom:<id>"`) via `hasClarificationsFor`; custom spec normalization (`normalizeCustomFilterSpec`) resequences ids `g1../c1..` and largest-remainder-rescales weights to exactly 100 — routes must use the NORMALIZED spec, never the raw client body.
 8. **Vercel-Pro-only config:** `maxDuration = 800` and the `* * * * *` cron in `vercel.json` fail the build on a Hobby account.
 9. Anonymous identity = `anon_key` (localStorage); the shared private-mode fallback key is rejected server-side (`anonKeyFromBody`) — never treat it as an ownership identity. Sign-in claims anon ideas AND drafts (auth callback).
+10. **Discovery spend:** every discovery provider call sits behind a turn-counted claim CAS on the `discovery_tasks` row — never add a provider call outside the claim protocol in `src/lib/discovery/engine.ts`. Concurrent cron invocations race constantly; the lease/heartbeat is the only thing preventing double-billing.
 
 ## Env vars
 
-Vercel (production): `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` (both required for the design chain), `NEXT_PUBLIC_SUPABASE_URL/ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `STRIPE_*`, `NEXT_PUBLIC_APP_URL`, `ADMIN_EMAILS`, `CRON_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM` (verified Resend domain).
+Vercel (production): `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` (both required for the design chain), `OPENROUTER_API_KEY` + `BROWSERBASE_API_KEY` + `BROWSERBASE_PROJECT_ID` (discovery; missing any → discovery routes 503 cleanly, cron reports disabled), `NEXT_PUBLIC_SUPABASE_URL/ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `STRIPE_*`, `NEXT_PUBLIC_APP_URL`, `ADMIN_EMAILS`, `CRON_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM` (verified Resend domain). Optional discovery brakes: `DISCOVERY_USER_DAILY_CAP` / `DISCOVERY_GLOBAL_DAILY_CAP` (unset = unlimited, per owner decision; per-run budgets still bound worst case).
 `.env.local` (local only, gitignored): `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF` — migration tooling only.
 
 ## Working conventions in this repo

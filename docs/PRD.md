@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Version** | 2.0 |
-| **Date** | July 5, 2026 |
+| **Version** | 2.1 |
+| **Date** | July 10, 2026 |
 | **Owner** | Zee (Innovate Abundance LLC) |
 | **Status** | Shipped — documents the live product including the July 2026 release |
 | **Production** | Vercel Pro + Supabase; repo `github.com/inventivezee/unicorn-idea-filter` |
@@ -53,6 +53,7 @@ Ideas are shared across instruments; each instrument keeps its own gates/scores/
 | Fork public ideas / reframe public ideas | ✓ | ✓ | ✓ | ✓ |
 | Drafts (autosave + resume) | ✓ (device-bound) | ✓ (cross-device) | ✓ | ✓ + sees all |
 | **Design custom filters** | — | — | ✓ (6 designs/day) | ✓ |
+| **Discovery runs** (autonomous idea origination) | — | — | ✓ (unlimited runs/day, one running at a time) | ✓ |
 | Private ideas | — | — | ✓ | ✓ |
 
 ---
@@ -109,6 +110,18 @@ The founder previews the result (gates, criteria, weights, provenance note) and 
 
 - **API-based migrations:** `npm run migrate` applies `supabase/migrations/*.sql` through the Supabase Management API — no more SQL-editor copy-paste. Includes status/baseline/ad-hoc-SQL commands, CLI-compatible tracking, per-migration transactions, and a wrong-project preflight guard. Production DB baselined at migration 009.
 
+### 4.7 Discovery — autonomous idea origination (July 10 follow-up)
+
+**What:** A new top-level **Discover** section where a subscriber launches a run that *originates* ideas instead of scoring their own. AI agents across five model vendors — GPT-5.6 Sol, Claude Fable 5, and DeepSeek V4 Pro / Qwen3.7 Max / Gemini 3.1 Pro via OpenRouter — research the live web through **Browserbase real browsers** (residential proxies) and generate **~10 candidate ideas per run**. Model ids live only in `src/lib/discovery/config.ts`.
+
+**Scoring & publishing:** every candidate is scored through the canonical unicorn instrument (scoring normalization shared verbatim with the analyze route) under a hard **cross-vendor rule** — an idea is never scored by the model family that wrote it. Failing candidates get exactly one auto-reframe and rescore. Everything scored lands in the owner's pipeline and publishes to Explore with `origin='discovery'` and a "Discovered" badge.
+
+**Background execution:** runs survive closed browsers via a second every-minute cron (`/api/cron/advance-discovery`, same `CRON_SECRET` contract as §4.2); one Browserbase session is shared per cron invocation (no keepAlive, self-terminating timeout); owners get a completion email.
+
+**Cost control (same discipline as §4.1):** turn counters bump inside the claim CAS *before* any provider call; 15-minute lease/heartbeat claims on `discovery_tasks`; per-phase and per-run turn caps plus a pessimistic browser-minutes budget; background (pro-mode) jobs are polled for free at cron cadence; atomic publish at candidate-terminal with deterministic idea uuids, so crash retries converge without duplicates. Optional env brakes `DISCOVERY_USER_DAILY_CAP` / `DISCOVERY_GLOBAL_DAILY_CAP` default to unlimited per product decision.
+
+**Data & config:** migration 011 adds `discovery_runs`/`discovery_tasks` and widens `public_ideas` by exactly one column (`origin`). New env: `OPENROUTER_API_KEY`, `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` — dormant-safe without them (routes 503 cleanly, cron reports disabled). The browser packages (`playwright-core`, `@browserbasehq/sdk`) are lazy-imported by requirement — module-scope imports took down every route on Vercel — with `playwright-core` in `serverExternalPackages`.
+
 ---
 
 ## 5. Non-functional requirements
@@ -125,7 +138,7 @@ The founder previews the result (gates, criteria, weights, provenance note) and 
 
 ## 6. Configuration reference
 
-**Vercel (production):** `ANTHROPIC_API_KEY` + `OPENAI_API_KEY` (both required for the chain), `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `STRIPE_SECRET_KEY` / `STRIPE_PRICE_ID` / `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_APP_URL`, `ADMIN_EMAILS`, `CRON_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`.
+**Vercel (production):** `ANTHROPIC_API_KEY` + `OPENAI_API_KEY` (both required for the chain), `OPENROUTER_API_KEY` + `BROWSERBASE_API_KEY` + `BROWSERBASE_PROJECT_ID` (discovery), `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `STRIPE_SECRET_KEY` / `STRIPE_PRICE_ID` / `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_APP_URL`, `ADMIN_EMAILS`, `CRON_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`. Optional: `DISCOVERY_USER_DAILY_CAP` / `DISCOVERY_GLOBAL_DAILY_CAP` (unset = unlimited).
 
 **Local `.env.local` (never deployed):** `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF` — migration tooling only.
 
@@ -155,3 +168,5 @@ Score history per idea (verdict trajectory), shareable verdict cards with OG ima
 | `423535d` | Vercel Pro: 800s durations + every-minute cron advances chains browserlessly |
 | `eb84e90` | Resend email notifications; first-class forking; reframes on public ideas |
 | `431fc04` | AGENTS.md project brief (agent-session onboarding) |
+| `3588acf` | Discovery: autonomous multi-vendor idea origination engine (§4.7; migration 011, second every-minute cron) |
+| `0dea7fc` | Discovery: lazy-load playwright-core + Browserbase SDK (module-scope imports 500'd every route on Vercel) |
