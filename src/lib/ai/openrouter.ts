@@ -52,6 +52,8 @@ export async function openrouterTurn(opts: {
   /** OpenRouter-normalized reasoning effort (DeepSeek/Qwen/Gemini support
    *  it; omit for models that don't). */
   reasoningEffort?: "low" | "medium" | "high";
+  /** "none" forbids tool calls while keeping defs valid for history. */
+  toolChoice?: "none";
 }): Promise<ORTurnResult> {
   try {
     const response = await client().chat.completions.create({
@@ -65,6 +67,7 @@ export async function openrouterTurn(opts: {
           >)
         : {}),
       ...(opts.tools?.length ? { tools: opts.tools } : {}),
+      ...(opts.toolChoice ? { tool_choice: opts.toolChoice } : {}),
       ...(opts.schema
         ? {
             response_format: {

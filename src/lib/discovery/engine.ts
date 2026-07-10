@@ -50,6 +50,7 @@ import {
   BB_RUN_MINUTES_CAP,
   BB_SESSION_TIMEOUT_SECONDS,
   MAX_REFRAME_LOOPS,
+  OPENROUTER_GENERATORS,
   SCORER_ANTHROPIC,
   SCORER_OPENAI,
   scoringPanel,
@@ -254,9 +255,38 @@ function phaseModel(task: DiscoveryTaskRow): DiscoveryModel {
   return panel.first;
 }
 
-function firstProviderOf(task: DiscoveryTaskRow): "anthropic" | "openai" {
-  const { first } = scoringPanel(scoringVariant(task.run_id, task.idx));
-  return first.provider === "anthropic" ? "anthropic" : "openai";
+function scoringFirstOf(task: DiscoveryTaskRow): DiscoveryModel {
+  return scoringPanel(scoringVariant(task.run_id, task.idx)).first;
+}
+
+/** THE continuity rule, in one place: a loop always finishes on the model
+ *  that started it (recorded in LoopState.model since 6ac4fc3+; older loops
+ *  fall back to a provider-shape heuristic). Mid-loop switches shipped
+ *  three provider-404 incidents — every call site must use this. */
+function guardedTurnModel(task: DiscoveryTaskRow): DiscoveryModel {
+  const model = phaseModel(task);
+  const loop = (task.phase_state as PhaseState).loop;
+  if (!loop) return model;
+  const wantKind = model.provider === "openrouter" ? "openrouter" : model.provider;
+  if (loop.kind === wantKind) {
+    return loop.model && loop.model !== model.model
+      ? { ...model, model: loop.model }
+      : model;
+  }
+  if (loop.kind === "openai") {
+    return loop.model ? { ...SCORER_OPENAI, model: loop.model } : SCORER_OPENAI;
+  }
+  if (loop.kind === "anthropic") {
+    return loop.model
+      ? { ...SCORER_ANTHROPIC, model: loop.model }
+      : SCORER_ANTHROPIC;
+  }
+  // openrouter-shaped loop under a non-openrouter phase model: reframe
+  // loops are the only openrouter creators — re-derive, prefer recorded id.
+  const reframer = pickReframer(task.run_id, task.idx);
+  const base =
+    reframer.provider === "openrouter" ? reframer : OPENROUTER_GENERATORS[0];
+  return loop.model ? { ...base, model: loop.model } : base;
 }
 
 function nextStep(task: DiscoveryTaskRow): Step | null {
@@ -486,9 +516,10 @@ async function executeStep(
       phase_state: {
         idea,
         loop: initialLoopState(
-          firstProviderOf(task), // the variant's FIRST scorer gathers evidence
+          scoringFirstOf(task).provider === "anthropic" ? "anthropic" : "openai",
           system,
           buildScoringResearchPrompt(),
+          scoringFirstOf(task).model,
         ),
       } as Record<string, unknown>,
     };
@@ -534,33 +565,25 @@ async function executeStep(
             : buildScoringResearchPrompt();
     const phase = turnKeyFor(task.status);
     const used = task.turns?.[phase] ?? 0;
-    // Continuity guard: a loop STARTED on one provider must finish on it —
-    // its serialized state is provider-shaped, and a mid-phase switch would
-    // feed that state to the wrong API (live proof: Anthropic 404 "model:
-    // gpt-5.6-sol" from verification loops in flight when the panel roles
-    // flipped). Applies to EVERY loop, verification included.
-    let turnModel = model;
-    if (ps.loop) {
-      if (ps.loop.kind === "openai" && model.provider !== "openai") {
-        turnModel = SCORER_OPENAI;
-      } else if (
-        ps.loop.kind === "anthropic" &&
-        model.provider !== "anthropic"
-      ) {
-        turnModel = SCORER_ANTHROPIC;
-      }
-    }
+    const turnModel = guardedTurnModel(task);
+    // Post-claim, `used` includes this turn; above the cap means this is
+    // the ONE forced-delivery overage the claim gate allowed: no more tool
+    // use, write the deliverable from what's gathered.
+    const forced = used > TURN_CAPS[phase];
     const result = await runResearchTurn({
       provider: turnModel.provider,
       model: turnModel.model,
       effort: turnModel.provider === "openrouter" ? undefined : "max",
       system,
       prompt,
-      state: ps.loop ?? initialLoopState(model.provider, system, prompt),
+      state:
+        ps.loop ??
+        initialLoopState(turnModel.provider, system, prompt, turnModel.model),
       session: ctx.session!,
       // Two turns of headroom left → tell the agent to finish instead of
       // letting the budget kill it mid-research.
-      wrapUp: used >= TURN_CAPS[phase] - 2,
+      wrapUp: forced || used >= TURN_CAPS[phase] - 2,
+      noTools: forced,
     });
     const patch: PhaseState = { ...ps, loop: result.state };
     if (result.done) {
@@ -577,6 +600,7 @@ async function executeStep(
       }
       patch.loop = undefined;
     }
+    if (forced) patch.forcedWrapup = true;
     return { phase_state: patch as Record<string, unknown> };
   }
 
@@ -635,7 +659,22 @@ async function executeStep(
       };
     }
     if (poll.status === "failed") {
-      throw new Error(poll.error);
+      // Clear the job id so the next claim resubmits under the capped synth
+      // budget — throwing left the id in place and the task zombie-polled
+      // (free, uncapped) until the phase deadline.
+      await logEvent(
+        ctx.admin,
+        ctx.run.id,
+        task.idx,
+        "step_error",
+        `background synthesis failed (will resubmit): ${poll.error}`,
+      );
+      return {
+        phase_state: { ...ps, synthJobId: undefined } as Record<
+          string,
+          unknown
+        >,
+      };
     }
     const idea = normalizeGeneratedIdea(poll.json);
     if (!idea) throw new Error("Synthesis returned an invalid idea shape.");
@@ -847,9 +886,10 @@ function afterIdeaSynthesis(
         reframeAttempt: ps.reframeAttempt ?? 1,
         reframeHistory: ps.reframeHistory ?? [],
         loop: initialLoopState(
-          firstProviderOf(task), // the variant's FIRST scorer gathers evidence
+          scoringFirstOf(task).provider === "anthropic" ? "anthropic" : "openai",
           buildScoringResearchSystem(idea),
           buildScoringResearchPrompt(),
+          scoringFirstOf(task).model,
         ),
       } as Record<string, unknown>,
     };
@@ -878,7 +918,7 @@ async function advanceTask(
 
       const step = nextStep(task);
       if (!step) return;
-      const model = phaseModel(task);
+      const model = guardedTurnModel(task);
       if (Date.now() + worstCaseMs(step, model.provider) > invocationDeadline) {
         return; // out of wall clock — another invocation continues
       }
@@ -889,6 +929,36 @@ async function advanceTask(
         Date.now() - new Date(task.phase_started_at).getTime() >
           PHASE_DEADLINE_MS
       ) {
+        const pd = task.phase_state as PhaseState;
+        if (
+          (task.status === "scoring" || task.status === "rescoring") &&
+          pd.verdictDraft &&
+          !pd.verdict
+        ) {
+          const promoted = await casUpdateTask(ctx.admin, task.id, task.rev, {
+            phase_state: {
+              ...pd,
+              verdict: pd.verdictDraft,
+              verdictDraft: undefined,
+              feedback: undefined,
+              loop: undefined,
+            } as Record<string, unknown>,
+            claim: { token, heartbeat_at: new Date().toISOString() },
+            phase_started_at: new Date().toISOString(),
+          });
+          if (promoted) {
+            task = promoted;
+            await logEvent(
+              ctx.admin,
+              ctx.run.id,
+              task.idx,
+              "draft_promoted",
+              "phase deadline hit with a draft verdict — promoted to verdict of record",
+            );
+            continue;
+          }
+          return;
+        }
         await casUpdateTask(ctx.admin, task.id, task.rev, {
           status: "failed",
           error: `Phase ${task.status} exceeded its deadline.`,
@@ -900,82 +970,65 @@ async function advanceTask(
 
       // Budget checks at claim time.
       const phaseKey =
-        step.kind === "synth_submit" ||
-        step.kind === "synth_poll" ||
-        step.kind === "critique" ||
-        step.kind === "synth_sync"
-          ? task.status === "reframing"
+        step.kind === "score_sync"
+          ? task.status === "rescoring"
             ? "resynth"
             : "synth"
-          : turnKeyFor(task.status);
+          : step.kind === "synth_submit" ||
+              step.kind === "synth_poll" ||
+              step.kind === "critique" ||
+              step.kind === "synth_sync"
+            ? task.status === "reframing"
+              ? "resynth"
+              : "synth"
+            : turnKeyFor(task.status);
       const used = task.turns?.[phaseKey] ?? 0;
-      // Cap-death for a RESEARCH phase with work-in-progress gets one
-      // forced-delivery overage: a no-tools turn that writes the brief/memo
-      // from everything gathered, instead of discarding paid research.
+      // Cap-death salvage, two layers, both through NORMAL accounting:
+      // (1) a research phase with work-in-progress gets ONE forced-delivery
+      //     overage turn (no tools) via a +1 claim allowance — it is billed,
+      //     metered, and logged exactly like any paid turn;
+      // (2) scoring/rescoring holding a paid draft verdict promotes it to
+      //     the verdict of record instead of discarding it.
+      const wrapupEligible = (() => {
+        if (step.kind !== "research_turn") return false;
+        const p = task.phase_state as PhaseState;
+        return (
+          Boolean(p.loop) &&
+          !p.forcedWrapup &&
+          ((!p.brief && !p.memo) || (Boolean(p.verdictDraft) && !p.feedback))
+        );
+      })();
       if (
         isPaid(step) &&
-        used >= TURN_CAPS[phaseKey] &&
-        step.kind === "research_turn"
+        used >= TURN_CAPS[phaseKey] + (wrapupEligible ? 1 : 0)
       ) {
-        const ps = task.phase_state as PhaseState;
-        if (ps.loop && !ps.brief && !ps.memo && !ps.forcedWrapup) {
-          const claimed = await casUpdateTask(ctx.admin, task.id, task.rev, {
-            phase_state: { ...ps, forcedWrapup: true } as Record<string, unknown>,
+        const p = task.phase_state as PhaseState;
+        if (
+          (task.status === "scoring" || task.status === "rescoring") &&
+          p.verdictDraft &&
+          !p.verdict
+        ) {
+          const promoted = await casUpdateTask(ctx.admin, task.id, task.rev, {
+            phase_state: {
+              ...p,
+              verdict: p.verdictDraft,
+              verdictDraft: undefined,
+              feedback: undefined,
+              loop: undefined,
+            } as Record<string, unknown>,
             claim: { token, heartbeat_at: new Date().toISOString() },
           });
-          if (!claimed) return;
-          task = claimed;
+          if (!promoted) return;
+          task = promoted;
           await logEvent(
             ctx.admin,
             ctx.run.id,
             task.idx,
-            "forced_wrapup",
-            `${phaseKey} cap reached with no deliverable — forcing a no-tools wrap-up turn`,
+            "draft_promoted",
+            `${phaseKey} budget exhausted — first-round verdict promoted to verdict of record`,
           );
-          try {
-            const model = phaseModel(task);
-            const result = await runResearchTurn({
-              provider: model.provider,
-              model: model.model,
-              effort: model.provider === "openrouter" ? "high" : "max",
-              system: "",
-              prompt: "",
-              state: ps.loop,
-              session: { sessionId: "", page: null as never },
-              wrapUp: true,
-              noTools: true,
-            });
-            const finalText = result.state.lastText ?? "";
-            if (finalText) {
-              const psNow = task.phase_state as PhaseState;
-              const patch: PhaseState = { ...psNow, forcedWrapup: true };
-              if (task.status === "scoring" || task.status === "rescoring") {
-                patch.memo = finalText;
-              } else {
-                patch.brief = finalText;
-              }
-              patch.researchLog = transcriptFromLoop(result.state);
-              patch.loop = undefined;
-              const persisted = await casUpdateTask(ctx.admin, task.id, task.rev, {
-                phase_state: patch as Record<string, unknown>,
-                claim: { token, heartbeat_at: new Date().toISOString() },
-              });
-              if (persisted) {
-                task = persisted;
-                continue; // proceed to synthesis with the forced deliverable
-              }
-            }
-          } catch (err) {
-            await logEvent(
-              ctx.admin,
-              ctx.run.id,
-              task.idx,
-              "step_error",
-              `forced wrap-up failed: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
+          continue; // decide (free) publishes it
         }
-      }
       if (isPaid(step) && used >= TURN_CAPS[phaseKey]) {
         await logEvent(
           ctx.admin,
@@ -991,6 +1044,7 @@ async function advanceTask(
           phase_state: terminalState(task),
         });
         return;
+      }
       }
 
       // Browser session — SHARED across all tasks this invocation, one

@@ -80,15 +80,23 @@ function clampOpenAIEffort(
 // Serializable loop state (lives in discovery_tasks.phase_state).
 // ---------------------------------------------------------------------------
 export type LoopState =
-  | { kind: "anthropic"; messages: Anthropic.MessageParam[]; lastText?: string }
+  | {
+      kind: "anthropic";
+      messages: Anthropic.MessageParam[];
+      lastText?: string;
+      /** Model id that started this loop — a loop must FINISH on the model
+       *  that started it (mid-loop switches have shipped three 404s). */
+      model?: string;
+    }
   | {
       kind: "openai";
       responseId: string | null;
       pending: PendingCall[];
       lastText?: string;
       wrapUpPending?: boolean;
+      model?: string;
     }
-  | { kind: "openrouter"; messages: ORMessage[]; lastText?: string };
+  | { kind: "openrouter"; messages: ORMessage[]; lastText?: string; model?: string };
 
 interface PendingCall {
   callId: string;
@@ -100,9 +108,14 @@ export function initialLoopState(
   provider: "anthropic" | "openai" | "openrouter",
   system: string,
   prompt: string,
+  model?: string,
 ): LoopState {
   if (provider === "anthropic") {
-    return { kind: "anthropic", messages: [{ role: "user", content: prompt }] };
+    return {
+      kind: "anthropic",
+      messages: [{ role: "user", content: prompt }],
+      model,
+    };
   }
   if (provider === "openrouter") {
     return {
@@ -111,9 +124,10 @@ export function initialLoopState(
         { role: "system", content: system },
         { role: "user", content: prompt },
       ],
+      model,
     };
   }
-  return { kind: "openai", responseId: null, pending: [] };
+  return { kind: "openai", responseId: null, pending: [], model };
 }
 
 /** Drop oldest exchanges (never the first user prompt) until the state
@@ -249,20 +263,24 @@ async function anthropicTurn(
 ): Promise<ResearchTurnResult> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   stripOldImages(state);
-  const tools: Anthropic.Tool[] = (opts as { noTools?: boolean }).noTools
-    ? []
-    : browserToolDefs(opts.session.vision ?? false).map((t) => ({
-        name: t.name,
-        description: t.description,
-        input_schema: t.parameters as unknown as Anthropic.Tool.InputSchema,
-      }));
+  // noTools must NOT drop the defs — history containing tool_use/tool_result
+  // blocks is rejected without them; tool_choice none forbids further use.
+  const noTools = Boolean((opts as { noTools?: boolean }).noTools);
+  const tools: Anthropic.Tool[] = browserToolDefs(
+    opts.session.vision ?? false,
+  ).map((t) => ({
+    name: t.name,
+    description: t.description,
+    input_schema: t.parameters as unknown as Anthropic.Tool.InputSchema,
+  }));
   const params = {
     model: opts.model,
     max_tokens: 32000,
     thinking: { type: "adaptive" as const },
     system: cachedSystem(opts.system),
     ...(opts.effort ? { output_config: { effort: opts.effort } } : {}),
-    ...(tools.length > 0 ? { tools } : {}),
+    tools,
+    ...(noTools ? { tool_choice: { type: "none" as const } } : {}),
     messages: cachedMessages(state.messages),
   };
   // Streamed under the hood: the SDK REQUIRES streaming for requests whose
@@ -340,18 +358,17 @@ async function openaiTurn(
   },
   state: Extract<LoopState, { kind: "openai" }>,
 ): Promise<ResearchTurnResult> {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const tools = (opts as { noTools?: boolean }).noTools
-    ? []
-    : browserToolDefs(opts.session.vision ?? false).map((t) => ({
-        type: "function" as const,
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters as Record<string, unknown>,
-        // strict:false — the tool schemas carry OPTIONAL params (search
-        // verticals, pagination), which strict mode disallows.
-        strict: false,
-      }));
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 900_000 });
+  const noTools = Boolean((opts as { noTools?: boolean }).noTools);
+  const tools = browserToolDefs(opts.session.vision ?? false).map((t) => ({
+    type: "function" as const,
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters as Record<string, unknown>,
+    // strict:false — the tool schemas carry OPTIONAL params (search
+    // verticals, pagination), which strict mode disallows.
+    strict: false,
+  }));
 
   // Execute any tool calls left pending from the previous turn FIRST, so
   // their outputs ride into this request (server-side history via store).
@@ -401,7 +418,8 @@ async function openaiTurn(
     instructions: opts.system,
     ...(state.responseId ? { previous_response_id: state.responseId } : {}),
     input,
-    ...(tools.length > 0 ? { tools } : {}),
+    tools,
+    ...(noTools ? { tool_choice: "none" as const } : {}),
     store: true,
     ...(opts.effort
       ? { reasoning: { effort: clampOpenAIEffort(opts.effort) } }
@@ -434,20 +452,22 @@ async function openrouterResearch(
   state: Extract<LoopState, { kind: "openrouter" }>,
 ): Promise<ResearchTurnResult> {
   stripOldImages(state);
-  const tools: ORTool[] = (opts as { noTools?: boolean }).noTools
-    ? []
-    : browserToolDefs(opts.session.vision ?? false).map((t) => ({
-        type: "function" as const,
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters as Record<string, unknown>,
-        },
-      }));
+  const noTools = Boolean((opts as { noTools?: boolean }).noTools);
+  const tools: ORTool[] = browserToolDefs(opts.session.vision ?? false).map(
+    (t) => ({
+      type: "function" as const,
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters as Record<string, unknown>,
+      },
+    }),
+  );
   const turn = await openrouterTurn({
     model: opts.model,
     messages: state.messages,
-    ...(tools.length > 0 ? { tools } : {}),
+    tools,
+    ...(noTools ? { toolChoice: "none" as const } : {}),
     ...(opts.effort
       ? { reasoningEffort: (opts.effort === "max" || opts.effort === "xhigh"
           ? "high"
@@ -649,7 +669,7 @@ export async function plainTextCall(opts: {
       .join("\n");
   }
   if (opts.provider === "openai") {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 900_000 });
     const response = await client.responses.create({
       model: opts.model,
       instructions: opts.system,
@@ -687,7 +707,7 @@ export async function openaiSynthesisSubmit(opts: {
   schemaName: string;
   schema: Record<string, unknown>;
 }): Promise<string> {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 900_000 });
   const base = {
     model: opts.model,
     instructions: opts.system,
@@ -734,7 +754,7 @@ export type BackgroundPoll =
   | { status: "expired" };
 
 export async function openaiSynthesisPoll(id: string): Promise<BackgroundPoll> {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 900_000 });
   let response: OpenAI.Responses.Response;
   try {
     response = await client.responses.retrieve(id);
@@ -777,7 +797,7 @@ export async function openaiSynthesisSync(opts: {
   schemaName: string;
   schema: Record<string, unknown>;
 }): Promise<unknown> {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 900_000 });
   const response = await client.responses.create({
     model: opts.model,
     instructions: opts.system,
