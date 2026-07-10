@@ -148,15 +148,15 @@ Thesis: ${idea.thesisNotes}
 When you have enough evidence for a calibrated verdict, STOP calling tools and write a plain-text EVIDENCE MEMO (under 2000 words): what you verified, what you refuted, competitors found, and the decisive facts — each tagged with where you found it.`;
 }
 
-/** Stage 2 of dual-model scoring: GPT-5.6 Sol reviews Fable's draft
- *  verdict WITH browser access — it can verify contested claims itself
- *  before recommending changes. */
+/** Round 2 of two-round scoring: the FINAL scorer reviews the first
+ *  model's verdict WITH its own browser access, verifies what it doubts,
+ *  and prepares to own the final updated score. */
 export function buildScoringFeedbackSystem(opts: {
   idea: GeneratedIdea;
-  draftVerdict: string;
+  firstVerdict: string;
   evidenceMemo: string;
 }): string {
-  return `You are the independent REVIEWER in a two-model scoring panel for startup ideas. A first evaluator (a different AI) researched and drafted the verdict below. Your job: find where the scoring can be IMPROVED — scores that are too generous or too harsh given the evidence, gates called wrong, evidence that was missed or misread, and rationales that don't hold. You have the same browser tools (web_search with Google, open_page, scroll_page, click_element, view_page) — USE them to check any claim you doubt rather than guessing.
+  return `You are the SECOND and FINAL evaluator in a two-model scoring panel for startup ideas. A first evaluator (a different AI) already researched and scored it — its evidence memo and full verdict are below. YOU will produce the final verdict shortly; this is your research pass. Check the scoring that was already done: take the good results and insights from it, and correct what the evidence doesn't support — too generous, too harsh, gates called wrong, evidence missed or misread. You have the same browser tools (web_search with Google, open_page, scroll_page, click_element, view_page) — USE them to verify any claim you doubt and to fill gaps with your own evidence rather than guessing.
 
 Idea under evaluation:
 Name: ${opts.idea.name}
@@ -169,14 +169,14 @@ Thesis: ${opts.idea.thesisNotes}
 The first evaluator's evidence memo:
 ${opts.evidenceMemo}
 
-The first evaluator's DRAFT VERDICT:
-${opts.draftVerdict}
+The first evaluator's VERDICT:
+${opts.firstVerdict}
 
-When you are done reviewing (and verifying what needed verifying), STOP calling tools and write a plain-text FEEDBACK MEMO (under 1500 words): for each gate/criterion you'd change — the current call, your recommended call, and the evidence; plus anything material the draft missed. If the draft is right, say so plainly — do not invent disagreements.`;
+When you have verified enough for a calibrated final call, STOP calling tools and write a plain-text VERIFICATION MEMO (under 1500 words): what you accept from the first verdict (and why it's solid), what you correct (with your evidence), and anything material it missed.`;
 }
 
 export function buildScoringFeedbackPrompt(): string {
-  return "Review the draft verdict now. Verify what you doubt with the browser tools, then write your feedback memo.";
+  return "Begin your scoring pass now: review the first verdict, verify what you doubt with the browser tools, then write your verification memo.";
 }
 
 export function buildScoringResearchPrompt(): string {
@@ -196,9 +196,10 @@ export function buildScoringSynthesisPrompt(opts: {
   coFounders: CoFounderInput[];
   evidenceMemo: string;
   researchLog?: string;
-  /** Final pass of dual-model scoring: your own draft + the reviewer's memo. */
-  draftVerdict?: string;
-  reviewerFeedback?: string;
+  /** Round-2 final scoring: the first model's verdict + your own
+   *  verification memo. */
+  firstVerdict?: string;
+  verificationMemo?: string;
 }): string {
   const base = buildUserPrompt(
     {
@@ -218,12 +219,12 @@ export function buildScoringSynthesisPrompt(opts: {
 ## Independent research evidence (gathered live by your research arm — weigh it above the pitch's own claims)
 
 ${opts.evidenceMemo || "(no research memo available)"}${
-    opts.draftVerdict
-      ? `\n\n## Your DRAFT verdict (you scored this earlier)\n\n${opts.draftVerdict}`
+    opts.firstVerdict
+      ? `\n\n## First evaluator's verdict (a different AI scored this before you)\n\nTake the good results and insights from it; correct what the evidence doesn't support:\n\n${opts.firstVerdict}`
       : ""
   }${
-    opts.reviewerFeedback
-      ? `\n\n## Independent reviewer feedback on your draft (a second AI, with its own browser verification)\n\nWeigh each point on its evidence — adopt what is right, reject what is not, and do not shift scores just to be agreeable:\n\n${opts.reviewerFeedback}`
+    opts.verificationMemo
+      ? `\n\n## Your verification memo (you wrote this after reviewing the first verdict with your own browser research)\n\n${opts.verificationMemo}\n\nNow produce the FINAL, updated verdict — yours is the score of record.`
       : ""
   }${
     opts.researchLog

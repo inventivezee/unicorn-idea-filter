@@ -110,9 +110,12 @@ export const REFRAMER_OPENAI: DiscoveryModel = {
 /** Cross-vendor rule: the scorer's company must differ from the company
  *  that produced the text being scored. OpenRouter vendors can be scored
  *  by either house scorer — alternate by idx for balance. */
-/** Dual-panel A/B test (owner decision): who drafts and who reviews.
- *  A: Fable drafts -> Sol reviews -> Fable finalizes.
- *  B: Sol drafts -> Fable reviews -> Sol finalizes.
+/** Two-round dual-model scoring, A/B tested (owner decision): the FIRST
+ *  model researches and scores; the FINAL model then scores the idea
+ *  itself — reviewing the first verdict, verifying with its own browser,
+ *  keeping what is good, and owning the final updated score.
+ *  A: Sol scores first -> Fable 5 max finalizes.
+ *  B: Fable scores first -> Sol finalizes.
  *  Deterministic per (runId, idx) — mid-phase reassignment would corrupt
  *  loop state; recorded in scoring_variant events for later analysis. */
 export type ScoringVariant = "A" | "B";
@@ -122,12 +125,12 @@ export function scoringVariant(runId: string, idx: number): ScoringVariant {
 }
 
 export function scoringPanel(variant: ScoringVariant): {
-  drafter: DiscoveryModel;
-  reviewer: DiscoveryModel;
+  first: DiscoveryModel;
+  final: DiscoveryModel;
 } {
   return variant === "A"
-    ? { drafter: SCORER_ANTHROPIC, reviewer: SCORER_OPENAI }
-    : { drafter: SCORER_OPENAI, reviewer: SCORER_ANTHROPIC };
+    ? { first: SCORER_OPENAI, final: SCORER_ANTHROPIC }
+    : { first: SCORER_ANTHROPIC, final: SCORER_OPENAI };
 }
 
 export function pickScorer(generator: DiscoveryModel, idx: number): DiscoveryModel {

@@ -248,13 +248,15 @@ function phaseModel(task: DiscoveryTaskRow): DiscoveryModel {
   // finalizes weighing the feedback.
   const ps = task.phase_state as PhaseState;
   const panel = scoringPanel(scoringVariant(task.run_id, task.idx));
-  if (ps.verdictDraft && !ps.feedback) return panel.reviewer;
-  return panel.drafter;
+  // Once the first verdict exists, everything (verification loop AND the
+  // final score) belongs to the FINAL model.
+  if (ps.verdictDraft) return panel.final;
+  return panel.first;
 }
 
-function drafterProviderOf(task: DiscoveryTaskRow): "anthropic" | "openai" {
-  const { drafter } = scoringPanel(scoringVariant(task.run_id, task.idx));
-  return drafter.provider === "anthropic" ? "anthropic" : "openai";
+function firstProviderOf(task: DiscoveryTaskRow): "anthropic" | "openai" {
+  const { first } = scoringPanel(scoringVariant(task.run_id, task.idx));
+  return first.provider === "anthropic" ? "anthropic" : "openai";
 }
 
 function nextStep(task: DiscoveryTaskRow): Step | null {
@@ -484,7 +486,7 @@ async function executeStep(
       phase_state: {
         idea,
         loop: initialLoopState(
-          drafterProviderOf(task), // the variant's drafter gathers evidence
+          firstProviderOf(task), // the variant's FIRST scorer gathers evidence
           system,
           buildScoringResearchPrompt(),
         ),
@@ -518,7 +520,7 @@ async function executeStep(
           : feedbackMode
             ? buildScoringFeedbackSystem({
                 idea: ps.idea!,
-                draftVerdict: verdictSummaryText(ps.verdictDraft!),
+                firstVerdict: verdictSummaryText(ps.verdictDraft!),
                 evidenceMemo: ps.memo ?? "",
               })
             : buildScoringResearchSystem(ps.idea!);
@@ -667,11 +669,12 @@ async function executeStep(
   }
 
   if (step.kind === "score_sync") {
-    // Dual panel: the variant's drafter drafts AND finalizes; the other
-    // house model reviews in between.
+    // Two-round panel: the FIRST model scores; the FINAL model then scores
+    // again with the first verdict in hand and owns the score of record.
     const variant = scoringVariant(task.run_id, task.idx);
     const isFinal = Boolean(ps.verdictDraft && ps.feedback);
-    const scorer = scoringPanel(variant).drafter;
+    const panel = scoringPanel(variant);
+    const scorer = isFinal ? panel.final : panel.first;
     const system = buildScoringSynthesisSystem();
     const prompt = buildScoringSynthesisPrompt({
       idea: ps.idea!,
@@ -683,8 +686,8 @@ async function executeStep(
       researchLog: ps.researchLog,
       ...(isFinal
         ? {
-            draftVerdict: verdictSummaryText(ps.verdictDraft!),
-            reviewerFeedback: ps.feedback,
+            firstVerdict: verdictSummaryText(ps.verdictDraft!),
+            verificationMemo: ps.feedback,
           }
         : {}),
     });
@@ -722,8 +725,8 @@ async function executeStep(
         JSON.stringify({
           variant,
           stage: task.status,
-          drafter: scorer.model,
-          reviewer: scoringPanel(variant).reviewer.model,
+          first: panel.first.model,
+          final: panel.final.model,
         }),
       );
       return {
@@ -843,7 +846,7 @@ function afterIdeaSynthesis(
         reframeAttempt: ps.reframeAttempt ?? 1,
         reframeHistory: ps.reframeHistory ?? [],
         loop: initialLoopState(
-          drafterProviderOf(task), // the variant's drafter gathers evidence
+          firstProviderOf(task), // the variant's FIRST scorer gathers evidence
           buildScoringResearchSystem(idea),
           buildScoringResearchPrompt(),
         ),

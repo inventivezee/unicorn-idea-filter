@@ -157,13 +157,13 @@ describe("scoring A/B variants", () => {
     expect(a / N).toBeLessThan(0.6);
   });
 
-  it("panel roles: A = Fable drafts / Sol reviews; B = the reverse", () => {
+  it("panel roles: A = Sol first / Fable final; B = the reverse", () => {
     const a = scoringPanel("A");
-    expect(a.drafter.model).toBe("claude-fable-5");
-    expect(a.reviewer.model).toBe("gpt-5.6-sol");
+    expect(a.first.model).toBe("gpt-5.6-sol");
+    expect(a.final.model).toBe("claude-fable-5");
     const b = scoringPanel("B");
-    expect(b.drafter.model).toBe("gpt-5.6-sol");
-    expect(b.reviewer.model).toBe("claude-fable-5");
+    expect(b.first.model).toBe("claude-fable-5");
+    expect(b.final.model).toBe("gpt-5.6-sol");
   });
 });
 
