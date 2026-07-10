@@ -5,8 +5,12 @@
 // the CDP disconnect terminates the session — no orphaned browser-hours.
 // The per-session `timeout` is the second safety net; the run's pessimistic
 // minutes budget (charged at claim time, never refunded) is the third.
-import Browserbase from "@browserbasehq/sdk";
-import { chromium, type Browser, type Page } from "playwright-core";
+// Both packages are LAZY-imported inside the functions that use them:
+// loading them at module scope crashed every route that transitively
+// imports this file on Vercel (500 before the handler ran). Type-only
+// imports are erased at compile time, so they're safe here.
+import type Browserbase from "@browserbasehq/sdk";
+import type { Browser, Page } from "playwright-core";
 import {
   BB_SESSION_TIMEOUT_SECONDS,
   TOOL_RESULT_CHAR_CAP,
@@ -18,17 +22,19 @@ export interface BrowserSession {
   page: Page;
 }
 
-function bbClient(): Browserbase {
-  return new Browserbase({ apiKey: process.env.BROWSERBASE_API_KEY });
+async function bbClient(): Promise<Browserbase> {
+  const { default: BrowserbaseCtor } = await import("@browserbasehq/sdk");
+  return new BrowserbaseCtor({ apiKey: process.env.BROWSERBASE_API_KEY });
 }
 
 export async function createBrowserSession(): Promise<BrowserSession> {
-  const bb = bbClient();
+  const bb = await bbClient();
   const session = await bb.sessions.create({
     projectId: process.env.BROWSERBASE_PROJECT_ID!,
     proxies: true, // managed residential proxies
     timeout: BB_SESSION_TIMEOUT_SECONDS,
   });
+  const { chromium } = await import("playwright-core");
   const browser = await chromium.connectOverCDP(session.connectUrl);
   const context = browser.contexts()[0] ?? (await browser.newContext());
   const page = context.pages()[0] ?? (await context.newPage());
@@ -57,7 +63,8 @@ export async function releaseBrowserSession(
     // Already gone.
   }
   try {
-    await bbClient().sessions.update(s.sessionId, {
+    const bb = await bbClient();
+    await bb.sessions.update(s.sessionId, {
       projectId: process.env.BROWSERBASE_PROJECT_ID!,
       status: "REQUEST_RELEASE",
     });
@@ -69,7 +76,8 @@ export async function releaseBrowserSession(
 /** Cancel-path cleanup: release by id alone (no live CDP handle). */
 export async function releaseSessionById(sessionId: string): Promise<void> {
   try {
-    await bbClient().sessions.update(sessionId, {
+    const bb = await bbClient();
+    await bb.sessions.update(sessionId, {
       projectId: process.env.BROWSERBASE_PROJECT_ID!,
       status: "REQUEST_RELEASE",
     });
