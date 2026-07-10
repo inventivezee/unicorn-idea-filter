@@ -535,11 +535,12 @@ async function executeStep(
     const phase = turnKeyFor(task.status);
     const used = task.turns?.[phase] ?? 0;
     // Continuity guard: a loop STARTED on one provider must finish on it —
-    // its serialized state is provider-shaped, and a mid-phase switch (e.g.
-    // tasks in flight when the dual-panel scoring deployed) would feed that
-    // state to the wrong API. New phases pick up the panel routing.
+    // its serialized state is provider-shaped, and a mid-phase switch would
+    // feed that state to the wrong API (live proof: Anthropic 404 "model:
+    // gpt-5.6-sol" from verification loops in flight when the panel roles
+    // flipped). Applies to EVERY loop, verification included.
     let turnModel = model;
-    if (ps.loop && !feedbackMode) {
+    if (ps.loop) {
       if (ps.loop.kind === "openai" && model.provider !== "openai") {
         turnModel = SCORER_OPENAI;
       } else if (
