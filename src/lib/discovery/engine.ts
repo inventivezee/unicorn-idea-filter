@@ -149,6 +149,13 @@ function turnKeyFor(status: TaskStatus): TurnPhase {
   return "rescore";
 }
 
+/** What survives a terminal failure: keep the generated idea so a manual
+ *  revival (or future salvage tooling) doesn't lose paid-for work. */
+function terminalState(task: DiscoveryTaskRow): Record<string, unknown> {
+  const idea = (task.phase_state as PhaseState).idea;
+  return idea ? { idea } : {};
+}
+
 function generatorOf(task: DiscoveryTaskRow): DiscoveryModel {
   return task.generator as unknown as DiscoveryModel;
 }
@@ -331,6 +338,26 @@ async function executeStep(
   const ps = task.phase_state as PhaseState;
   const gen = generatorOf(task);
   const round = roundForIdx(task.idx);
+
+  // Self-heal: every post-generation phase needs the generated idea in
+  // phase_state. If a crash/manual revival wiped it, restart the candidate
+  // from scratch instead of crash-looping on ps.idea until the budget dies.
+  // Deterministic idea ids make the eventual re-publish converge safely.
+  const requiresIdea =
+    task.status === "generated" ||
+    task.status === "scoring" ||
+    task.status === "reframing" ||
+    task.status === "rescoring";
+  if (requiresIdea && !ps.idea) {
+    await logEvent(
+      ctx.admin,
+      ctx.run.id,
+      task.idx,
+      "state_reset",
+      `phase_state lost its idea in status ${task.status} — restarting candidate`,
+    );
+    return { status: "pending", phase_state: {} };
+  }
 
   if (step.kind === "init") {
     const system = buildDiscoveryResearchSystem({
@@ -619,7 +646,7 @@ async function advanceTask(
           status: "failed",
           error: `Phase ${task.status} exceeded its deadline.`,
           claim: null,
-          phase_state: {},
+          phase_state: terminalState(task),
         });
         return;
       }
@@ -644,7 +671,7 @@ async function advanceTask(
           status: "failed",
           error: `Turn budget exhausted in ${phaseKey} (${used}/${TURN_CAPS[phaseKey]}).`,
           claim: null,
-          phase_state: {},
+          phase_state: terminalState(task),
         });
         return;
       }
@@ -670,7 +697,9 @@ async function advanceTask(
           const failCount = ((task.bb?.failCount as number) ?? 0) + 1;
           const terminal = holder.overBudget || failCount >= 3;
           await casUpdateTask(ctx.admin, task.id, task.rev, {
-            ...(terminal ? { status: "failed" as const, phase_state: {} } : {}),
+            ...(terminal
+              ? { status: "failed" as const, phase_state: terminalState(task) }
+              : {}),
             error: holder.overBudget
               ? "Browser-minutes budget exhausted for this run."
               : `Browser session failed (attempt ${failCount}/3): ${String(
@@ -885,7 +914,7 @@ export async function advanceDiscoveryRun(
           status: "failed",
           error: "Run exceeded its 24h deadline.",
           claim: null,
-          phase_state: {},
+          phase_state: terminalState(t),
         });
       }
     }
