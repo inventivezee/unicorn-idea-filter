@@ -269,7 +269,7 @@ export function parseLastJSON<T>(texts: string[]): T {
   );
 }
 
-function isGrammarTooLarge(err: unknown): boolean {
+export function isGrammarTooLarge(err: unknown): boolean {
   return (
     err instanceof Anthropic.APIError &&
     err.status === 400 &&

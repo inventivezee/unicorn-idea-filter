@@ -288,6 +288,39 @@ export async function casUpdateRun(
   return data ?? null;
 }
 
+/** Best-effort event logging — NEVER throws, NEVER blocks the engine.
+ *  Full untruncated detail (the task rows only keep short errors). */
+export async function logEvent(
+  admin: SupabaseClient,
+  runId: string,
+  taskIdx: number | null,
+  kind: string,
+  detail: string,
+): Promise<void> {
+  try {
+    await admin.from("discovery_events").insert({
+      run_id: runId,
+      task_idx: taskIdx,
+      kind,
+      detail: detail.slice(0, 8000),
+    });
+  } catch {
+    // Telemetry only (also tolerates the 012 migration not being applied).
+  }
+}
+
+/** Prune old events (called opportunistically by the cron). */
+export async function pruneEvents(admin: SupabaseClient): Promise<void> {
+  try {
+    await admin
+      .from("discovery_events")
+      .delete()
+      .lt("created_at", new Date(Date.now() - 14 * 86400_000).toISOString());
+  } catch {
+    // Best-effort.
+  }
+}
+
 /** Cancel is a monotonic status transition — a conditional UPDATE (not a
  *  rev CAS) so it can't lose to concurrent budget bumps; the user's brake
  *  must not be flaky exactly while a run is busiest. */

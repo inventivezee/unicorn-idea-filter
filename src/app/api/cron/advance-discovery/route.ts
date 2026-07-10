@@ -3,7 +3,7 @@
 // unset, 401 on mismatch, 200 {checked, results} when healthy.
 import { advanceDiscoveryRun, sweepNotifications } from "@/lib/discovery/engine";
 import { CRON_TIME_BUDGET_MS, discoveryConfigured } from "@/lib/discovery/config";
-import { listActiveRuns } from "@/lib/db/discovery";
+import { listActiveRuns, pruneEvents } from "@/lib/db/discovery";
 import { adminClient, cloudConfigured } from "@/lib/supabase/server";
 
 export const maxDuration = 800; // Vercel Pro (GA limit; build fails on Hobby)
@@ -34,8 +34,9 @@ export async function GET(request: Request) {
   // status flip and the send (bounded 24h window; single-winner CAS inside).
   try {
     await sweepNotifications(admin);
+    await pruneEvents(admin);
   } catch {
-    // Sweep is best-effort — never blocks advancement.
+    // Sweeps are best-effort — never block advancement.
   }
   const runs = await listActiveRuns(admin);
   // Shuffle for fair scheduling under the time budget.

@@ -34,6 +34,7 @@ import {
   fetchRun,
   fetchTasks,
   listUnnotifiedTerminalRuns,
+  logEvent,
   type DiscoveryRunRow,
   type DiscoveryTaskRow,
   type TaskStatus,
@@ -392,6 +393,8 @@ async function executeStep(
         : isReframe
           ? "Begin your reframe research now."
           : buildScoringResearchPrompt();
+    const phase = turnKeyFor(task.status);
+    const used = task.turns?.[phase] ?? 0;
     const result = await runResearchTurn({
       provider: model.provider,
       model: model.model,
@@ -400,6 +403,9 @@ async function executeStep(
       prompt,
       state: ps.loop ?? initialLoopState(model.provider, system, prompt),
       session: ctx.session!,
+      // Two turns of headroom left → tell the agent to finish instead of
+      // letting the budget kill it mid-research.
+      wrapUp: used >= TURN_CAPS[phase] - 2,
     });
     const patch: PhaseState = { ...ps, loop: result.state };
     if (result.done) {
@@ -627,6 +633,13 @@ async function advanceTask(
           : turnKeyFor(task.status);
       const used = task.turns?.[phaseKey] ?? 0;
       if (isPaid(step) && used >= TURN_CAPS[phaseKey]) {
+        await logEvent(
+          ctx.admin,
+          ctx.run.id,
+          task.idx,
+          "budget_exhausted",
+          `${phaseKey} ${used}/${TURN_CAPS[phaseKey]} — task failed`,
+        );
         await casUpdateTask(ctx.admin, task.id, task.rev, {
           status: "failed",
           error: `Turn budget exhausted in ${phaseKey} (${used}/${TURN_CAPS[phaseKey]}).`,
@@ -682,6 +695,14 @@ async function advanceTask(
               holder.createFailed = true;
             }
             holder.lastError = msg;
+            console.error("[discovery] browser session create failed:", msg);
+            await logEvent(
+              ctx.admin,
+              ctx.run.id,
+              task.idx,
+              "browser_error",
+              msg,
+            );
             continue; // record on the task via the branches above
           }
           const minutes = Math.ceil(BB_SESSION_TIMEOUT_SECONDS / 60);
@@ -726,6 +747,13 @@ async function advanceTask(
       });
       if (!claimed) return; // another worker holds the row
       task = claimed;
+      await logEvent(
+        ctx.admin,
+        ctx.run.id,
+        task.idx,
+        "claim",
+        `${step.kind} in ${task.status} (turn ${used + (isPaid(step) ? 1 : 0)}/${TURN_CAPS[phaseKey]}, model ${model.model})`,
+      );
 
       if (isPaid(step)) {
         // Run-level total, pre-counted. null = CAS contention: fail CLOSED
@@ -770,6 +798,15 @@ async function advanceTask(
       } catch (err) {
         // Record and release; the bumped counter bounds retries.
         const msg = err instanceof Error ? err.message : String(err);
+        const stack = err instanceof Error ? (err.stack ?? "") : "";
+        console.error(`[discovery] step ${step.kind} failed:`, msg);
+        await logEvent(
+          ctx.admin,
+          ctx.run.id,
+          task.idx,
+          "step_error",
+          `${step.kind} in ${task.status}: ${msg}\n${stack}`,
+        );
         const failed = await casUpdateTask(ctx.admin, task.id, task.rev, {
           error: msg.slice(0, 500),
           claim: null,
@@ -793,6 +830,15 @@ async function advanceTask(
       });
       if (!persisted) return; // superseded — never re-execute paid work
       task = persisted;
+      if (statusChanges) {
+        await logEvent(
+          ctx.admin,
+          ctx.run.id,
+          task.idx,
+          "phase",
+          `→ ${task.status}${task.error ? ` (${task.error})` : ""}`,
+        );
+      }
 
       if (task.status === "done" || task.status === "failed") {
         await casUpdateTask(ctx.admin, task.id, task.rev, { claim: null });
@@ -932,7 +978,16 @@ export async function advanceDiscoveryRun(
         status: finalTasks.some((t) => t.status === "done") ? "done" : "failed",
       });
       // Single CAS winner sends the email.
-      if (done) await notifyOwner(admin, done);
+      if (done) {
+        await logEvent(
+          admin,
+          run.id,
+          null,
+          "run_terminal",
+          `${done.status}: ${finalTasks.filter((t) => t.status === "done").length}/${finalTasks.length} done`,
+        );
+        await notifyOwner(admin, done);
+      }
       return { runId: run.id, status: done?.status ?? "running", advancedTasks: advanced };
     }
   }

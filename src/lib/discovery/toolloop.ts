@@ -11,7 +11,11 @@
 // Pro tier is never called synchronously, matching the design-chain rule).
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
-import { UserFacingError, parseLastJSON } from "@/lib/ai/server";
+import {
+  UserFacingError,
+  isGrammarTooLarge,
+  parseLastJSON,
+} from "@/lib/ai/server";
 import {
   openrouterTurn,
   type ORMessage,
@@ -44,6 +48,7 @@ export type LoopState =
       responseId: string | null;
       pending: PendingCall[];
       lastText?: string;
+      wrapUpPending?: boolean;
     }
   | { kind: "openrouter"; messages: ORMessage[]; lastText?: string };
 
@@ -114,6 +119,9 @@ export interface ResearchTurnResult {
 // ---------------------------------------------------------------------------
 // Research turns (tools attached, no output schema).
 // ---------------------------------------------------------------------------
+const WRAP_UP_MSG =
+  "IMPORTANT: your research budget is nearly exhausted. STOP calling tools now and write your final deliverable (the brief/memo) as plain text in your next reply.";
+
 export async function runResearchTurn(opts: {
   provider: "anthropic" | "openai" | "openrouter";
   model: string;
@@ -122,10 +130,32 @@ export async function runResearchTurn(opts: {
   prompt: string;
   state: LoopState;
   session: BrowserHandle;
+  /** Two turns before the phase cap the engine sets this — the agent gets
+   *  told to finish instead of dying mid-research on the budget. */
+  wrapUp?: boolean;
 }): Promise<ResearchTurnResult> {
+  if (opts.wrapUp) injectWrapUp(opts.state);
   if (opts.state.kind === "anthropic") return anthropicTurn(opts, opts.state);
   if (opts.state.kind === "openrouter") return openrouterResearch(opts, opts.state);
   return openaiTurn(opts, opts.state);
+}
+
+function injectWrapUp(state: LoopState): void {
+  // Idempotent-ish: skip if the last user-visible message already nags.
+  const marker = "research budget is nearly exhausted";
+  if (state.kind === "anthropic") {
+    const last = JSON.stringify(state.messages[state.messages.length - 1] ?? "");
+    if (!last.includes(marker)) {
+      state.messages.push({ role: "user", content: WRAP_UP_MSG });
+    }
+  } else if (state.kind === "openrouter") {
+    const last = JSON.stringify(state.messages[state.messages.length - 1] ?? "");
+    if (!last.includes(marker)) {
+      state.messages.push({ role: "user", content: WRAP_UP_MSG });
+    }
+  } else {
+    state.wrapUpPending = true; // consumed by the next openaiTurn input
+  }
 }
 
 async function anthropicTurn(
@@ -224,9 +254,14 @@ async function openaiTurn(
         output,
       });
     }
+    if (state.wrapUpPending) {
+      outputs.push({ role: "user", content: WRAP_UP_MSG });
+      state.wrapUpPending = false;
+    }
     input = outputs;
   } else {
-    input = opts.prompt;
+    input = state.wrapUpPending ? `${opts.prompt}\n\n${WRAP_UP_MSG}` : opts.prompt;
+    state.wrapUpPending = false;
   }
 
   const response = await client.responses.create({
@@ -322,15 +357,54 @@ export async function runSynthesisSync(opts: {
   schema: Record<string, unknown>;
 }): Promise<unknown> {
   if (opts.provider === "anthropic") {
+    // Anthropic compiles the output schema into a constrained-decoding
+    // grammar with a hard size limit ("The compiled grammar is too large").
+    // Degrade exactly like src/lib/ai/server.ts: enforced schema first,
+    // then a prompt-embedded schema + parse.
+    try {
+      return await anthropicSynthesisAttempt(opts, true);
+    } catch (err) {
+      if (!isGrammarTooLarge(err)) throw err;
+      return await anthropicSynthesisAttempt(opts, false);
+    }
+  }
+  const turn = await openrouterTurn({
+    model: opts.model,
+    messages: [
+      { role: "system", content: opts.system },
+      { role: "user", content: opts.prompt },
+    ],
+    schemaName: opts.schemaName,
+    schema: opts.schema,
+  });
+  return parseLastJSON([turn.text]);
+}
+
+async function anthropicSynthesisAttempt(
+  opts: {
+    model: string;
+    effort?: "low" | "medium" | "high" | "xhigh" | "max";
+    system: string;
+    prompt: string;
+    schema: Record<string, unknown>;
+  },
+  enforceFormat: boolean,
+): Promise<unknown> {
+  {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const system = enforceFormat
+      ? opts.system
+      : `${opts.system}\n\nRespond with ONLY a single valid JSON object exactly matching this JSON Schema — no prose, no markdown fences:\n${JSON.stringify(opts.schema)}`;
     const params = {
       model: opts.model,
       max_tokens: 16000,
       thinking: { type: "adaptive" as const },
-      system: opts.system,
+      system,
       output_config: {
         ...(opts.effort ? { effort: opts.effort } : {}),
-        format: { type: "json_schema" as const, schema: opts.schema },
+        ...(enforceFormat
+          ? { format: { type: "json_schema" as const, schema: opts.schema } }
+          : {}),
       },
       messages: [{ role: "user" as const, content: opts.prompt }],
     };
@@ -353,16 +427,6 @@ export async function runSynthesisSync(opts: {
       response.content.filter((b) => b.type === "text").map((b) => b.text),
     );
   }
-  const turn = await openrouterTurn({
-    model: opts.model,
-    messages: [
-      { role: "system", content: opts.system },
-      { role: "user", content: opts.prompt },
-    ],
-    schemaName: opts.schemaName,
-    schema: opts.schema,
-  });
-  return parseLastJSON([turn.text]);
 }
 
 /** Submit the OpenAI pro-mode background synthesis; returns the response id

@@ -137,20 +137,22 @@ export function pickRescorer(
 // Spend budgets — the per-run worst case is computable from these. Counted
 // AT CLAIM TIME on the task row (before any provider call), per invariant #1.
 // ---------------------------------------------------------------------------
+// Owner-sized budgets: deep research explicitly preferred over cost
+// (~$1000+/run accepted). The engine nudges agents to wrap up two turns
+// before a cap, so caps are a backstop rather than a common death.
 export const TURN_CAPS = {
-  research: 15, // 12 nominal + 3 retry slack
-  synth: 4,     // generation-synthesis SUBMITS (polls are free reads)
-  resynth: 4,   // reframe-synthesis submits (own budget — never starved by gen)
-  score: 13,    // 10 + 3
-  reframe: 10,  // 8 + 2
-  rescore: 13,  // 10 + 3
+  research: 60,
+  synth: 10,    // generation-synthesis SUBMITS (polls are free reads)
+  resynth: 10,  // reframe-synthesis submits (own budget — never starved by gen)
+  score: 40,
+  reframe: 40,
+  rescore: 40,
 } as const;
 export type TurnPhase = keyof typeof TURN_CAPS;
 
-/** Hard cap on total turns across ALL tasks in a run (20 tasks × ~45
- *  worst-case would be ~900; the ceiling adds a little slack for synth
- *  resubmits). */
-export const RUN_TOTAL_TURN_CAP = 1000;
+/** Hard ceiling on total turns across ALL tasks in a run (20 tasks × ~200
+ *  worst-case phase turns) — the last line of the spend envelope. */
+export const RUN_TOTAL_TURN_CAP = 4000;
 
 /** Browserbase: minutes are charged pessimistically (a session's FULL
  *  timeout is added to the run budget inside the claim CAS that precedes
@@ -160,7 +162,7 @@ export const BB_SESSION_TIMEOUT_SECONDS = 300; // 5 min, self-terminates
  *  once (pessimistically, at full timeout) — 180 covers ~36 browser-bearing
  *  invocations per run (~$0.40 of browser-hours), the real cost lever being
  *  model turns which TURN_CAPS bound. */
-export const BB_RUN_MINUTES_CAP = 360;
+export const BB_RUN_MINUTES_CAP = 1440;
 
 /** Lease: a task claim is stealable only when its heartbeat is older than
  *  this. Must exceed the worst single turn (max-effort reasoning call). */
@@ -187,7 +189,7 @@ export const TASK_STATE_CHAR_BUDGET = 45_000;
 export const TOOL_RESULT_CHAR_CAP = 6_000;
 
 export const RUN_DEADLINE_MS = 24 * 60 * 60 * 1000;
-export const PHASE_DEADLINE_MS = 3 * 60 * 60 * 1000; // anchored at first claim
+export const PHASE_DEADLINE_MS = 8 * 60 * 60 * 1000; // anchored at first claim
 
 /** Pass bar: decision ladder values that count as passing (≥ VALIDATE FAST). */
 export const PASSING_DECISIONS = new Set(["BUILD / INCUBATE", "VALIDATE FAST"]);
