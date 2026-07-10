@@ -25,6 +25,8 @@ export interface BrowserHandle {
   /** CDP target id of THIS task's tab — the live view must point at the
    *  agent's page, not the session's default about:blank page. */
   targetId?: string;
+  /** Vision-capable driver: resources unblocked + view_page available. */
+  vision?: boolean;
 }
 
 export interface BrowserSession extends BrowserHandle {
@@ -65,14 +67,17 @@ async function blockHeavyResources(page: Page): Promise<void> {
   });
 }
 
-/** A fresh tab on the shared browser for one task's chunk. */
+/** A fresh tab on the shared browser for one task's chunk. Vision-capable
+ *  drivers browse with images/media/fonts UNBLOCKED (the owner's explicit
+ *  call: visual models should see pages as pages) and get view_page. */
 export async function createTaskPage(
   session: BrowserSession,
+  vision = false,
 ): Promise<BrowserHandle> {
   const context =
     session.browser.contexts()[0] ?? (await session.browser.newContext());
   const page = await context.newPage();
-  await blockHeavyResources(page);
+  if (!vision) await blockHeavyResources(page);
   let targetId: string | undefined;
   try {
     const cdp = await context.newCDPSession(page);
@@ -84,7 +89,7 @@ export async function createTaskPage(
   } catch {
     // Live view degrades to the session-level URL.
   }
-  return { sessionId: session.sessionId, page, targetId };
+  return { sessionId: session.sessionId, page, targetId, vision };
 }
 
 export async function closeTaskPage(handle: BrowserHandle | null): Promise<void> {
@@ -168,18 +173,38 @@ export async function releaseSessionById(sessionId: string): Promise<void> {
 // ---------------------------------------------------------------------------
 // The two research tools models see. Schemas stay lean (invariant #4 habit).
 // ---------------------------------------------------------------------------
+const VIEW_PAGE_TOOL = {
+  name: "view_page",
+  description:
+    "Take a screenshot of the page currently open in your browser and SEE it. Use after open_page when the key content is visual: charts, pricing tables, dashboards, product UIs.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {},
+    required: [],
+  },
+} as const;
+
+export function browserToolDefs(vision: boolean) {
+  return vision ? [...BROWSER_TOOL_DEFS, VIEW_PAGE_TOOL] : BROWSER_TOOL_DEFS;
+}
+
 export const BROWSER_TOOL_DEFS = [
   {
     name: "web_search",
     description:
-      "Search the web. Returns the top results as titles, URLs, and snippets.",
+      "Search the web (Google). Returns results as titles, URLs, and snippets. Ask for as many results as your research needs (10 for a quick look, 50-100 to map a whole space).",
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
         query: { type: "string", description: "The search query." },
+        num_results: {
+          type: "integer",
+          description: "How many results to return, 10-100.",
+        },
       },
-      required: ["query"],
+      required: ["query", "num_results"],
     },
   },
   {
@@ -234,10 +259,11 @@ function formatResults(results: SearchResult[], engine: string): string {
 async function googleSearch(
   page: Page,
   query: string,
+  num: number,
 ): Promise<SearchResult[] | null> {
   try {
     await page.goto(
-      `https://www.google.com/search?q=${encodeURIComponent(query)}&num=10&hl=en`,
+      `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en`,
       { timeout: NAV_TIMEOUT_MS, waitUntil: "domcontentloaded" },
     );
     if (page.url().includes("/sorry/")) return null; // rate-limit interstitial
@@ -249,7 +275,7 @@ async function googleSearch(
     }
     if (await page.$("#captcha-form, form[action*='sorry']")) return null;
     const results = await page.$$eval("#search h3", (headings) =>
-      headings.slice(0, 12).map((h) => {
+      headings.map((h) => {
         const a = h.closest("a") as HTMLAnchorElement | null;
         // Snippet: the nearest result container's descriptive text block.
         const container = h.closest("div[data-hveid], div.g");
@@ -266,7 +292,7 @@ async function googleSearch(
     const usable = results.filter(
       (r) => r.title && /^https?:\/\//i.test(r.url) && !r.url.includes("google."),
     );
-    return usable.length > 0 ? usable.slice(0, 10) : null;
+    return usable.length > 0 ? usable.slice(0, num) : null;
   } catch {
     return null;
   }
@@ -275,6 +301,7 @@ async function googleSearch(
 async function ddgSearch(
   page: Page,
   query: string,
+  num: number,
 ): Promise<SearchResult[] | null> {
   try {
     await page.goto(
@@ -283,7 +310,7 @@ async function ddgSearch(
     );
     if (await page.$("form[action*='anomaly'], .anomaly-modal")) return null;
     const results = await page.$$eval(".result", (nodes) =>
-      nodes.slice(0, 8).map((n) => {
+      nodes.map((n) => {
         const a = n.querySelector<HTMLAnchorElement>(".result__a");
         const s = n.querySelector(".result__snippet");
         return {
@@ -296,16 +323,20 @@ async function ddgSearch(
     const usable = results
       .filter((r) => r.title && r.url)
       .map((r) => ({ ...r, url: decodeDdgUrl(r.url) }));
-    return usable.length > 0 ? usable : null;
+    return usable.length > 0 ? usable.slice(0, num) : null;
   } catch {
     return null;
   }
 }
 
-async function toolWebSearch(page: Page, query: string): Promise<string> {
-  const google = await googleSearch(page, query);
+async function toolWebSearch(
+  page: Page,
+  query: string,
+  num: number,
+): Promise<string> {
+  const google = await googleSearch(page, query, num);
   if (google) return formatResults(google, "Google");
-  const ddg = await ddgSearch(page, query);
+  const ddg = await ddgSearch(page, query, num);
   if (ddg) return formatResults(ddg, "DuckDuckGo — Google was unavailable");
   return "Search is temporarily unavailable — try again in a moment or open a URL you already know.";
 }
@@ -412,6 +443,10 @@ function capResult(text: string): string {
     : text;
 }
 
+export type ToolOutcome =
+  | { kind: "text"; text: string }
+  | { kind: "image"; dataB64: string; note: string };
+
 /**
  * Execute one tool call. NEVER throws for content-level failures — the
  * model sees the error text and adapts (a dead page or expired session is
@@ -421,20 +456,44 @@ export async function execBrowserTool(
   session: BrowserHandle,
   name: string,
   args: Record<string, unknown>,
-): Promise<string> {
+): Promise<ToolOutcome> {
   try {
     if (name === "web_search") {
       const q = typeof args.query === "string" ? args.query.slice(0, 400) : "";
-      if (!q) return "Error: web_search needs a non-empty query string.";
-      return await toolWebSearch(session.page, q);
+      if (!q) {
+        return { kind: "text", text: "Error: web_search needs a non-empty query string." };
+      }
+      const rawNum = Number(args.num_results);
+      const num = Number.isFinite(rawNum)
+        ? Math.min(100, Math.max(10, Math.round(rawNum)))
+        : 10;
+      return { kind: "text", text: await toolWebSearch(session.page, q, num) };
     }
     if (name === "open_page") {
       const url = typeof args.url === "string" ? args.url.slice(0, 2000) : "";
-      return await toolOpenPage(session.page, url);
+      return { kind: "text", text: await toolOpenPage(session.page, url) };
     }
-    return `Error: unknown tool "${name}".`;
+    if (name === "view_page") {
+      if (!session.vision) {
+        return { kind: "text", text: "Error: view_page isn't available to this agent." };
+      }
+      const shot = await session.page.screenshot({
+        type: "jpeg",
+        quality: 70,
+        fullPage: false,
+      });
+      return {
+        kind: "image",
+        dataB64: shot.toString("base64"),
+        note: `Screenshot of ${session.page.url()}`,
+      };
+    }
+    return { kind: "text", text: `Error: unknown tool "${name}".` };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return `Error: the browser action failed (${msg.slice(0, 200)}). Try a different query or URL.`;
+    return {
+      kind: "text",
+      text: `Error: the browser action failed (${msg.slice(0, 200)}). Try a different query or URL.`,
+    };
   }
 }

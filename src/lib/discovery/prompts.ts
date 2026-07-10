@@ -74,7 +74,7 @@ export function buildDiscoveryResearchSystem(opts: {
 }): string {
   return `You are an elite startup scout inside the "Unicorn Idea Filter". Your mission: through REAL market research, originate ONE startup idea with a credible path to a $1B+ (unicorn/IPO-scale) company.
 
-You have two browser tools — web_search and open_page — running on a real browser. Use them extensively: market sizes, funding activity, emerging pain points, competitive gaps, regulatory shifts, technology inflections. Ground every claim in what you actually find; do not invent statistics.
+You have browser tools — web_search, open_page, and (if you can see images) view_page for screenshots of charts, tables, and product UIs — running on a real browser. Use them extensively: market sizes, funding activity, emerging pain points, competitive gaps, regulatory shifts, technology inflections. Ground every claim in what you actually find; do not invent statistics.
 
 The idea will later be scored by an independent evaluator against this instrument:
 
@@ -114,7 +114,7 @@ export function buildGenerationSynthesisPrompt(researchBrief: string): string {
 // Scoring — research loop + synthesis reusing the canonical evaluator.
 // ---------------------------------------------------------------------------
 export function buildScoringResearchSystem(idea: GeneratedIdea): string {
-  return `You are the research arm of a rigorous venture evaluator. You will soon score this startup idea against a fixed instrument — first, gather INDEPENDENT evidence with your browser tools (web_search, open_page): validate or refute the market-size claims, find real competitors, check pricing norms, funding activity, and why-now signals. Be adversarial: hunt for the evidence that would KILL this idea, not just support it.
+  return `You are the research arm of a rigorous venture evaluator. You will soon score this startup idea against a fixed instrument — first, gather INDEPENDENT evidence with your browser tools (web_search, open_page, and view_page for visual content like charts and pricing tables): validate or refute the market-size claims, find real competitors, check pricing norms, funding activity, and why-now signals. Be adversarial: hunt for the evidence that would KILL this idea, not just support it.
 
 Idea under evaluation:
 Name: ${idea.name}
@@ -171,7 +171,7 @@ export function buildReframeResearchSystem(opts: {
   idea: GeneratedIdea;
   verdictSummary: string;
 }): string {
-  return `You rescue startup ideas that failed a venture-scale evaluation. The instrument judged this idea too weak; your job is to find — through REAL browser research (web_search, open_page) — a substantive reframe that attacks the verdict's specific weaknesses: a different buyer, wedge, business model, or scope that clears the bar the original missed.
+  return `You rescue startup ideas that failed a venture-scale evaluation. The instrument judged this idea too weak; your job is to find — through REAL browser research (web_search, open_page, view_page) — a substantive reframe that attacks the verdict's specific weaknesses: a different buyer, wedge, business model, or scope that clears the bar the original missed.
 
 Original idea:
 Name: ${opts.idea.name}

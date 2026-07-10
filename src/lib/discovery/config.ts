@@ -14,6 +14,11 @@ export interface DiscoveryModel {
    *  company that generated it). OpenRouter models carry their upstream
    *  vendor, not "openrouter". */
   vendor: "openai" | "anthropic" | "deepseek" | "alibaba" | "google" | "meta";
+  /** Vision-capable models browse with images/media unblocked and get the
+   *  view_page screenshot tool (charts/tables/product UIs become visible).
+   *  Only set where multimodal support is CONFIRMED — sending an image to
+   *  a text-only model errors the turn. */
+  vision?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -25,16 +30,16 @@ export interface DiscoveryModel {
 // with ONE background pro-mode call (no tools) — the design-chain pattern.
 // ---------------------------------------------------------------------------
 export const GEN_OPENAI: DiscoveryModel = {
-  provider: "openai", model: "gpt-5.6-sol", vendor: "openai",
+  provider: "openai", model: "gpt-5.6-sol", vendor: "openai", vision: true,
 };
 export const GEN_ANTHROPIC: DiscoveryModel = {
-  provider: "anthropic", model: "claude-fable-5", vendor: "anthropic",
+  provider: "anthropic", model: "claude-fable-5", vendor: "anthropic", vision: true,
 };
 export const OPENROUTER_GENERATORS: DiscoveryModel[] = [
   { provider: "openrouter", model: "deepseek/deepseek-v4-pro", vendor: "deepseek" },
   { provider: "openrouter", model: "qwen/qwen3.7-max", vendor: "alibaba" },
-  { provider: "openrouter", model: "google/gemini-3.1-pro-preview", vendor: "google" },
-  { provider: "openrouter", model: "meta-llama/llama-4-maverick", vendor: "meta" },
+  { provider: "openrouter", model: "google/gemini-3.1-pro-preview", vendor: "google", vision: true },
+  { provider: "openrouter", model: "meta-llama/llama-4-maverick", vendor: "meta", vision: true },
 ];
 
 /** The distinct generator models (for policy iteration/tests). */
@@ -74,18 +79,18 @@ export function roundForIdx(idx: number): number {
 
 // Scorers (user-fixed): GPT-5.6 Sol thinking (max effort) or Opus 4.8 (max).
 export const SCORER_OPENAI: DiscoveryModel = {
-  provider: "openai", model: "gpt-5.6-sol", vendor: "openai",
+  provider: "openai", model: "gpt-5.6-sol", vendor: "openai", vision: true,
 };
 export const SCORER_ANTHROPIC: DiscoveryModel = {
-  provider: "anthropic", model: "claude-opus-4-8", vendor: "anthropic",
+  provider: "anthropic", model: "claude-opus-4-8", vendor: "anthropic", vision: true,
 };
 
 // Reframers (user-fixed): Fable 5 max or GPT-5.6 Sol pro-mode.
 export const REFRAMER_ANTHROPIC: DiscoveryModel = {
-  provider: "anthropic", model: "claude-fable-5", vendor: "anthropic",
+  provider: "anthropic", model: "claude-fable-5", vendor: "anthropic", vision: true,
 };
 export const REFRAMER_OPENAI: DiscoveryModel = {
-  provider: "openai", model: "gpt-5.6-sol", vendor: "openai",
+  provider: "openai", model: "gpt-5.6-sol", vendor: "openai", vision: true,
 };
 
 /** Cross-vendor rule: the scorer's company must differ from the company

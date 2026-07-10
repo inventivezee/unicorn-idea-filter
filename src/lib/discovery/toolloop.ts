@@ -22,9 +22,10 @@ import {
   type ORTool,
 } from "@/lib/ai/openrouter";
 import {
-  BROWSER_TOOL_DEFS,
+  browserToolDefs,
   execBrowserTool,
   type BrowserHandle,
+  type ToolOutcome,
 } from "./browserbase";
 import { TASK_STATE_CHAR_BUDGET } from "./config";
 
@@ -109,6 +110,45 @@ export function trimLoopState(state: LoopState): LoopState {
   return state;
 }
 
+const SCREENSHOT_PLACEHOLDER =
+  "[screenshot was shown here — it has been viewed and pruned from history]";
+
+/** Each screenshot is sent to the model exactly once (the turn after it was
+ *  taken), then pruned: base64 images would blow the persisted state budget
+ *  and re-billing them every turn buys nothing. Only the LAST user message
+ *  (the fresh tool results) keeps its images. */
+function stripOldImages(state: LoopState): void {
+  if (state.kind === "anthropic") {
+    for (let i = 0; i < state.messages.length - 1; i++) {
+      const m = state.messages[i];
+      if (m.role !== "user" || !Array.isArray(m.content)) continue;
+      for (const block of m.content) {
+        if (
+          typeof block !== "string" &&
+          block.type === "tool_result" &&
+          Array.isArray(block.content)
+        ) {
+          block.content = block.content.map((c) =>
+            typeof c !== "string" && c.type === "image"
+              ? { type: "text" as const, text: SCREENSHOT_PLACEHOLDER }
+              : c,
+          );
+        }
+      }
+    }
+  } else if (state.kind === "openrouter") {
+    for (let i = 0; i < state.messages.length - 1; i++) {
+      const m = state.messages[i] as { role?: string; content?: unknown };
+      if (m.role === "user" && Array.isArray(m.content)) {
+        const hasImage = (m.content as Array<{ type?: string }>).some(
+          (c) => c.type === "image_url",
+        );
+        if (hasImage) m.content = SCREENSHOT_PLACEHOLDER;
+      }
+    }
+  }
+}
+
 export interface ResearchTurnResult {
   state: LoopState;
   /** True when the model produced no tool calls — research is finished. */
@@ -168,7 +208,10 @@ async function anthropicTurn(
   state: Extract<LoopState, { kind: "anthropic" }>,
 ): Promise<ResearchTurnResult> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const tools: Anthropic.Tool[] = BROWSER_TOOL_DEFS.map((t) => ({
+  stripOldImages(state);
+  const tools: Anthropic.Tool[] = browserToolDefs(
+    opts.session.vision ?? false,
+  ).map((t) => ({
     name: t.name,
     description: t.description,
     input_schema: t.parameters as unknown as Anthropic.Tool.InputSchema,
@@ -211,12 +254,29 @@ async function anthropicTurn(
   }
   const results: Anthropic.ToolResultBlockParam[] = [];
   for (const tu of toolUses) {
-    const output = await execBrowserTool(
+    const outcome = await execBrowserTool(
       opts.session,
       tu.name,
       (tu.input ?? {}) as Record<string, unknown>,
     );
-    results.push({ type: "tool_result", tool_use_id: tu.id, content: output });
+    results.push({
+      type: "tool_result",
+      tool_use_id: tu.id,
+      content:
+        outcome.kind === "text"
+          ? outcome.text
+          : [
+              {
+                type: "image" as const,
+                source: {
+                  type: "base64" as const,
+                  media_type: "image/jpeg" as const,
+                  data: outcome.dataB64,
+                },
+              },
+              { type: "text" as const, text: outcome.note },
+            ],
+    });
   }
   state.messages.push({ role: "user", content: results });
   return { state: trimLoopState(state), done: false, toolUses: toolUses.length };
@@ -233,7 +293,7 @@ async function openaiTurn(
   state: Extract<LoopState, { kind: "openai" }>,
 ): Promise<ResearchTurnResult> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const tools = BROWSER_TOOL_DEFS.map((t) => ({
+  const tools = browserToolDefs(opts.session.vision ?? false).map((t) => ({
     type: "function" as const,
     name: t.name,
     description: t.description,
@@ -247,12 +307,30 @@ async function openaiTurn(
   if (state.responseId && state.pending.length > 0) {
     const outputs: OpenAI.Responses.ResponseInputItem[] = [];
     for (const call of state.pending) {
-      const output = await execBrowserTool(opts.session, call.name, call.args);
-      outputs.push({
-        type: "function_call_output",
-        call_id: call.callId,
-        output,
-      });
+      const outcome = await execBrowserTool(opts.session, call.name, call.args);
+      if (outcome.kind === "text") {
+        outputs.push({
+          type: "function_call_output",
+          call_id: call.callId,
+          output: outcome.text,
+        });
+      } else {
+        outputs.push({
+          type: "function_call_output",
+          call_id: call.callId,
+          output: `${outcome.note} — the screenshot follows as the next message.`,
+        });
+        outputs.push({
+          role: "user",
+          content: [
+            {
+              type: "input_image",
+              image_url: `data:image/jpeg;base64,${outcome.dataB64}`,
+              detail: "high",
+            },
+          ],
+        });
+      }
     }
     if (state.wrapUpPending) {
       outputs.push({ role: "user", content: WRAP_UP_MSG });
@@ -299,14 +377,17 @@ async function openrouterResearch(
   opts: { model: string; session: BrowserHandle },
   state: Extract<LoopState, { kind: "openrouter" }>,
 ): Promise<ResearchTurnResult> {
-  const tools: ORTool[] = BROWSER_TOOL_DEFS.map((t) => ({
-    type: "function" as const,
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.parameters as Record<string, unknown>,
-    },
-  }));
+  stripOldImages(state);
+  const tools: ORTool[] = browserToolDefs(opts.session.vision ?? false).map(
+    (t) => ({
+      type: "function" as const,
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters as Record<string, unknown>,
+      },
+    }),
+  );
   const turn = await openrouterTurn({
     model: opts.model,
     messages: state.messages,
@@ -320,12 +401,29 @@ async function openrouterResearch(
     return { state: trimLoopState(state), done: true, toolUses: 0 };
   }
   for (const call of turn.toolCalls) {
-    const output = await execBrowserTool(opts.session, call.name, call.args);
-    state.messages.push({
-      role: "tool",
-      tool_call_id: call.id,
-      content: output,
-    });
+    const outcome = await execBrowserTool(opts.session, call.name, call.args);
+    if (outcome.kind === "text") {
+      state.messages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        content: outcome.text,
+      });
+    } else {
+      state.messages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        content: `${outcome.note} — the screenshot follows as the next message.`,
+      });
+      state.messages.push({
+        role: "user",
+        content: [
+          {
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${outcome.dataB64}` },
+          },
+        ],
+      });
+    }
   }
   return {
     state: trimLoopState(state),

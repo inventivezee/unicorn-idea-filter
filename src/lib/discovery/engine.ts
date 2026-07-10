@@ -745,8 +745,14 @@ async function advanceTask(
             continue;
           }
         }
+        // A chunk can cross a phase boundary onto a model with different
+        // vision capability — recreate the tab so blocking + view_page match.
+        if (handle && (handle.vision ?? false) !== (model.vision ?? false)) {
+          await closeTaskPage(handle);
+          handle = null;
+        }
         if (!handle) {
-          handle = await createTaskPage(holder.session);
+          handle = await createTaskPage(holder.session, model.vision ?? false);
         }
         // Persist the session + page ids on the task before use (leak audit
         // trail + live-view targeting; clears any earlier failure note).
