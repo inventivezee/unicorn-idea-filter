@@ -71,6 +71,8 @@ export function buildDiscoveryResearchSystem(opts: {
   guidelines: string;
   founderBackground: string;
   round: number;
+  /** One-line digests of sibling candidates already in this run. */
+  siblings?: string;
 }): string {
   return `You are an elite startup scout inside the "Unicorn Idea Filter". Your mission: through REAL market research, originate ONE startup idea with a credible path to a $1B+ (unicorn/IPO-scale) company.
 
@@ -94,8 +96,13 @@ ${
     ? `\nThis is candidate #${opts.round} from you in this run — pick a DIFFERENT wedge, market, or model than your first instinct; avoid the obvious first-choice idea for this space.`
     : ""
 }
+${
+  opts.siblings
+    ? `\nCANDIDATES ALREADY BEING DEVELOPED by sibling agents in this run — your idea must be CLEARLY DISTINCT from every one of them (different problem, buyer, or wedge — not a rewording):\n${opts.siblings}`
+    : ""
+}
 
-Work method: search broadly → open the most promising sources → follow the evidence. When (and only when) you are confident you've found the strongest opportunity, STOP calling tools and write your final RESEARCH BRIEF as plain text: the opportunity, the evidence (with numbers you verified), why now, the wedge, competition, and the founder-fit angle. Keep it under 1200 words.`;
+Work method: search broadly → open the most promising sources → follow the evidence. When (and only when) you are confident you've mapped the space, STOP calling tools and write your final RESEARCH BRIEF as plain text: (1) the TOP 3 candidate framings you found, each with a short comparative assessment against the instrument; (2) your PICK and why; (3) for the pick — the opportunity, the evidence (with the numbers you verified and where), why now, the wedge, competition, and the founder-fit angle. Keep it under 2500 words.`;
 }
 
 export function buildDiscoveryResearchPrompt(guidelines: string): string {
@@ -106,8 +113,22 @@ export function buildGenerationSynthesisSystem(): string {
   return `You turn a research brief into ONE structured startup idea for the Unicorn Idea Filter database. Write tight, specific, evidence-grounded fields — a reader should understand exactly who pays, for what, and why this wins. thesisNotes: the core insight, why it wins, why now, and the strongest evidence from the research (with the concrete numbers found). ${ANONYMITY_RULE}`;
 }
 
-export function buildGenerationSynthesisPrompt(researchBrief: string): string {
-  return `## Research brief\n\n${researchBrief}\n\nProduce the final structured idea now.`;
+export function buildGenerationSynthesisPrompt(
+  researchBrief: string,
+  critique?: string,
+  researchLog?: string,
+): string {
+  return `## Research brief\n\n${researchBrief}${
+    critique ? `\n\n## Red-team critique (address its recommendation)\n\n${critique}` : ""
+  }${
+    researchLog
+      ? `\n\n## Appendix: full research transcript (raw — use it to recover specifics the brief compressed away)\n\n${researchLog.slice(-300_000)}`
+      : ""
+  }\n\nProduce the final structured idea now.`;
+}
+
+export function buildCritiqueSystem(): string {
+  return `You are a ruthless venture red-teamer. You receive a scout's research brief proposing candidate startup framings and a pick. Attack it: is the pick actually the strongest of the three against the instrument (venture-scale bar)? Which specific gates/criteria is it weakest on, and does one of the alternates dominate it? What would a skeptical partner meeting kill it for? End with: (1) FINAL FRAMING — keep the pick or switch to an alternate, stated plainly; (2) three concrete strengthenings (sharper wedge, better buyer, stronger why-now) the final idea must incorporate. Under 1200 words.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +145,7 @@ Buyer/ICP: ${idea.buyerICP}
 Initial wedge: ${idea.initialWedge}
 Thesis: ${idea.thesisNotes}
 
-When you have enough evidence for a calibrated verdict, STOP calling tools and write a plain-text EVIDENCE MEMO (under 1000 words): what you verified, what you refuted, competitors found, and the decisive facts — each tagged with where you found it.`;
+When you have enough evidence for a calibrated verdict, STOP calling tools and write a plain-text EVIDENCE MEMO (under 2000 words): what you verified, what you refuted, competitors found, and the decisive facts — each tagged with where you found it.`;
 }
 
 export function buildScoringResearchPrompt(): string {
@@ -143,6 +164,7 @@ export function buildScoringSynthesisPrompt(opts: {
   founderBackground: string;
   coFounders: CoFounderInput[];
   evidenceMemo: string;
+  researchLog?: string;
 }): string {
   const base = buildUserPrompt(
     {
@@ -161,7 +183,11 @@ export function buildScoringSynthesisPrompt(opts: {
 
 ## Independent research evidence (gathered live by your research arm — weigh it above the pitch's own claims)
 
-${opts.evidenceMemo || "(no research memo available)"}`;
+${opts.evidenceMemo || "(no research memo available)"}${
+    opts.researchLog
+      ? `\n\n## Appendix: full evidence-gathering transcript (raw)\n\n${opts.researchLog.slice(-300_000)}`
+      : ""
+  }`;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +196,7 @@ ${opts.evidenceMemo || "(no research memo available)"}`;
 export function buildReframeResearchSystem(opts: {
   idea: GeneratedIdea;
   verdictSummary: string;
+  history?: Array<{ name: string; summary: string }>;
 }): string {
   return `You rescue startup ideas that failed a venture-scale evaluation. The instrument judged this idea too weak; your job is to find — through REAL browser research (web_search, open_page, view_page) — a substantive reframe that attacks the verdict's specific weaknesses: a different buyer, wedge, business model, or scope that clears the bar the original missed.
 
@@ -183,7 +210,13 @@ Thesis: ${opts.idea.thesisNotes}
 
 Why it failed:
 ${opts.verdictSummary}
-
+${
+  opts.history?.length
+    ? `\nPRIOR RESCUE ATTEMPTS that STILL FAILED — do something meaningfully different from all of them:\n${opts.history
+        .map((h, i) => `Attempt ${i + 1} ("${h.name}"): ${h.summary}`)
+        .join("\n\n")}`
+    : ""
+}
 Research the failure points, then STOP calling tools and write a plain-text REFRAME BRIEF (under 1000 words): the pivot, the evidence it clears the failed bars, and what changed.`;
 }
 

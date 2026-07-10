@@ -210,6 +210,9 @@ export async function runResearchTurn(opts: {
   /** Two turns before the phase cap the engine sets this — the agent gets
    *  told to finish instead of dying mid-research on the budget. */
   wrapUp?: boolean;
+  /** Forced-delivery mode: no tools attached — the model can only write
+   *  its deliverable from what it already has. */
+  noTools?: boolean;
 }): Promise<ResearchTurnResult> {
   if (opts.wrapUp) injectWrapUp(opts.state);
   if (opts.state.kind === "anthropic") return anthropicTurn(opts, opts.state);
@@ -246,20 +249,20 @@ async function anthropicTurn(
 ): Promise<ResearchTurnResult> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   stripOldImages(state);
-  const tools: Anthropic.Tool[] = browserToolDefs(
-    opts.session.vision ?? false,
-  ).map((t) => ({
-    name: t.name,
-    description: t.description,
-    input_schema: t.parameters as unknown as Anthropic.Tool.InputSchema,
-  }));
+  const tools: Anthropic.Tool[] = (opts as { noTools?: boolean }).noTools
+    ? []
+    : browserToolDefs(opts.session.vision ?? false).map((t) => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.parameters as unknown as Anthropic.Tool.InputSchema,
+      }));
   const params = {
     model: opts.model,
     max_tokens: 32000,
     thinking: { type: "adaptive" as const },
     system: cachedSystem(opts.system),
     ...(opts.effort ? { output_config: { effort: opts.effort } } : {}),
-    tools,
+    ...(tools.length > 0 ? { tools } : {}),
     messages: cachedMessages(state.messages),
   };
   // Streamed under the hood: the SDK REQUIRES streaming for requests whose
@@ -338,13 +341,17 @@ async function openaiTurn(
   state: Extract<LoopState, { kind: "openai" }>,
 ): Promise<ResearchTurnResult> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const tools = browserToolDefs(opts.session.vision ?? false).map((t) => ({
-    type: "function" as const,
-    name: t.name,
-    description: t.description,
-    parameters: t.parameters as Record<string, unknown>,
-    strict: true,
-  }));
+  const tools = (opts as { noTools?: boolean }).noTools
+    ? []
+    : browserToolDefs(opts.session.vision ?? false).map((t) => ({
+        type: "function" as const,
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters as Record<string, unknown>,
+        // strict:false — the tool schemas carry OPTIONAL params (search
+        // verticals, pagination), which strict mode disallows.
+        strict: false,
+      }));
 
   // Execute any tool calls left pending from the previous turn FIRST, so
   // their outputs ride into this request (server-side history via store).
@@ -394,7 +401,7 @@ async function openaiTurn(
     instructions: opts.system,
     ...(state.responseId ? { previous_response_id: state.responseId } : {}),
     input,
-    tools,
+    ...(tools.length > 0 ? { tools } : {}),
     store: true,
     ...(opts.effort
       ? { reasoning: { effort: clampOpenAIEffort(opts.effort) } }
@@ -427,20 +434,20 @@ async function openrouterResearch(
   state: Extract<LoopState, { kind: "openrouter" }>,
 ): Promise<ResearchTurnResult> {
   stripOldImages(state);
-  const tools: ORTool[] = browserToolDefs(opts.session.vision ?? false).map(
-    (t) => ({
-      type: "function" as const,
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters as Record<string, unknown>,
-      },
-    }),
-  );
+  const tools: ORTool[] = (opts as { noTools?: boolean }).noTools
+    ? []
+    : browserToolDefs(opts.session.vision ?? false).map((t) => ({
+        type: "function" as const,
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters as Record<string, unknown>,
+        },
+      }));
   const turn = await openrouterTurn({
     model: opts.model,
     messages: state.messages,
-    tools,
+    ...(tools.length > 0 ? { tools } : {}),
     ...(opts.effort
       ? { reasoningEffort: (opts.effort === "max" || opts.effort === "xhigh"
           ? "high"
@@ -602,6 +609,73 @@ async function anthropicSynthesisAttempt(
       response.content.filter((b) => b.type === "text").map((b) => b.text),
     );
   }
+}
+
+/** One plain-text call, no tools, no schema — the critique stage. */
+export async function plainTextCall(opts: {
+  provider: "anthropic" | "openai" | "openrouter";
+  model: string;
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  system: string;
+  prompt: string;
+}): Promise<string> {
+  if (opts.provider === "anthropic") {
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const params = {
+      model: opts.model,
+      max_tokens: 32000,
+      thinking: { type: "adaptive" as const },
+      system: cachedSystem(opts.system),
+      ...(opts.effort ? { output_config: { effort: opts.effort } } : {}),
+      messages: [{ role: "user" as const, content: opts.prompt }],
+    };
+    const response = FABLE_MODELS.test(opts.model)
+      ? ((await client.beta.messages
+          .stream({
+            ...(params as unknown as Record<string, unknown>),
+            betas: ["server-side-fallback-2026-06-01"],
+            fallbacks: [{ model: "claude-opus-4-8" }],
+          } as unknown as Parameters<typeof client.beta.messages.stream>[0])
+          .finalMessage()) as unknown as Anthropic.Message)
+      : await client.messages
+          .stream(params as Anthropic.MessageCreateParamsNonStreaming)
+          .finalMessage();
+    if (response.stop_reason === "refusal") {
+      throw new UserFacingError("The model declined the critique step.");
+    }
+    return response.content
+      .filter((b) => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+  }
+  if (opts.provider === "openai") {
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const response = await client.responses.create({
+      model: opts.model,
+      instructions: opts.system,
+      input: opts.prompt,
+      ...(opts.effort
+        ? { reasoning: { effort: clampOpenAIEffort(opts.effort) } }
+        : {}),
+    });
+    if (response.status === "incomplete") {
+      throw new UserFacingError("The critique step stopped early.");
+    }
+    return response.output_text ?? "";
+  }
+  const turn = await openrouterTurn({
+    model: opts.model,
+    messages: [
+      { role: "system", content: opts.system },
+      { role: "user", content: opts.prompt },
+    ],
+    ...(opts.effort
+      ? { reasoningEffort: (opts.effort === "max" || opts.effort === "xhigh"
+          ? "high"
+          : opts.effort) as "low" | "medium" | "high" }
+      : {}),
+  });
+  return turn.text;
 }
 
 /** Submit the OpenAI pro-mode background synthesis; returns the response id

@@ -77,6 +77,9 @@ export async function createTaskPage(
   const context =
     session.browser.contexts()[0] ?? (await session.browser.newContext());
   const page = await context.newPage();
+  // Explicit desktop viewport: consistent layouts for screenshots and
+  // predictable viewport-height scrolling (CDP-attached pages default tiny).
+  await page.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
   if (!vision) await blockHeavyResources(page);
   let targetId: string | undefined;
   try {
@@ -171,16 +174,24 @@ export async function releaseSessionById(sessionId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// The two research tools models see. Schemas stay lean (invariant #4 habit).
+// The research tools models see. Schemas stay lean (invariant #4 habit) but
+// may carry OPTIONAL properties — strict-mode reconciliation happens at the
+// call sites that map these defs into each provider's tool format.
 // ---------------------------------------------------------------------------
 const VIEW_PAGE_TOOL = {
   name: "view_page",
   description:
-    "Take a screenshot of the page currently open in your browser and SEE it. Use after open_page when the key content is visual: charts, pricing tables, dashboards, product UIs.",
+    "Take a screenshot of the page currently open in your browser and SEE it. Use after open_page when the key content is visual: charts, pricing tables, dashboards, product UIs. Set full_page: true to capture the whole page instead of just the viewport.",
   parameters: {
     type: "object",
     additionalProperties: false,
-    properties: {},
+    properties: {
+      full_page: {
+        type: "boolean",
+        description:
+          "Capture the entire page height instead of just the current viewport.",
+      },
+    },
     required: [],
   },
 } as const;
@@ -193,7 +204,7 @@ export const BROWSER_TOOL_DEFS = [
   {
     name: "web_search",
     description:
-      "Search the web (Google). Returns results as titles, URLs, and snippets. Ask for as many results as your research needs (10 for a quick look, 50-100 to map a whole space).",
+      "Search the web (Google, with a DuckDuckGo fallback). Returns titles, URLs, and snippets, paginating automatically until num_results is met. Optional: vertical ('news' for recent coverage, 'scholar' for academic papers, 'patents' for prior art), a recency window, and a country code. Ask for as many results as your research needs (10 for a quick look, 50-100 to map a whole space).",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -203,6 +214,22 @@ export const BROWSER_TOOL_DEFS = [
           type: "integer",
           description: "How many results to return, 10-100.",
         },
+        vertical: {
+          type: "string",
+          enum: ["web", "news", "scholar", "patents"],
+          description: "Search vertical. Default 'web'.",
+        },
+        recency: {
+          type: "string",
+          enum: ["week", "month", "year"],
+          description:
+            "Only results from the last week/month/year (web and news only).",
+        },
+        country: {
+          type: "string",
+          description:
+            "2-letter country code to localize results, e.g. 'de' or 'jp' (web and news only).",
+        },
       },
       required: ["query", "num_results"],
     },
@@ -210,21 +237,96 @@ export const BROWSER_TOOL_DEFS = [
   {
     name: "open_page",
     description:
-      "Open a URL in the browser and return the page's readable text (trimmed).",
+      "Open a URL in the browser and return the page's readable text (tables arrive as pipe-delimited rows; PDFs are text-extracted). Long documents return a window plus a footer telling you the from_char offset to continue from. For PDFs, pdf_pages like '26-50' reads a specific 1-indexed page range.",
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
         url: { type: "string", description: "Absolute http(s) URL to open." },
+        from_char: {
+          type: "integer",
+          description:
+            "Continue a long page from this character offset (use the value a previous open_page footer gave you).",
+        },
+        pdf_pages: {
+          type: "string",
+          description:
+            "PDFs only: 1-indexed page range to extract, e.g. '26-50'.",
+        },
       },
       required: ["url"],
+    },
+  },
+  {
+    name: "scroll_page",
+    description:
+      "Scroll the page currently open in your browser down N viewport-heights and return only the NEWLY revealed text. Use on infinite feeds, lazy-loaded reviews, and long tables; call repeatedly to keep loading more.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        pages: {
+          type: "integer",
+          description: "How many viewport-heights to scroll down, 1-10.",
+        },
+      },
+      required: ["pages"],
+    },
+  },
+  {
+    name: "click_element",
+    description:
+      "Click the first visible element on the current page whose text matches (button, link, tab, 'Load more', accordion header), then return the page's text after the click settles. Use to open pricing tabs, expand sections, or trigger 'load more'.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        text: {
+          type: "string",
+          description:
+            "Visible text of the element to click (case-insensitive substring match).",
+        },
+      },
+      required: ["text"],
     },
   },
 ] as const;
 
 export type BrowserToolName = (typeof BROWSER_TOOL_DEFS)[number]["name"];
 
-const NAV_TIMEOUT_MS = 30_000;
+const NAV_TIMEOUT_MS = 60_000;
+const PDF_MAX_PAGES = 200;
+const PDF_FETCH_TIMEOUT_MS = 60_000;
+
+/** Chars of page text already handed to the model, per live Page —
+ *  scroll_page returns only the tail beyond this watermark. */
+const extractedLenByPage = new WeakMap<Page, number>();
+
+/** Small LRU of cacheKey (url, or url+pdf range) → full extracted text so
+ *  from_char continuations don't re-navigate (and PDFs don't re-download).
+ *  Warm-lambda lifetime only — a miss simply re-extracts. */
+const PAGE_TEXT_CACHE_MAX = 20;
+const pageTextCache = new Map<string, string>();
+
+function cacheGet(key: string): string | undefined {
+  const hit = pageTextCache.get(key);
+  if (hit !== undefined) {
+    // Refresh recency — Map iterates in insertion order.
+    pageTextCache.delete(key);
+    pageTextCache.set(key, hit);
+  }
+  return hit;
+}
+
+function cachePut(key: string, text: string): void {
+  pageTextCache.delete(key);
+  pageTextCache.set(key, text);
+  while (pageTextCache.size > PAGE_TEXT_CACHE_MAX) {
+    const oldest = pageTextCache.keys().next().value;
+    if (oldest === undefined) break;
+    pageTextCache.delete(oldest);
+  }
+}
 
 /** DDG SERP anchors are /l/?uddg=<encoded> redirects — decode to hand the
  *  model real URLs (saves an open_page hop through the redirect). */

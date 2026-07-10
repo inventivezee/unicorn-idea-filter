@@ -73,12 +73,14 @@ import {
   openaiSynthesisPoll,
   openaiSynthesisSubmit,
   openaiSynthesisSync,
+  plainTextCall,
   runResearchTurn,
   runSynthesisSync,
   type LoopState,
 } from "./toolloop";
 import {
   IDEA_GEN_SCHEMA,
+  buildCritiqueSystem,
   buildDiscoveryResearchPrompt,
   buildDiscoveryResearchSystem,
   buildGenerationSynthesisPrompt,
@@ -104,9 +106,17 @@ interface PhaseState {
   idea?: GeneratedIdea;
   brief?: string;
   memo?: string;
+  /** Raw phase transcript — carried into synthesis so the brief/memo
+   *  compression never throws away paid-for evidence. */
+  researchLog?: string;
+  /** Red-team pass over the brief (generation phase only). */
+  critique?: string;
   synthJobId?: string;
   verdictSummary?: string;
   verdict?: AnalyzeResponse;
+  reframeAttempt?: number;
+  reframeHistory?: Array<{ name: string; summary: string }>;
+  forcedWrapup?: boolean;
   founderBackground?: string;
   round?: number;
 }
@@ -116,6 +126,7 @@ type Step =
   | { kind: "research_turn"; phase: TurnPhase }
   | { kind: "synth_submit"; phase: TurnPhase }
   | { kind: "synth_poll"; phase: TurnPhase }
+  | { kind: "critique"; phase: TurnPhase }
   | { kind: "synth_sync"; phase: TurnPhase }
   | { kind: "score_sync"; phase: TurnPhase }
   | { kind: "decide" }
@@ -130,6 +141,7 @@ export function worstCaseMs(step: { kind: Step["kind"] }, provider: string): num
       return provider === "openrouter"
         ? WORST_TURN_MS.openrouter
         : WORST_TURN_MS.premium;
+    case "critique":
     case "synth_sync":
     case "score_sync":
       return WORST_TURN_MS.synthesis;
@@ -147,6 +159,57 @@ function turnKeyFor(status: TaskStatus): TurnPhase {
   if (status === "scoring") return "score";
   if (status === "reframing") return "reframe";
   return "rescore";
+}
+
+/** Raw transcript of a research loop — assistant reasoning, tool calls,
+ *  and tool results — so downstream synthesis can recover specifics that
+ *  the brief/memo compressed away. Newest 400k chars win. */
+function transcriptFromLoop(loop: LoopState | undefined): string {
+  if (!loop) return "";
+  const parts: string[] = [];
+  if (loop.kind === "anthropic" || loop.kind === "openrouter") {
+    for (const m of loop.messages) {
+      const msg = m as {
+        role?: string;
+        content?: unknown;
+        tool_calls?: Array<{ function?: { name?: string; arguments?: string } }>;
+      };
+      if (msg.role === "assistant") {
+        if (typeof msg.content === "string") parts.push(`AGENT: ${msg.content}`);
+        else if (Array.isArray(msg.content)) {
+          for (const block of msg.content as Array<Record<string, unknown>>) {
+            if (block.type === "text") parts.push(`AGENT: ${block.text}`);
+            if (block.type === "tool_use") {
+              parts.push(`TOOL CALL ${block.name}(${JSON.stringify(block.input).slice(0, 300)})`);
+            }
+          }
+        }
+        for (const tc of msg.tool_calls ?? []) {
+          parts.push(
+            `TOOL CALL ${tc.function?.name}(${(tc.function?.arguments ?? "").slice(0, 300)})`,
+          );
+        }
+      } else if (msg.role === "tool" && typeof msg.content === "string") {
+        parts.push(`RESULT: ${msg.content}`);
+      } else if (msg.role === "user" && Array.isArray(msg.content)) {
+        for (const block of msg.content as Array<Record<string, unknown>>) {
+          if (block.type === "tool_result") {
+            const c = block.content;
+            if (typeof c === "string") parts.push(`RESULT: ${c}`);
+            else if (Array.isArray(c)) {
+              for (const cb of c as Array<Record<string, unknown>>) {
+                if (cb.type === "text") parts.push(`RESULT: ${cb.text}`);
+              }
+            }
+          }
+        }
+      }
+    }
+  } else if (loop.lastText) {
+    parts.push(loop.lastText);
+  }
+  const full = parts.join("\n\n");
+  return full.slice(-400_000);
 }
 
 /** What survives a terminal failure: keep the generated idea so a manual
@@ -188,6 +251,10 @@ function nextStep(task: DiscoveryTaskRow): Step | null {
   const model = phaseModel(task);
   if (status === "scoring" || status === "rescoring") {
     return { kind: "score_sync", phase };
+  }
+  // Generation only: one red-team pass over the brief before synthesis.
+  if (status === "researching" && !ps.critique) {
+    return { kind: "critique", phase: "synth" };
   }
   // Generation/reframe synthesis: OpenAI = background pro; others sync.
   return model.provider === "openai"
@@ -305,6 +372,8 @@ interface StepContext {
   run: DiscoveryRunRow;
   founderBackground: string;
   coFounders: Array<{ name: string; background: string }>;
+  /** One-line digests of sibling candidates (novelty pressure). */
+  siblings: string;
   session: BrowserHandle | null;
 }
 
@@ -368,6 +437,7 @@ async function executeStep(
         ? ctx.founderBackground
         : "",
       round,
+      siblings: ctx.siblings,
     });
     return {
       status: "researching",
@@ -409,6 +479,7 @@ async function executeStep(
               ? ctx.founderBackground
               : "",
             round,
+            siblings: ctx.siblings,
           })
         : isReframe
           ? buildReframeResearchSystem({
@@ -444,9 +515,29 @@ async function executeStep(
       } else {
         patch.brief = finalText || "(no brief produced)";
       }
-      patch.loop = undefined; // research history no longer needed
+      // The transcript rides into synthesis — compression must not cost
+      // evidence. The loop itself is done.
+      patch.researchLog = transcriptFromLoop(result.state);
+      patch.loop = undefined;
     }
     return { phase_state: patch as Record<string, unknown> };
+  }
+
+  if (step.kind === "critique") {
+    const model = phaseModel(task);
+    const critique = await plainTextCall({
+      provider: model.provider,
+      model: model.model,
+      effort: model.provider === "openrouter" ? "high" : "max",
+      system: buildCritiqueSystem(),
+      prompt: ps.brief ?? "",
+    });
+    return {
+      phase_state: { ...ps, critique: critique || "(no critique produced)" } as Record<
+        string,
+        unknown
+      >,
+    };
   }
 
   if (step.kind === "synth_submit") {
@@ -456,7 +547,11 @@ async function executeStep(
       system: isReframe
         ? buildReframeSynthesisSystem()
         : buildGenerationSynthesisSystem(),
-      prompt: buildGenerationSynthesisPrompt(ps.brief ?? ""),
+      prompt: buildGenerationSynthesisPrompt(
+        ps.brief ?? "",
+        ps.critique,
+        ps.researchLog,
+      ),
       schemaName: "discovered_idea",
       schema: IDEA_GEN_SCHEMA as unknown as Record<string, unknown>,
     });
@@ -496,7 +591,11 @@ async function executeStep(
       system: isReframe
         ? buildReframeSynthesisSystem()
         : buildGenerationSynthesisSystem(),
-      prompt: buildGenerationSynthesisPrompt(ps.brief ?? ""),
+      prompt: buildGenerationSynthesisPrompt(
+        ps.brief ?? "",
+        ps.critique,
+        ps.researchLog,
+      ),
       schemaName: "discovered_idea",
       schema: IDEA_GEN_SCHEMA as unknown as Record<string, unknown>,
     });
@@ -518,6 +617,7 @@ async function executeStep(
         : "",
       coFounders: ctx.run.use_founder_background ? ctx.coFounders : [],
       evidenceMemo: ps.memo ?? "",
+      researchLog: ps.researchLog,
     });
     const raw =
       scorer.provider === "anthropic"
@@ -552,9 +652,31 @@ async function executeStep(
     };
   }
 
-  // decide: publish the scored idea atomically, then route pass/fail.
+  // decide: route pass/fail; publish atomically. The ORIGINAL always
+  // publishes with its verdict; a REFRAMED idea publishes only when it
+  // passes or the rescue budget is spent (intermediate failed attempts
+  // stay internal — deterministic ids leave no room for one row per try).
   const verdict = ps.verdict!;
   const isRescore = task.status === "rescoring";
+  const attempt = ps.reframeAttempt ?? 0;
+  const passes = verdictPasses(verdict);
+  if (isRescore && !passes && attempt < 3) {
+    return {
+      status: "reframing",
+      phase_state: {
+        idea: ps.idea,
+        verdictSummary: verdictSummaryText(verdict),
+        reframeAttempt: attempt + 1,
+        reframeHistory: [
+          ...(ps.reframeHistory ?? []),
+          {
+            name: ps.idea!.name,
+            summary: verdictSummaryText(verdict).slice(0, 1500),
+          },
+        ],
+      } as Record<string, unknown>,
+    };
+  }
   const ideaId = isRescore ? task.idea_reframe_id! : task.idea_original_id!;
   const fields = verdictToIdeaFields(ps.idea!, verdict, ideaId);
   await insertIdea(
@@ -576,13 +698,16 @@ async function executeStep(
   } catch {
     // Migration drift — provenance degrades, idea stands.
   }
-  if (!isRescore && !verdictPasses(verdict)) {
-    // One reframe retry: carry the failing idea + verdict into reframing.
+  if (!isRescore && !passes) {
+    // Rescue path: iterative reframes (bounded by attempt count + the
+    // reframe/rescore turn budgets, whichever binds first).
     return {
       status: "reframing",
       phase_state: {
         idea: ps.idea,
         verdictSummary: verdictSummaryText(verdict),
+        reframeAttempt: 1,
+        reframeHistory: [],
       } as Record<string, unknown>,
     };
   }
@@ -597,10 +722,13 @@ function afterIdeaSynthesis(
 ): { status: TaskStatus; phase_state: Record<string, unknown> } {
   if (task.status === "reframing") {
     const rescorer = pickRescorer(pickReframer(task.run_id, task.idx), task.idx);
+    const ps = task.phase_state as PhaseState;
     return {
       status: "rescoring",
       phase_state: {
         idea,
+        reframeAttempt: ps.reframeAttempt ?? 1,
+        reframeHistory: ps.reframeHistory ?? [],
         loop: initialLoopState(
           rescorer.provider === "anthropic" ? "anthropic" : "openai",
           buildScoringResearchSystem(idea),
@@ -657,12 +785,80 @@ async function advanceTask(
       const phaseKey =
         step.kind === "synth_submit" ||
         step.kind === "synth_poll" ||
+        step.kind === "critique" ||
         step.kind === "synth_sync"
           ? task.status === "reframing"
             ? "resynth"
             : "synth"
           : turnKeyFor(task.status);
       const used = task.turns?.[phaseKey] ?? 0;
+      // Cap-death for a RESEARCH phase with work-in-progress gets one
+      // forced-delivery overage: a no-tools turn that writes the brief/memo
+      // from everything gathered, instead of discarding paid research.
+      if (
+        isPaid(step) &&
+        used >= TURN_CAPS[phaseKey] &&
+        step.kind === "research_turn"
+      ) {
+        const ps = task.phase_state as PhaseState;
+        if (ps.loop && !ps.brief && !ps.memo && !ps.forcedWrapup) {
+          const claimed = await casUpdateTask(ctx.admin, task.id, task.rev, {
+            phase_state: { ...ps, forcedWrapup: true } as Record<string, unknown>,
+            claim: { token, heartbeat_at: new Date().toISOString() },
+          });
+          if (!claimed) return;
+          task = claimed;
+          await logEvent(
+            ctx.admin,
+            ctx.run.id,
+            task.idx,
+            "forced_wrapup",
+            `${phaseKey} cap reached with no deliverable — forcing a no-tools wrap-up turn`,
+          );
+          try {
+            const model = phaseModel(task);
+            const result = await runResearchTurn({
+              provider: model.provider,
+              model: model.model,
+              effort: model.provider === "openrouter" ? "high" : "max",
+              system: "",
+              prompt: "",
+              state: ps.loop,
+              session: { sessionId: "", page: null as never },
+              wrapUp: true,
+              noTools: true,
+            });
+            const finalText = result.state.lastText ?? "";
+            if (finalText) {
+              const psNow = task.phase_state as PhaseState;
+              const patch: PhaseState = { ...psNow, forcedWrapup: true };
+              if (task.status === "scoring" || task.status === "rescoring") {
+                patch.memo = finalText;
+              } else {
+                patch.brief = finalText;
+              }
+              patch.researchLog = transcriptFromLoop(result.state);
+              patch.loop = undefined;
+              const persisted = await casUpdateTask(ctx.admin, task.id, task.rev, {
+                phase_state: patch as Record<string, unknown>,
+                claim: { token, heartbeat_at: new Date().toISOString() },
+              });
+              if (persisted) {
+                task = persisted;
+                continue; // proceed to synthesis with the forced deliverable
+              }
+            }
+          } catch (err) {
+            await logEvent(
+              ctx.admin,
+              ctx.run.id,
+              task.idx,
+              "step_error",
+              `forced wrap-up failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+      }
       if (isPaid(step) && used >= TURN_CAPS[phaseKey]) {
         await logEvent(
           ctx.admin,
@@ -1008,6 +1204,21 @@ export async function advanceDiscoveryRun(
     [active[i], active[j]] = [active[j], active[i]];
   }
 
+  // Novelty pressure: every generation agent sees a one-line digest of its
+  // siblings' candidates and must stay clearly distinct.
+  const siblings = tasks
+    .map((t) => {
+      const ps = t.phase_state as PhaseState;
+      if (ps.idea) {
+        return `- [${t.idx}] ${ps.idea.name} — ${ps.idea.domain} — ${ps.idea.initialWedge.slice(0, 100)}`;
+      }
+      if (ps.brief) return `- [${t.idx}] (drafting) ${ps.brief.slice(0, 120)}`;
+      return null;
+    })
+    .filter(Boolean)
+    .slice(0, 45)
+    .join("\n");
+
   let advanced = 0;
   const holder: SessionHolder = {
     session: null,
@@ -1030,7 +1241,7 @@ export async function advanceDiscoveryRun(
           if (!claimAvailable(task)) continue;
           advanced++;
           await advanceTask(
-            { admin, run, founderBackground, coFounders },
+            { admin, run, founderBackground, coFounders, siblings },
             task,
             invocationDeadline,
             holder,
