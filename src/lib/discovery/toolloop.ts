@@ -474,16 +474,35 @@ export async function runSynthesisSync(opts: {
       return await anthropicSynthesisAttempt(opts, false);
     }
   }
-  const turn = await openrouterTurn({
-    model: opts.model,
-    messages: [
-      { role: "system", content: opts.system },
-      { role: "user", content: opts.prompt },
-    ],
-    schemaName: opts.schemaName,
-    schema: opts.schema,
-  });
-  return parseLastJSON([turn.text]);
+  // Some OpenRouter upstream providers 400 on response_format json_schema
+  // despite require_parameters routing — degrade to a prompt-embedded
+  // schema + parse, mirroring the Anthropic grammar ladder.
+  try {
+    const turn = await openrouterTurn({
+      model: opts.model,
+      messages: [
+        { role: "system", content: opts.system },
+        { role: "user", content: opts.prompt },
+      ],
+      schemaName: opts.schemaName,
+      schema: opts.schema,
+    });
+    return parseLastJSON([turn.text]);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "";
+    if (!/400/.test(msg)) throw err;
+    const turn = await openrouterTurn({
+      model: opts.model,
+      messages: [
+        {
+          role: "system",
+          content: `${opts.system}\n\nRespond with ONLY a single valid JSON object exactly matching this JSON Schema — no prose, no markdown fences:\n${JSON.stringify(opts.schema)}`,
+        },
+        { role: "user", content: opts.prompt },
+      ],
+    });
+    return parseLastJSON([turn.text]);
+  }
 }
 
 async function anthropicSynthesisAttempt(

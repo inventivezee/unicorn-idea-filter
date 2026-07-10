@@ -653,7 +653,9 @@ async function advanceTask(
 
       // Budget checks at claim time.
       const phaseKey =
-        step.kind === "synth_submit" || step.kind === "synth_poll"
+        step.kind === "synth_submit" ||
+        step.kind === "synth_poll" ||
+        step.kind === "synth_sync"
           ? task.status === "reframing"
             ? "resynth"
             : "synth"

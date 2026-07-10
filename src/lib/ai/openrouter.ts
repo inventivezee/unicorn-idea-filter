@@ -122,8 +122,13 @@ export async function openrouterTurn(opts: {
           503,
         );
       }
+      // OpenRouter wraps upstream failures as "Provider returned error" —
+      // the useful part lives in the error body's metadata.
+      const body = JSON.stringify(
+        (err as { error?: unknown }).error ?? {},
+      ).slice(0, 400);
       throw new UserFacingError(
-        `OpenRouter error (${err.status ?? "network"}): ${err.message.slice(0, 200)}`,
+        `OpenRouter error (${err.status ?? "network"}): ${err.message.slice(0, 200)} ${body}`,
         502,
       );
     }
