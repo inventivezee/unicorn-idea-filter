@@ -192,10 +192,11 @@ export const TURN_CAPS = {
 } as const;
 
 /** Rescue loops: reframe → rescore, repeated until the idea passes or the
- *  loop/turn budget is spent. Every loop is durably recorded
- *  (discovery_events kind 'reframe_loop', excluded from pruning) for
- *  future analysis. */
-export const MAX_REFRAME_LOOPS = 10;
+ *  loop budget is spent. Two max (owner decision — ten let stubborn ideas
+ *  loop for hours; live run had tasks on attempt 6). Every loop is durably
+ *  recorded (discovery_events kind 'reframe_loop', excluded from pruning)
+ *  for future analysis. */
+export const MAX_REFRAME_LOOPS = 2;
 export type TurnPhase = keyof typeof TURN_CAPS;
 
 /** Hard ceiling on total turns across ALL tasks in a run (20 tasks × ~200
