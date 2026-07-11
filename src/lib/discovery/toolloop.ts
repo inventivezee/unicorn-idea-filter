@@ -252,6 +252,56 @@ function injectWrapUp(state: LoopState): void {
   }
 }
 
+/** Anthropic rejects histories where a tool_use message isn't immediately
+ *  followed by matching tool_result blocks. Corrupted states exist in prod
+ *  (writer under investigation — likely an interrupted persist); repair by
+ *  inserting synthetic results so the loop can continue instead of
+ *  hard-400ing on every claim forever. */
+function repairToolPairing(
+  messages: Anthropic.MessageParam[],
+): Anthropic.MessageParam[] {
+  const out: Anthropic.MessageParam[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    out.push(m);
+    if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+    const ids = m.content
+      .filter(
+        (b): b is Anthropic.ToolUseBlockParam =>
+          typeof b !== "string" && b.type === "tool_use",
+      )
+      .map((b) => b.id);
+    if (ids.length === 0) continue;
+    const next = messages[i + 1];
+    const answered = new Set<string>();
+    if (next && next.role === "user" && Array.isArray(next.content)) {
+      for (const b of next.content) {
+        if (typeof b !== "string" && b.type === "tool_result") {
+          answered.add(b.tool_use_id);
+        }
+      }
+    }
+    const missing = ids.filter((id) => !answered.has(id));
+    if (missing.length === 0) continue;
+    console.error(
+      `[discovery] repaired ${missing.length} dangling tool_use pair(s) in loop state`,
+    );
+    const synthetic: Anthropic.ToolResultBlockParam[] = missing.map((id) => ({
+      type: "tool_result",
+      tool_use_id: id,
+      content:
+        "[result lost during an interrupted turn — re-run the tool if you still need it]",
+    }));
+    if (next && next.role === "user" && Array.isArray(next.content)) {
+      // Merge into the existing (partial) result message.
+      next.content = [...synthetic, ...next.content];
+    } else {
+      out.push({ role: "user", content: synthetic });
+    }
+  }
+  return out;
+}
+
 async function anthropicTurn(
   opts: {
     model: string;
@@ -262,6 +312,7 @@ async function anthropicTurn(
   state: Extract<LoopState, { kind: "anthropic" }>,
 ): Promise<ResearchTurnResult> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  state.messages = repairToolPairing(state.messages);
   stripOldImages(state);
   // noTools must NOT drop the defs — history containing tool_use/tool_result
   // blocks is rejected without them; tool_choice none forbids further use.

@@ -39,7 +39,9 @@ export const OPENROUTER_GENERATORS: DiscoveryModel[] = [
   { provider: "openrouter", model: "deepseek/deepseek-v4-pro", vendor: "deepseek" },
   { provider: "openrouter", model: "qwen/qwen3.7-max", vendor: "alibaba" },
   { provider: "openrouter", model: "google/gemini-3.1-pro-preview", vendor: "google", vision: true },
-  { provider: "openrouter", model: "meta-llama/llama-4-maverick", vendor: "meta", vision: true },
+  // meta-llama/llama-4-maverick was DELISTED by OpenRouter (2026-07-11):
+  // every call 404'd and critique retries burned tasks to synth-budget
+  // death. Re-add a Meta model only after verifying its live slug.
 ];
 
 /** The distinct generator models (for policy iteration/tests). */

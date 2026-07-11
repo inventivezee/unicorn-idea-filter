@@ -202,7 +202,8 @@ describe("run panel composition (quality mode: 1-3 deep candidates)", () => {
       expect(count("claude-fable-5")).toBeGreaterThanOrEqual(6);
       expect(count("gpt-5.6-sol")).toBeGreaterThanOrEqual(6);
       const others = OPENROUTER_GENERATORS.map((m) => count(m.model));
-      expect(new Set(others).size).toBe(1); // evenly split
+      // Evenly split: remainder slots make counts differ by at most 1.
+      expect(Math.max(...others) - Math.min(...others)).toBeLessThanOrEqual(1);
     }
   });
 

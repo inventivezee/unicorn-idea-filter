@@ -448,7 +448,20 @@ export interface SessionHolder {
    *  another invocation holds the slot; skip browser work this tick with
    *  no strikes and try again next tick. */
   slotBusy: boolean;
+  /** After a Browserbase 429 (burst OR concurrency), don't touch their API
+   *  again before this timestamp — under load every worker retrying every
+   *  claim multiplied into thousands of 429s per hour. */
+  cooldownUntil?: number;
   lastError?: string;
+}
+
+export function newSessionHolder(): SessionHolder {
+  return {
+    session: null,
+    overBudget: false,
+    createFailed: false,
+    slotBusy: false,
+  };
 }
 
 /** Executes the claimed step; returns the phase_state/status patch. */
@@ -1075,6 +1088,15 @@ async function advanceTask(
       // are recorded ON THE TASK so the owner can see them; three strikes
       // fails the task terminally instead of retrying forever.
       if (needsBrowser(step)) {
+        // Backoff expired → allow one fresh attempt at the Browserbase API.
+        if (
+          holder.slotBusy &&
+          holder.cooldownUntil !== undefined &&
+          Date.now() >= holder.cooldownUntil
+        ) {
+          holder.slotBusy = false;
+          holder.cooldownUntil = undefined;
+        }
         if (holder.slotBusy) {
           // Another invocation holds the account's only session slot —
           // leave a visible (non-terminal, non-strike) note and yield.
@@ -1117,8 +1139,9 @@ async function advanceTask(
             // A concurrency-limit 429 is TRANSIENT (someone else has the
             // slot) — never a strike. Everything else (bad keys, invalid
             // params) is a hard failure with bounded strikes.
-            if (/429|concurrent/i.test(msg)) {
+            if (/429|concurrent|rate limit/i.test(msg)) {
               holder.slotBusy = true;
+              holder.cooldownUntil = Date.now() + 90_000;
             } else {
               holder.createFailed = true;
             }
@@ -1150,15 +1173,22 @@ async function advanceTask(
           await closeTaskPage(handle);
           handle = null;
         }
+        const session = holder.session;
+        if (!session) {
+          // Another worker released/recreates the session concurrently —
+          // yield this tick; the claim lease retries next tick.
+          await casUpdateTask(ctx.admin, task.id, task.rev, { claim: null });
+          return;
+        }
         if (!handle) {
           try {
-            handle = await createTaskPage(holder.session, model.vision ?? false);
+            handle = await createTaskPage(session, model.vision ?? false);
           } catch (err) {
             // Dead browser between the isConnected check and newPage —
             // treat as transient (next iteration recreates the session)
             // and NEVER let it reject the whole worker pool.
-            await releaseBrowserSession(holder.session);
-            holder.session = null;
+            await releaseBrowserSession(session);
+            if (holder.session === session) holder.session = null;
             await logEvent(
               ctx.admin,
               ctx.run.id,
@@ -1173,7 +1203,7 @@ async function advanceTask(
         // trail + live-view targeting; clears any earlier failure note).
         const withSession = await casUpdateTask(ctx.admin, task.id, task.rev, {
           bb: {
-            sessionId: holder.session.sessionId,
+            sessionId: session.sessionId,
             pageId: handle.targetId ?? null,
           },
           error: null,
@@ -1330,6 +1360,7 @@ export async function advanceDiscoveryRun(
   admin: SupabaseClient,
   runIn: DiscoveryRunRow,
   invocationDeadline: number,
+  sharedHolder?: SessionHolder,
 ): Promise<AdvanceResult> {
   let run = runIn;
 
@@ -1430,12 +1461,11 @@ export async function advanceDiscoveryRun(
   }
 
   let advanced = 0;
-  const holder: SessionHolder = {
-    session: null,
-    overBudget: false,
-    createFailed: false,
-    slotBusy: false,
-  };
+  // ONE Browserbase session per cron INVOCATION (shared across runs via
+  // sharedHolder) — a session per run per invocation multiplied into
+  // 8 runs x ~25 overlapping invocations ≈ 200 concurrent sessions against
+  // the account's 80 cap, and the whole fleet thrashed on 429s.
+  const holder = sharedHolder ?? newSessionHolder();
   // Advance several tasks CONCURRENTLY (each with its own page on the
   // shared browser) — sequential advancement dedicated a whole invocation
   // to one task and left the tail queued for tens of minutes.
@@ -1460,7 +1490,8 @@ export async function advanceDiscoveryRun(
       }),
     );
   } finally {
-    await releaseBrowserSession(holder.session);
+    // Shared sessions are released by the invocation that owns them.
+    if (!sharedHolder) await releaseBrowserSession(holder.session);
   }
 
   // Terminal check.

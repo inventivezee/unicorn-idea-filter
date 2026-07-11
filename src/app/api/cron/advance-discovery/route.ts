@@ -1,7 +1,12 @@
 // Vercel cron: advances discovery runs browserlessly, every minute. Same
 // fail-closed auth contract as advance-designs: 503 when CRON_SECRET is
 // unset, 401 on mismatch, 200 {checked, results} when healthy.
-import { advanceDiscoveryRun, sweepNotifications } from "@/lib/discovery/engine";
+import {
+  advanceDiscoveryRun,
+  newSessionHolder,
+  sweepNotifications,
+} from "@/lib/discovery/engine";
+import { releaseBrowserSession } from "@/lib/discovery/browserbase";
 import { CRON_TIME_BUDGET_MS, discoveryConfigured } from "@/lib/discovery/config";
 import { listActiveRuns, pruneEvents } from "@/lib/db/discovery";
 import { adminClient, cloudConfigured } from "@/lib/supabase/server";
@@ -51,19 +56,32 @@ export async function GET(request: Request) {
   const invocationDeadline = Date.now() + TIME_BUDGET_MS;
   const results: Array<Record<string, unknown>> = [];
   let checked = 0;
-  for (const run of runs) {
-    if (Date.now() > invocationDeadline - 60_000) break;
-    checked++;
-    try {
-      const result = await advanceDiscoveryRun(admin, run, invocationDeadline);
-      results.push(result as unknown as Record<string, unknown>);
-    } catch (err) {
-      results.push({
-        runId: run.id,
-        status: "error",
-        error: (err instanceof Error ? err.message : String(err)).slice(0, 200),
-      });
+  // ONE Browserbase session for the whole invocation, shared across runs —
+  // per-run sessions multiplied under concurrent batches (8 runs x ~25
+  // overlapping invocations) far past the account's session cap.
+  const holder = newSessionHolder();
+  try {
+    for (const run of runs) {
+      if (Date.now() > invocationDeadline - 60_000) break;
+      checked++;
+      try {
+        const result = await advanceDiscoveryRun(
+          admin,
+          run,
+          invocationDeadline,
+          holder,
+        );
+        results.push(result as unknown as Record<string, unknown>);
+      } catch (err) {
+        results.push({
+          runId: run.id,
+          status: "error",
+          error: (err instanceof Error ? err.message : String(err)).slice(0, 200),
+        });
+      }
     }
+  } finally {
+    await releaseBrowserSession(holder.session);
   }
   return Response.json({ checked, skipped: runs.length - checked, results });
 }
