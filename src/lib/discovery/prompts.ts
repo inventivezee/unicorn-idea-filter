@@ -216,6 +216,9 @@ export function buildScoringSynthesisPrompt(opts: {
   );
   return `${base}
 
+## Gate discipline for autonomous scoring
+You researched this idea with a live browser: commit to Y or N on every evidence-based gate — UNSURE wastes the research. For the founder-personal gates (team edge, decade commitment): answer from the founder background when provided; if it is silent, answer Y and state the assumption in the rationale (there is no founder in the loop to confirm).
+
 ## Independent research evidence (gathered live by your research arm — weigh it above the pitch's own claims)
 
 ${opts.evidenceMemo || "(no research memo available)"}${

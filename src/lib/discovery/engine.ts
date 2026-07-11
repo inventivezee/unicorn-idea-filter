@@ -19,6 +19,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ANALYSIS_SCHEMA } from "@/lib/ai/schema";
 import {
+  FOUNDER_PERSONAL_GATES,
   normalizeAnalysis,
   type RawAnalysis,
 } from "@/lib/ai/analysis";
@@ -777,6 +778,21 @@ async function executeStep(
       scorer.provider === "anthropic" ? "anthropic" : "openai",
       scorer.model,
     );
+    // Founder-personal gates (team edge, decade commitment) are confirmed
+    // BY THE FOUNDER in the interactive app — autonomous discovery has no
+    // confirmation step, so UNSURE there would leave every idea PENDING on
+    // Explore forever (and mis-route good ideas into rescue loops at
+    // decide time). Resolve them optimistically with an explicit
+    // assumption note; evidence gates keep honest UNSUREs.
+    for (const gid of FOUNDER_PERSONAL_GATES) {
+      if (verdict.gates[gid]?.value === "UNSURE") {
+        verdict.gates[gid] = {
+          value: "Y",
+          rationale:
+            "Assumed for an autonomously discovered idea (owner-enabled founder background) — confirm personally before building.",
+        };
+      }
+    }
     if (!isFinal) {
       await logEvent(
         ctx.admin,
