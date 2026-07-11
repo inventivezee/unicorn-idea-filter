@@ -377,6 +377,118 @@ function LogsTable({ logs, mode }: { logs: LogRow[]; mode: "idea" | "global" }) 
 // Page
 // ---------------------------------------------------------------------------
 
+interface AbSummary {
+  tasks: number;
+  scored: number;
+  avgRawScore: number | null;
+  medianRawScore: number | null;
+  firstTryPassRate: number | null;
+  avgRescueLoops: number | null;
+}
+
+function DiscoveryAbSection() {
+  const [data, setData] = useState<{
+    byGenVariant: Record<string, AbSummary>;
+    byGenAndScoringVariant: Record<string, AbSummary>;
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/discovery-ab");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setData((await res.json()) as typeof data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const table = (rows: Record<string, AbSummary>, label: string) => (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[560px] border-collapse text-sm">
+        <thead>
+          <tr className="text-xs text-zinc-500">
+            <th className="px-2 py-1.5 text-left font-medium">{label}</th>
+            <th className="px-2 py-1.5 text-right font-medium">Tasks</th>
+            <th className="px-2 py-1.5 text-right font-medium">Scored</th>
+            <th className="px-2 py-1.5 text-right font-medium">Avg raw</th>
+            <th className="px-2 py-1.5 text-right font-medium">Median</th>
+            <th className="px-2 py-1.5 text-right font-medium">
+              1st-try pass
+            </th>
+            <th className="px-2 py-1.5 text-right font-medium">
+              Avg rescues
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(rows)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([k, v]) => (
+              <tr key={k} className="border-t border-zinc-100">
+                <td className="px-2 py-1.5 font-medium text-zinc-800">{k}</td>
+                <td className="tnum px-2 py-1.5 text-right">{v.tasks}</td>
+                <td className="tnum px-2 py-1.5 text-right">{v.scored}</td>
+                <td className="tnum px-2 py-1.5 text-right">
+                  {v.avgRawScore ?? "—"}
+                </td>
+                <td className="tnum px-2 py-1.5 text-right">
+                  {v.medianRawScore ?? "—"}
+                </td>
+                <td className="tnum px-2 py-1.5 text-right">
+                  {v.firstTryPassRate === null ? "—" : `${v.firstTryPassRate}%`}
+                </td>
+                <td className="tnum px-2 py-1.5 text-right">
+                  {v.avgRescueLoops ?? "—"}
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  return (
+    <Section
+      title="Discovery A/B"
+      description="Generation schools (strict design-against-the-instrument vs spirit-of-the-bar) and the gen × scoring-panel cells — original-idea outcomes only; tasks appear once their experiment assignment is recorded."
+    >
+      <div className="mb-2 flex justify-end">
+        <Button
+          className="px-2 py-1 text-xs!"
+          disabled={loading}
+          onClick={() => void load()}
+        >
+          {loading ? "Loading…" : "⟳ Refresh"}
+        </Button>
+      </div>
+      {error ? (
+        <p className="text-sm text-red-600">{error}</p>
+      ) : !data ? (
+        <p className="text-sm text-zinc-500">Loading…</p>
+      ) : Object.keys(data.byGenVariant).length === 0 ? (
+        <p className="text-sm text-zinc-500">
+          No experiment data yet — assignments record as new tasks initialize.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {table(data.byGenVariant, "Generation school")}
+          {table(data.byGenAndScoringVariant, "Gen × scoring panel")}
+        </div>
+      )}
+    </Section>
+  );
+}
+
 export default function AdminPage() {
   const { hydrated, cloud, entitlements } = useStore();
   const isAdmin = cloud && entitlements.isAdmin;
@@ -918,6 +1030,8 @@ export default function AdminPage() {
           </div>
         ) : null}
       </Section>
+
+      <DiscoveryAbSection />
 
       <Section
         title="Drafts"
