@@ -270,19 +270,55 @@ const REPLAYABLE_BLOCKS = new Set([
 function sanitizeAssistantBlocks(
   messages: Anthropic.MessageParam[],
 ): Anthropic.MessageParam[] {
-  for (const m of messages) {
-    if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
-    const kept = m.content.filter(
-      (b) => typeof b === "string" || REPLAYABLE_BLOCKS.has(b.type),
-    );
-    if (kept.length !== m.content.length) {
-      console.error(
-        `[discovery] stripped ${m.content.length - kept.length} non-replayable block(s) (e.g. fallback markers) from loop state`,
-      );
-      m.content = kept;
+  let lastAssistant = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "assistant") {
+      lastAssistant = i;
+      break;
     }
   }
-  return messages;
+  const out: Anthropic.MessageParam[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role !== "assistant" || !Array.isArray(m.content)) {
+      out.push(m);
+      continue;
+    }
+    const hasBad = m.content.some(
+      (b) => typeof b !== "string" && !REPLAYABLE_BLOCKS.has(b.type),
+    );
+    if (!hasBad) {
+      out.push(m);
+      continue;
+    }
+    if (i === lastAssistant) {
+      // The LATEST assistant turn is validated against the original
+      // response — stripping blocks from it counts as modification
+      // ("thinking blocks ... cannot be modified", 619 live 400s). Drop
+      // the whole corrupted exchange; the model redoes that turn.
+      console.error(
+        "[discovery] dropped corrupted latest assistant exchange (non-replayable blocks)",
+      );
+      const next = messages[i + 1];
+      if (
+        next &&
+        next.role === "user" &&
+        Array.isArray(next.content) &&
+        next.content.some(
+          (b) => typeof b !== "string" && b.type === "tool_result",
+        )
+      ) {
+        i++; // its paired tool_result reply goes with it
+      }
+      continue;
+    }
+    // PRIOR turns: the API ignores their thinking — stripping is safe.
+    m.content = m.content.filter(
+      (b) => typeof b === "string" || REPLAYABLE_BLOCKS.has(b.type),
+    );
+    out.push(m);
+  }
+  return out;
 }
 
 /** Anthropic rejects histories where a tool_use message isn't immediately
@@ -401,10 +437,29 @@ async function anthropicTurn(
 
   const toolUses = response.content.filter((b) => b.type === "tool_use");
   // Echo the full content back (thinking blocks unchanged — replay rule).
-  state.messages.push({
-    role: "assistant",
-    content: response.content.filter((b) => REPLAYABLE_BLOCKS.has(b.type)),
-  });
+  const hasNonReplayable = response.content.some(
+    (b) => !REPLAYABLE_BLOCKS.has(b.type),
+  );
+  if (hasNonReplayable) {
+    // A fallback-bearing response can NEVER be replayed (stripped = 400
+    // "cannot be modified"; kept = 400 invalid block). If it finished with
+    // text, take the deliverable and end the loop — nothing gets replayed.
+    // If it wanted more tools, skip persisting the exchange entirely; the
+    // next claim redoes the turn cleanly (one turn's cost, no poison).
+    const wantsTools = response.content.some((b) => b.type === "tool_use");
+    if (!wantsTools) {
+      state.lastText = response.content
+        .filter((b) => b.type === "text")
+        .map((b) => b.text)
+        .join("\n");
+      return { state: trimLoopState(state), done: true, toolUses: 0, usage };
+    }
+    console.error(
+      "[discovery] discarding fallback-bearing tool turn — will retry cleanly",
+    );
+    return { state: trimLoopState(state), done: false, toolUses: 0, usage };
+  }
+  state.messages.push({ role: "assistant", content: response.content });
   if (toolUses.length === 0) {
     state.lastText = response.content
       .filter((b) => b.type === "text")
