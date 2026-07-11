@@ -537,7 +537,7 @@ function AgentView({
             {/* pointer-events-none makes the live view strictly view-only —
                 the agent drives; the viewer can never click through. */}
             <iframe
-              key={`${watched.idx}-${viewNonce}`}
+              key={`${watched.idx}-${viewNonce}-${watched.watchUrl}`}
               src={watched.watchUrl ?? undefined}
               className="pointer-events-none h-full w-full border-0"
               sandbox="allow-scripts allow-same-origin"
@@ -545,7 +545,9 @@ function AgentView({
             />
             <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-3 py-1.5 text-[11px] text-white/90">
               The agent is driving this browser — watching{" "}
-              {watched.model.split("/").pop()} research live.
+              {watched.model.split("/").pop()} research live. Between work
+              chunks the browser sleeps ("WebSocket disconnected") — the view
+              reconnects automatically when the agent picks the task back up.
             </div>
           </div>
         </div>
