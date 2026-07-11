@@ -51,12 +51,12 @@ export const GENERATORS: DiscoveryModel[] = [
 
 /** Run composition (owner-specified): 20 candidates — 30% Fable 5, 30%
  *  GPT-5.6 Sol, the rest evenly split across the OpenRouter panel. */
-/** Quality over quantity (owner decision): a discovery run develops ONE
- *  candidate deeply by default, up to three. House models (Fable 5 and
- *  GPT-5.6 Sol) take the first two slots; slot three samples the
- *  OpenRouter panel for diversity. */
+/** Batch size is the owner's dial: 1 (deepest, default) up to 20. House
+ *  models (Fable 5 and GPT-5.6 Sol) take >=30% of slots each; the rest
+ *  splits evenly across the OpenRouter panel for diversity. Multiple runs
+ *  may be in flight concurrently (migration 014). */
 export const DEFAULT_TASKS_PER_RUN = 1;
-export const MAX_TASKS_PER_RUN = 3;
+export const MAX_TASKS_PER_RUN = 20;
 
 export function buildRunPanel(count: number): DiscoveryModel[] {
   const n = Math.min(MAX_TASKS_PER_RUN, Math.max(1, Math.round(count)));
@@ -64,28 +64,20 @@ export function buildRunPanel(count: number): DiscoveryModel[] {
     Math.random() < 0.5
       ? [GEN_ANTHROPIC, GEN_OPENAI]
       : [GEN_OPENAI, GEN_ANTHROPIC];
-  const panel = house.slice(0, n);
-  if (n === 3) {
+  if (n <= 2) return house.slice(0, n);
+  const perHouse = Math.ceil(n * 0.3);
+  const panel: DiscoveryModel[] = [];
+  for (let i = 0; i < perHouse; i++) panel.push(house[0]);
+  for (let i = 0; i < perHouse; i++) panel.push(house[1]);
+  const offset = Math.floor(Math.random() * OPENROUTER_GENERATORS.length);
+  for (let i = panel.length; i < n; i++) {
     panel.push(
-      OPENROUTER_GENERATORS[
-        Math.floor(Math.random() * OPENROUTER_GENERATORS.length)
-      ],
+      OPENROUTER_GENERATORS[(offset + i) % OPENROUTER_GENERATORS.length],
     );
   }
-  return panel;
+  return panel.slice(0, n);
 }
 
-/** Which occurrence of its model a slot is (1-based) — feeds the "pick a
- *  different wedge than your earlier attempt" diversity hint. */
-export function roundForIdx(idx: number): number {
-  const panel = buildRunPanel(MAX_TASKS_PER_RUN);
-  const model = panel[idx]?.model;
-  let n = 1;
-  for (let i = 0; i < idx; i++) {
-    if (panel[i]?.model === model) n++;
-  }
-  return n;
-}
 
 // Scorers (user-fixed): GPT-5.6 Sol thinking (max effort) or Opus 4.8 (max).
 export const SCORER_OPENAI: DiscoveryModel = {

@@ -62,7 +62,6 @@ import {
   TURN_CAPS,
   pickReframer,
   pickRescorer,
-  roundForIdx,
   type DiscoveryModel,
   type TurnPhase,
 } from "./config";
@@ -431,6 +430,8 @@ interface StepContext {
   coFounders: Array<{ name: string; background: string }>;
   /** One-line digests of sibling candidates (novelty pressure). */
   siblings: string;
+  /** Per-idx occurrence number of each task's generator within the run. */
+  rounds: Record<number, number>;
   session: BrowserHandle | null;
 }
 
@@ -468,7 +469,11 @@ async function executeStep(
 }> {
   const ps = task.phase_state as PhaseState;
   const gen = generatorOf(task);
-  const round = roundForIdx(task.idx);
+  // Round = which occurrence of this generator this task is within the run
+  // (drives the "pick a different wedge" diversity hint). Computed from the
+  // STORED generators — panels are randomized at creation, so rebuilding
+  // one via config would number rounds against the wrong panel.
+  const round = ctx.rounds[task.idx] ?? 1;
 
   // Self-heal: every post-generation phase needs the generated idea in
   // phase_state. If a crash/manual revival wiped it, restart the candidate
@@ -1413,6 +1418,17 @@ export async function advanceDiscoveryRun(
     .slice(0, 45)
     .join("\n");
 
+  const rounds: Record<number, number> = {};
+  {
+    const seen = new Map<string, number>();
+    for (const t of [...tasks].sort((a, b) => a.idx - b.idx)) {
+      const m = (t.generator as { model?: string }).model ?? "";
+      const n = (seen.get(m) ?? 0) + 1;
+      seen.set(m, n);
+      rounds[t.idx] = n;
+    }
+  }
+
   let advanced = 0;
   const holder: SessionHolder = {
     session: null,
@@ -1435,7 +1451,7 @@ export async function advanceDiscoveryRun(
           if (!claimAvailable(task)) continue;
           advanced++;
           await advanceTask(
-            { admin, run, founderBackground, coFounders, siblings },
+            { admin, run, founderBackground, coFounders, siblings, rounds },
             task,
             invocationDeadline,
             holder,

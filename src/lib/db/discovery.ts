@@ -103,8 +103,10 @@ export async function createRun(
     .single<DiscoveryRunRow>();
   if (error) {
     if (isUniqueViolation(error)) {
+      // Pre-migration-014 deployments still carry the one-running-per-owner
+      // index; degrade with the old message until it's dropped.
       throw new DiscoveryAccessError(
-        "A discovery run is already in progress — open it from Discover.",
+        "A discovery run is already in progress — concurrent runs need migration 014.",
         409,
       );
     }

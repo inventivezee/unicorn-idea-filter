@@ -6,7 +6,7 @@
 // failures once, and publish everything scored into the pipeline. Runs
 // continue with the browser closed (cron-advanced); we email when done.
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Button, EmptyState, PageHeader, Section } from "@/components/ui";
 import { MAX_TASKS_PER_RUN } from "@/lib/discovery/config";
 import { useStore } from "@/lib/store";
@@ -66,7 +66,7 @@ export default function DiscoverPage() {
   const [loaded, setLoaded] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const activeRun = runs.find((r) => r.status === "running") ?? null;
+  const activeRuns = runs.filter((r) => r.status === "running");
 
   const refresh = useCallback(async () => {
     try {
@@ -74,15 +74,21 @@ export default function DiscoverPage() {
       if (!res.ok) return;
       const data = (await res.json()) as { runs?: RunView[] };
       let runs = data.runs ?? [];
-      // The active run gets the detailed view (activity feed + live browser
-      // links) from its own endpoint.
-      const activeId = runs.find((r) => r.status === "running")?.id;
-      if (activeId) {
-        const detail = await fetch(`/api/discovery/${activeId}`);
-        if (detail.ok) {
-          const d = (await detail.json()) as RunView;
-          runs = runs.map((r) => (r.id === activeId ? { ...r, ...d } : r));
-        }
+      // Running runs get the detailed view (activity feed + live browser
+      // links) from their own endpoint — capped at the 3 most recent to
+      // bound the per-poll fan-out with many concurrent batches.
+      const activeIds = runs
+        .filter((r) => r.status === "running")
+        .slice(0, 3)
+        .map((r) => r.id);
+      const details = await Promise.all(
+        activeIds.map(async (rid) => {
+          const detail = await fetch(`/api/discovery/${rid}`);
+          return detail.ok ? ((await detail.json()) as RunView) : null;
+        }),
+      );
+      for (const d of details) {
+        if (d) runs = runs.map((r) => (r.id === d.id ? { ...r, ...d } : r));
       }
       setRuns(runs);
     } catch {
@@ -100,14 +106,14 @@ export default function DiscoverPage() {
     void refresh();
   }, [cloud, entitlements.signedIn, refresh]);
 
-  // Poll while a run is active (read-only — the server cron does the work).
+  // Poll while any run is active (read-only — the server cron does the work).
   useEffect(() => {
-    if (!activeRun) return;
+    if (activeRuns.length === 0) return;
     pollTimer.current = setTimeout(() => void refresh(), 10_000);
     return () => {
       if (pollTimer.current) clearTimeout(pollTimer.current);
     };
-  }, [activeRun, runs, refresh]);
+  }, [activeRuns.length, runs, refresh]);
 
   async function startRun() {
     setError(null);
@@ -201,12 +207,15 @@ export default function DiscoverPage() {
     <div>
       <Header />
 
-      {activeRun ? (
-        <ActiveRun run={activeRun} onCancel={() => void cancelRun(activeRun.id)} />
-      ) : (
+      {activeRuns.map((run) => (
+        <div key={run.id} className="mb-6">
+          <ActiveRun run={run} onCancel={() => void cancelRun(run.id)} />
+        </div>
+      ))}
+      {(
         <Section
-          title="Start a discovery run"
-          description="Develops one candidate idea DEEPLY (up to three): live browser research, adversarial scoring, and up to 10 automatic reframe-and-rescore rescue loops. Quality over quantity. Runs take a while — close the tab, we'll email you."
+          title={activeRuns.length > 0 ? "Start another batch" : "Start a discovery run"}
+          description="Pick a batch size: 1 candidate (deepest) up to 20. Live browser research, dual-model scoring, and up to 5 automatic reframe-and-rescore rescue loops per candidate. Batches run concurrently — close the tab, we'll email you as each finishes."
         >
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-zinc-500">
@@ -225,23 +234,21 @@ export default function DiscoverPage() {
             <span className="mb-1 block text-xs font-medium text-zinc-500">
               Candidate ideas this run
             </span>
-            <div className="flex gap-1.5">
-              {Array.from({ length: MAX_TASKS_PER_RUN }, (_, i) => i + 1).map(
-                (n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => setCandidates(n)}
-                    className={`rounded border px-3 py-1 text-sm ${
-                      candidates === n
-                        ? "border-cyan-500 bg-cyan-50 text-cyan-700"
-                        : "border-zinc-300 bg-white text-zinc-600 hover:border-zinc-400"
-                    }`}
-                  >
-                    {n === 1 ? "1 (deepest)" : n}
-                  </button>
-                ),
-              )}
+            <div className="flex flex-wrap gap-1.5">
+              {[1, 2, 3, 5, 10, 20].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setCandidates(n)}
+                  className={`rounded border px-3 py-1 text-sm ${
+                    candidates === n
+                      ? "border-cyan-500 bg-cyan-50 text-cyan-700"
+                      : "border-zinc-300 bg-white text-zinc-600 hover:border-zinc-400"
+                  }`}
+                >
+                  {n === 1 ? "1 (deepest)" : n}
+                </button>
+              ))}
             </div>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
@@ -402,8 +409,8 @@ function ActiveRun({
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
         {tasks.map((t) => (
+          <Fragment key={t.idx}>
           <div
-            key={t.idx}
             className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-2.5"
           >
             <div className="flex items-center justify-between gap-2">
@@ -469,14 +476,37 @@ function ActiveRun({
               ) : null}
             </div>
           </div>
+          {watchIdx === t.idx && watched?.watchUrl ? (
+            <AgentView
+              watched={watched}
+              viewNonce={viewNonce}
+              onReload={() => setViewNonce((n) => n + 1)}
+              onClose={() => setWatchIdx(null)}
+            />
+          ) : null}
+          </Fragment>
         ))}
         {tasks.length === 0 ? (
           <p className="text-sm text-zinc-500">Spinning up candidates…</p>
         ) : null}
       </div>
+    </Section>
+  );
+}
 
-      {watched?.watchUrl ? (
-        <div className="mt-4">
+function AgentView({
+  watched,
+  viewNonce,
+  onReload,
+  onClose,
+}: {
+  watched: TaskView;
+  viewNonce: number;
+  onReload: () => void;
+  onClose: () => void;
+}) {
+  return (
+        <div className="sm:col-span-2">
           <div className="mb-1 flex items-center justify-between">
             <p className="text-xs font-medium text-zinc-600">
               Agent view — {watched.model.split("/").pop()}
@@ -488,7 +518,7 @@ function ActiveRun({
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => setViewNonce((n) => n + 1)}
+                onClick={onReload}
                 className="text-xs text-zinc-500 hover:text-zinc-900"
                 title="Reload the view if it looks blank"
               >
@@ -496,7 +526,7 @@ function ActiveRun({
               </button>
               <button
                 type="button"
-                onClick={() => setWatchIdx(null)}
+                onClick={onClose}
                 className="text-xs text-zinc-500 hover:text-zinc-900"
               >
                 ✕ Close
@@ -508,7 +538,7 @@ function ActiveRun({
                 the agent drives; the viewer can never click through. */}
             <iframe
               key={`${watched.idx}-${viewNonce}`}
-              src={watched.watchUrl}
+              src={watched.watchUrl ?? undefined}
               className="pointer-events-none h-full w-full border-0"
               sandbox="allow-scripts allow-same-origin"
               title="Agent browser (view-only)"
@@ -519,7 +549,5 @@ function ActiveRun({
             </div>
           </div>
         </div>
-      ) : null}
-    </Section>
   );
 }

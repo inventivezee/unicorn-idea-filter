@@ -11,7 +11,6 @@ import {
   buildRunPanel,
   scoringPanel,
   scoringVariant,
-  roundForIdx,
   SCORER_ANTHROPIC,
   SCORER_OPENAI,
   TASK_STATE_CHAR_BUDGET,
@@ -190,9 +189,21 @@ describe("scoring A/B variants", () => {
 describe("run panel composition (quality mode: 1-3 deep candidates)", () => {
   const HOUSE = ["claude-fable-5", "gpt-5.6-sol"];
 
-  it("defaults are sane: 1 candidate, 3 max", () => {
+  it("defaults are sane: 1 candidate, 20 max", () => {
     expect(DEFAULT_TASKS_PER_RUN).toBe(1);
-    expect(MAX_TASKS_PER_RUN).toBe(3);
+    expect(MAX_TASKS_PER_RUN).toBe(20);
+  });
+
+  it("20 candidates → >=30% each house model, rest split evenly", () => {
+    for (let i = 0; i < 20; i++) {
+      const panel = buildRunPanel(20);
+      expect(panel.length).toBe(20);
+      const count = (m: string) => panel.filter((x) => x.model === m).length;
+      expect(count("claude-fable-5")).toBeGreaterThanOrEqual(6);
+      expect(count("gpt-5.6-sol")).toBeGreaterThanOrEqual(6);
+      const others = OPENROUTER_GENERATORS.map((m) => count(m.model));
+      expect(new Set(others).size).toBe(1); // evenly split
+    }
   });
 
   it("1 candidate → a single house model", () => {
@@ -224,12 +235,9 @@ describe("run panel composition (quality mode: 1-3 deep candidates)", () => {
 
   it("clamps out-of-range counts", () => {
     expect(buildRunPanel(0).length).toBe(1);
-    expect(buildRunPanel(99).length).toBe(3);
+    expect(buildRunPanel(99).length).toBe(20);
   });
 
-  it("roundForIdx is 1 for every slot (each model appears once)", () => {
-    for (let idx = 0; idx < 3; idx++) expect(roundForIdx(idx)).toBe(1);
-  });
 });
 
 // ---------------------------------------------------------------------------
