@@ -61,6 +61,11 @@ export default function DiscoverPage() {
   const [guidelines, setGuidelines] = useState("");
   const [candidates, setCandidates] = useState(1);
   const [useBackground, setUseBackground] = useState(true);
+  const [autopilot, setAutopilot] = useState<{
+    enabled: boolean;
+    batch: number;
+  } | null>(null);
+  const [autopilotBusy, setAutopilotBusy] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -104,6 +109,19 @@ export default function DiscoverPage() {
       return;
     }
     void refresh();
+    void (async () => {
+      try {
+        const res = await fetch("/api/discovery/autopilot");
+        if (res.ok) {
+          const d = (await res.json()) as {
+            autopilot: { enabled: boolean; batch: number } | null;
+          };
+          setAutopilot(d.autopilot);
+        }
+      } catch {
+        // Non-blocking.
+      }
+    })();
   }, [cloud, entitlements.signedIn, refresh]);
 
   // Poll while any run is active (read-only — the server cron does the work).
@@ -140,6 +158,32 @@ export default function DiscoverPage() {
       setError("Network error — try again.");
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function setAutopilotEnabled(enabled: boolean) {
+    setAutopilotBusy(true);
+    try {
+      const res = await fetch("/api/discovery/autopilot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled,
+          batch: 20,
+          guidelines,
+          useFounderBackground: useBackground,
+        }),
+      });
+      if (res.ok) {
+        const d = (await res.json()) as {
+          autopilot: { enabled: boolean; batch: number };
+        };
+        setAutopilot(d.autopilot);
+      }
+    } catch {
+      // Next load shows the truth.
+    } finally {
+      setAutopilotBusy(false);
     }
   }
 
@@ -300,6 +344,37 @@ export default function DiscoverPage() {
           ) : null}
         </Section>
       )}
+
+      <div className="mb-6 mt-4 rounded-lg border border-zinc-200 bg-white p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-medium text-zinc-800">
+              Autopilot
+              {autopilot?.enabled ? (
+                <span className="ml-2 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+                  ON
+                </span>
+              ) : null}
+            </p>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              Starts a batch of 20 automatically every 15 minutes (using the
+              guidelines above), pausing while 8 or more batches are still
+              running so the queue can drain.
+            </p>
+          </div>
+          <Button
+            variant={autopilot?.enabled ? "secondary" : "primary"}
+            disabled={autopilotBusy}
+            onClick={() => void setAutopilotEnabled(!autopilot?.enabled)}
+          >
+            {autopilotBusy
+              ? "Saving…"
+              : autopilot?.enabled
+                ? "Turn off"
+                : "Turn on autopilot"}
+          </Button>
+        </div>
+      </div>
 
       <Section title="Past runs">
         {!loaded ? null : runs.filter((r) => r.status !== "running").length ===

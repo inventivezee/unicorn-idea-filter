@@ -57,6 +57,10 @@ export const GENERATORS: DiscoveryModel[] = [
  *  may be in flight concurrently (migration 014). */
 export const DEFAULT_TASKS_PER_RUN = 1;
 export const MAX_TASKS_PER_RUN = 20;
+/** Autopilot backstop: don't START new batches while this many are already
+ *  running for the owner — arrival outrunning throughput doesn't discover
+ *  more ideas, it just queues tasks into deadline failures. */
+export const MAX_CONCURRENT_AUTOPILOT_RUNS = 8;
 
 export function buildRunPanel(count: number): DiscoveryModel[] {
   const n = Math.min(MAX_TASKS_PER_RUN, Math.max(1, Math.round(count)));

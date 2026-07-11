@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/advance-discovery",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/auto-discovery",
+      "schedule": "*/15 * * * *"
     }
   ]
 }
