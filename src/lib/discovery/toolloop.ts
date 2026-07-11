@@ -252,6 +252,37 @@ function injectWrapUp(state: LoopState): void {
   }
 }
 
+/** Only these block types are valid when REPLAYED as input. The
+ *  server-side-fallback beta (Fable → Opus) inserts a 'fallback' marker
+ *  block into responses — replaying it 400s the whole request (live
+ *  incident: 'tool_use ids without tool_result' as the misleading
+ *  downstream symptom). Strip anything non-replayable, at read time so
+ *  states already persisted with markers self-heal. */
+const REPLAYABLE_BLOCKS = new Set([
+  "text",
+  "thinking",
+  "redacted_thinking",
+  "tool_use",
+]);
+
+function sanitizeAssistantBlocks(
+  messages: Anthropic.MessageParam[],
+): Anthropic.MessageParam[] {
+  for (const m of messages) {
+    if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+    const kept = m.content.filter(
+      (b) => typeof b === "string" || REPLAYABLE_BLOCKS.has(b.type),
+    );
+    if (kept.length !== m.content.length) {
+      console.error(
+        `[discovery] stripped ${m.content.length - kept.length} non-replayable block(s) (e.g. fallback markers) from loop state`,
+      );
+      m.content = kept;
+    }
+  }
+  return messages;
+}
+
 /** Anthropic rejects histories where a tool_use message isn't immediately
  *  followed by matching tool_result blocks. Corrupted states exist in prod
  *  (writer under investigation — likely an interrupted persist); repair by
@@ -312,7 +343,7 @@ async function anthropicTurn(
   state: Extract<LoopState, { kind: "anthropic" }>,
 ): Promise<ResearchTurnResult> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  state.messages = repairToolPairing(state.messages);
+  state.messages = repairToolPairing(sanitizeAssistantBlocks(state.messages));
   stripOldImages(state);
   // noTools must NOT drop the defs — history containing tool_use/tool_result
   // blocks is rejected without them; tool_choice none forbids further use.
@@ -361,7 +392,10 @@ async function anthropicTurn(
 
   const toolUses = response.content.filter((b) => b.type === "tool_use");
   // Echo the full content back (thinking blocks unchanged — replay rule).
-  state.messages.push({ role: "assistant", content: response.content });
+  state.messages.push({
+    role: "assistant",
+    content: response.content.filter((b) => REPLAYABLE_BLOCKS.has(b.type)),
+  });
   if (toolUses.length === 0) {
     state.lastText = response.content
       .filter((b) => b.type === "text")
