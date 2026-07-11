@@ -205,6 +205,8 @@ export interface ResearchTurnResult {
   /** True when the model produced no tool calls — research is finished. */
   done: boolean;
   toolUses: number;
+  /** Token usage for spend telemetry (absent when a provider omits it). */
+  usage?: { in: number; cachedIn: number; out: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -381,6 +383,13 @@ async function anthropicTurn(
         .stream(params as Anthropic.MessageCreateParamsNonStreaming)
         .finalMessage();
 
+  const usage = {
+    in: response.usage?.input_tokens ?? 0,
+    cachedIn:
+      (response.usage as { cache_read_input_tokens?: number } | undefined)
+        ?.cache_read_input_tokens ?? 0,
+    out: response.usage?.output_tokens ?? 0,
+  };
   if (response.stop_reason === "refusal") {
     throw new UserFacingError("The model declined this research task.");
   }
@@ -401,7 +410,7 @@ async function anthropicTurn(
       .filter((b) => b.type === "text")
       .map((b) => b.text)
       .join("\n");
-    return { state: trimLoopState(state), done: true, toolUses: 0 };
+    return { state: trimLoopState(state), done: true, toolUses: 0, usage };
   }
   const results: Anthropic.ToolResultBlockParam[] = [];
   for (const tu of toolUses) {
@@ -430,7 +439,7 @@ async function anthropicTurn(
     });
   }
   state.messages.push({ role: "user", content: results });
-  return { state: trimLoopState(state), done: false, toolUses: toolUses.length };
+  return { state: trimLoopState(state), done: false, toolUses: toolUses.length, usage };
 }
 
 async function openaiTurn(
@@ -510,6 +519,11 @@ async function openaiTurn(
       ? { reasoning: { effort: clampOpenAIEffort(opts.effort) } }
       : {}),
   });
+  const usage = {
+    in: response.usage?.input_tokens ?? 0,
+    cachedIn: response.usage?.input_tokens_details?.cached_tokens ?? 0,
+    out: response.usage?.output_tokens ?? 0,
+  };
 
   state.responseId = response.id;
   state.lastText = response.output_text ?? state.lastText;
@@ -559,12 +573,13 @@ async function openrouterResearch(
           : opts.effort) as "low" | "medium" | "high" }
       : {}),
   });
+  const usage = turn.usage;
   state.messages.push(
     turn.assistantMessage as unknown as ORMessage,
   );
   if (turn.toolCalls.length === 0) {
     state.lastText = turn.text;
-    return { state: trimLoopState(state), done: true, toolUses: 0 };
+    return { state: trimLoopState(state), done: true, toolUses: 0, usage };
   }
   for (const call of turn.toolCalls) {
     const outcome = await execBrowserTool(opts.session, call.name, call.args);

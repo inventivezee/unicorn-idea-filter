@@ -119,6 +119,14 @@ interface PhaseState {
   researchLog?: string;
   /** Red-team pass over the brief (generation phase only). */
   critique?: string;
+  /** Evidence transcript inherited from the PRIOR scoring — rescues verify
+   *  deltas instead of re-researching the market from scratch (rescore
+   *  averaged 111 turns/task before this). */
+  priorResearch?: string;
+  /** Sibling digest FROZEN at init — a per-invocation digest changed the
+   *  system prompt every chunk and busted the prompt cache on the whole
+   *  history. */
+  siblingsSnapshot?: string;
   synthJobId?: string;
   verdictSummary?: string;
   /** Dual-model scoring: Fable's draft, then Sol's review memo, then the
@@ -521,6 +529,7 @@ async function executeStep(
     return {
       status: "researching",
       phase_state: {
+        siblingsSnapshot: ctx.siblings,
         loop: initialLoopState(
           gen.provider,
           system,
@@ -562,7 +571,7 @@ async function executeStep(
               ? ctx.founderBackground
               : "",
             round,
-            siblings: ctx.siblings,
+            siblings: ps.siblingsSnapshot ?? ctx.siblings,
           })
         : isReframe
           ? buildReframeResearchSystem({
@@ -576,7 +585,10 @@ async function executeStep(
                 firstVerdict: verdictSummaryText(ps.verdictDraft!),
                 evidenceMemo: ps.memo ?? "",
               })
-            : buildScoringResearchSystem(ps.idea!);
+            : buildScoringResearchSystem(
+                ps.idea!,
+                task.status === "rescoring" ? ps.priorResearch : undefined,
+              );
     const prompt =
       task.status === "researching"
         ? buildDiscoveryResearchPrompt(ctx.run.guidelines)
@@ -595,7 +607,10 @@ async function executeStep(
     const result = await runResearchTurn({
       provider: turnModel.provider,
       model: turnModel.model,
-      effort: turnModel.provider === "openrouter" ? undefined : "max",
+      // Browsing/evidence turns run at "high": max-effort thinking on ~1k
+      // calls/hour of routine tool use was the top Anthropic burn. The
+      // judgment calls (score_sync, critique, synthesis) keep "max".
+      effort: turnModel.provider === "openrouter" ? undefined : "high",
       system,
       prompt,
       state:
@@ -607,6 +622,19 @@ async function executeStep(
       wrapUp: forced || used >= TURN_CAPS[phase] - 2,
       noTools: forced,
     });
+    if (result.usage) {
+      await logEvent(
+        ctx.admin,
+        ctx.run.id,
+        task.idx,
+        "usage",
+        JSON.stringify({
+          model: turnModel.model,
+          phase: task.status,
+          ...result.usage,
+        }),
+      );
+    }
     const patch: PhaseState = { ...ps, loop: result.state };
     if (result.done) {
       const finalText = result.state.lastText ?? "";
@@ -898,6 +926,7 @@ async function executeStep(
       phase_state: {
         idea: ps.idea,
         verdictSummary: verdictSummaryText(verdict),
+        priorResearch: (ps.researchLog ?? ps.priorResearch ?? "").slice(-100_000),
         reframeAttempt: isRescore ? attempt + 1 : 1,
         reframeHistory: isRescore
           ? [
@@ -935,9 +964,10 @@ function afterIdeaSynthesis(
         idea,
         reframeAttempt: ps.reframeAttempt ?? 1,
         reframeHistory: ps.reframeHistory ?? [],
+        priorResearch: ps.priorResearch,
         loop: initialLoopState(
           scoringFirstOf(task).provider === "anthropic" ? "anthropic" : "openai",
-          buildScoringResearchSystem(idea),
+          buildScoringResearchSystem(idea, ps.priorResearch),
           buildScoringResearchPrompt(),
           scoringFirstOf(task).model,
         ),

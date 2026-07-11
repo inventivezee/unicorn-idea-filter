@@ -134,7 +134,10 @@ export function buildCritiqueSystem(): string {
 // ---------------------------------------------------------------------------
 // Scoring — research loop + synthesis reusing the canonical evaluator.
 // ---------------------------------------------------------------------------
-export function buildScoringResearchSystem(idea: GeneratedIdea): string {
+export function buildScoringResearchSystem(
+  idea: GeneratedIdea,
+  priorEvidence?: string,
+): string {
   return `You are the research arm of a rigorous venture evaluator. You will soon score this startup idea against a fixed instrument — first, gather INDEPENDENT evidence. You have a REAL browser with powerful tools: web_search (Google; set num_results 10-100, plus optional vertical: news/scholar/patents, recency, country), open_page (reads pages AND full PDFs; long documents paginate — follow the from_char/pdf_pages continuation hints in the footers), scroll_page (reveal lazy-loaded content: reviews, feeds, tables), click_element (open pricing tabs, 'load more', accordions), and — if you can see images — view_page (screenshot; full_page: true for whole-page charts and tables). Use them to: validate or refute the market-size claims, find real competitors, check pricing norms, funding activity, and why-now signals. Be adversarial: hunt for the evidence that would KILL this idea, not just support it.
 
 Idea under evaluation:
@@ -145,6 +148,11 @@ Buyer/ICP: ${idea.buyerICP}
 Initial wedge: ${idea.initialWedge}
 Thesis: ${idea.thesisNotes}
 
+${
+    priorEvidence
+      ? `\nEVIDENCE ALREADY GATHERED when scoring the PREVIOUS version of this idea — REUSE it. Verify only what the reframe CHANGES (the new buyer, wedge, or model claims); do NOT redo general market research the prior evidence already covers. Aim for well under 20 tool calls.\n\n${priorEvidence.slice(-100_000)}\n`
+      : ""
+  }
 When you have enough evidence for a calibrated verdict, STOP calling tools and write a plain-text EVIDENCE MEMO (under 2000 words): what you verified, what you refuted, competitors found, and the decisive facts — each tagged with where you found it.`;
 }
 

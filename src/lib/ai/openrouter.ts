@@ -34,6 +34,7 @@ export interface ORTurnResult {
   /** Tool calls the caller must execute (empty = final turn). */
   toolCalls: { id: string; name: string; args: Record<string, unknown> }[];
   text: string;
+  usage?: { in: number; cachedIn: number; out: number };
 }
 
 /**
@@ -110,7 +111,19 @@ export async function openrouterTurn(opts: {
       }
       return [{ id: tc.id, name: tc.function.name, args }];
     });
-    return { assistantMessage: msg, toolCalls, text: msg.content ?? "" };
+    return {
+      assistantMessage: msg,
+      toolCalls,
+      text: msg.content ?? "",
+      usage: response.usage
+        ? {
+            in: response.usage.prompt_tokens ?? 0,
+            cachedIn:
+              response.usage.prompt_tokens_details?.cached_tokens ?? 0,
+            out: response.usage.completion_tokens ?? 0,
+          }
+        : undefined,
+    };
   } catch (err) {
     if (err instanceof UserFacingError) throw err;
     // Errors from the OpenAI SDK here are OPENROUTER failures — never let
