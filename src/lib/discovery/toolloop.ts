@@ -270,13 +270,13 @@ const REPLAYABLE_BLOCKS = new Set([
 function sanitizeAssistantBlocks(
   messages: Anthropic.MessageParam[],
 ): Anthropic.MessageParam[] {
-  let lastAssistant = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "assistant") {
-      lastAssistant = i;
-      break;
-    }
-  }
+  // An exchange containing non-replayable blocks (fallback markers) is
+  // unreplayable at ANY position: stripping blocks from a thinking-bearing
+  // assistant message trips "thinking ... cannot be modified" even for
+  // PRIOR turns (3.3k live 400s proved the prior-turn-strip theory wrong).
+  // Drop the whole exchange — assistant message plus its paired
+  // tool_result reply — wherever it sits; the surviving history stays
+  // valid and untouched messages replay byte-identical.
   const out: Anthropic.MessageParam[] = [];
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
@@ -291,32 +291,20 @@ function sanitizeAssistantBlocks(
       out.push(m);
       continue;
     }
-    if (i === lastAssistant) {
-      // The LATEST assistant turn is validated against the original
-      // response — stripping blocks from it counts as modification
-      // ("thinking blocks ... cannot be modified", 619 live 400s). Drop
-      // the whole corrupted exchange; the model redoes that turn.
-      console.error(
-        "[discovery] dropped corrupted latest assistant exchange (non-replayable blocks)",
-      );
-      const next = messages[i + 1];
-      if (
-        next &&
-        next.role === "user" &&
-        Array.isArray(next.content) &&
-        next.content.some(
-          (b) => typeof b !== "string" && b.type === "tool_result",
-        )
-      ) {
-        i++; // its paired tool_result reply goes with it
-      }
-      continue;
-    }
-    // PRIOR turns: the API ignores their thinking — stripping is safe.
-    m.content = m.content.filter(
-      (b) => typeof b === "string" || REPLAYABLE_BLOCKS.has(b.type),
+    console.error(
+      "[discovery] dropped unreplayable assistant exchange (fallback marker) from loop state",
     );
-    out.push(m);
+    const next = messages[i + 1];
+    if (
+      next &&
+      next.role === "user" &&
+      Array.isArray(next.content) &&
+      next.content.some(
+        (b) => typeof b !== "string" && b.type === "tool_result",
+      )
+    ) {
+      i++; // the paired tool_result reply goes with it
+    }
   }
   return out;
 }
