@@ -1287,6 +1287,26 @@ async function advanceTask(
           "step_error",
           `${step.kind} in ${task.status}: ${msg}\n${stack}`,
         );
+        // A DELISTED provider model (e.g. OpenRouter removing a slug) would
+        // 404 on every retry forever — strip the loop so the next claim
+        // restarts it on the current panel (turn budget still bounds it).
+        if (/doesn't recognize the model/i.test(msg)) {
+          const p = task.phase_state as PhaseState;
+          const healed = await casUpdateTask(ctx.admin, task.id, task.rev, {
+            error: msg.slice(0, 500),
+            claim: null,
+            phase_state: { ...p, loop: undefined } as Record<string, unknown>,
+          });
+          if (healed) task = healed;
+          await logEvent(
+            ctx.admin,
+            ctx.run.id,
+            task.idx,
+            "state_reset",
+            "loop model no longer exists at the provider — restarting the loop on the current panel",
+          );
+          return;
+        }
         // Provider quota/rate-limit outages: HOLD the claim so the lease
         // doubles as a ~15-min backoff (immediate re-claims would burn the
         // turn budget against a billing problem). Self-heals: the claim
