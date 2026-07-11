@@ -9,6 +9,7 @@ import {
   DEFAULT_TASKS_PER_RUN,
   MAX_TASKS_PER_RUN,
   buildRunPanel,
+  genVariant,
   scoringPanel,
   scoringVariant,
   SCORER_ANTHROPIC,
@@ -156,6 +157,29 @@ describe("reframeAttemptIdeaId", () => {
     expect(reframeAttemptIdeaId("run-1", 3, 2)).toBe(
       reframeAttemptIdeaId("run-1", 3, 2),
     );
+  });
+});
+
+describe("generation-style A/B (strict metrics vs spirit)", () => {
+  it("is deterministic and roughly 50/50", () => {
+    let strict = 0;
+    const N = 2000;
+    for (let i = 0; i < N; i++) {
+      const v = genVariant(`run-${i}`, i % 20);
+      expect(genVariant(`run-${i}`, i % 20)).toBe(v);
+      if (v === "strict") strict++;
+    }
+    expect(strict / N).toBeGreaterThan(0.4);
+    expect(strict / N).toBeLessThan(0.6);
+  });
+
+  it("is independent of the scoring variant seed", () => {
+    let differ = 0;
+    for (let i = 0; i < 200; i++) {
+      const g = genVariant(`run-${i}`, 0) === "strict" ? "A" : "B";
+      if (g !== scoringVariant(`run-${i}`, 0)) differ++;
+    }
+    expect(differ).toBeGreaterThan(50); // seeds don't mirror each other
   });
 });
 

@@ -54,6 +54,7 @@ import {
   OPENROUTER_GENERATORS,
   SCORER_ANTHROPIC,
   SCORER_OPENAI,
+  genVariant,
   scoringPanel,
   scoringVariant,
   WORST_TURN_MS,
@@ -525,7 +526,18 @@ async function executeStep(
         : "",
       round,
       siblings: ctx.siblings,
+      strictMetrics: genVariant(task.run_id, task.idx) === "strict",
     });
+    await logEvent(
+      ctx.admin,
+      ctx.run.id,
+      task.idx,
+      "gen_variant",
+      JSON.stringify({
+        variant: genVariant(task.run_id, task.idx),
+        generator: gen.model,
+      }),
+    );
     return {
       status: "researching",
       phase_state: {
@@ -572,6 +584,7 @@ async function executeStep(
               : "",
             round,
             siblings: ps.siblingsSnapshot ?? ctx.siblings,
+            strictMetrics: genVariant(task.run_id, task.idx) === "strict",
           })
         : isReframe
           ? buildReframeResearchSystem({

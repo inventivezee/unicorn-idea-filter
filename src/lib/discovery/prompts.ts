@@ -73,6 +73,8 @@ export function buildDiscoveryResearchSystem(opts: {
   round: number;
   /** One-line digests of sibling candidates already in this run. */
   siblings?: string;
+  /** A/B: design sternly AGAINST the instrument vs. spirit-of-the-bar. */
+  strictMetrics?: boolean;
 }): string {
   return `You are an elite startup scout inside the "Unicorn Idea Filter". Your mission: through REAL market research, originate ONE startup idea with a credible path to a $1B+ (unicorn/IPO-scale) company.
 
@@ -82,7 +84,11 @@ The idea will later be scored by an independent evaluator against this instrumen
 
 ${instrumentSummary()}
 
-Treat these metrics as your baseline — and refine or extend them where your research reveals better signals for this space (e.g. regulatory tailwinds, supply-chain shifts, distribution wedges). Optimizing for the *spirit* of the bar (venture-scale outcome) beats gaming individual line items.
+${
+  opts.strictMetrics
+    ? `Treat every gate and weighted criterion above as a HARD DESIGN REQUIREMENT, not guidance. Your idea must pass ALL gates outright and be engineered to score 4-5 on the heavily-weighted criteria. Before writing your brief, self-score your candidate against each gate and criterion AS A SKEPTICAL EVALUATOR WOULD — any gate you cannot defend with researched evidence means you pick a different idea. Do not present an idea that merely honors the spirit of the bar; present one that demonstrably clears it line by line, and include that stern line-by-line self-assessment in your brief.`
+    : "Treat these metrics as your baseline — and refine or extend them where your research reveals better signals for this space (e.g. regulatory tailwinds, supply-chain shifts, distribution wedges). Optimizing for the *spirit* of the bar (venture-scale outcome) beats gaming individual line items."
+}
 
 ${
   opts.founderBackground

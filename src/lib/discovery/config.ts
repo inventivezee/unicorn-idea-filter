@@ -122,6 +122,19 @@ export function scoringVariant(runId: string, idx: number): ScoringVariant {
   return fnv1a(`${runId}:scorepanel:${idx}`) % 2 === 0 ? "A" : "B";
 }
 
+/** Generation-style A/B (owner decision): half the candidates are told to
+ *  design STERNLY against the scoring instrument (pass every gate, engineer
+ *  for 4-5 on weighted criteria, self-score line by line before the brief);
+ *  half keep the spirit-of-the-bar framing. Deterministic per (runId, idx)
+ *  — the system prompt must stay stable for the task's lifetime (prompt
+ *  cache + mid-loop consistency); recorded as non-pruned gen_variant
+ *  events for later comparison. */
+export type GenVariant = "strict" | "standard";
+
+export function genVariant(runId: string, idx: number): GenVariant {
+  return fnv1a(`${runId}:genstyle:${idx}`) % 2 === 0 ? "strict" : "standard";
+}
+
 export function scoringPanel(variant: ScoringVariant): {
   first: DiscoveryModel;
   final: DiscoveryModel;
