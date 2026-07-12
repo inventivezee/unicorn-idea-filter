@@ -546,6 +546,8 @@ async function executeStep(
           gen.provider,
           system,
           buildDiscoveryResearchPrompt(ctx.run.guidelines),
+          gen.model,
+          gen.provider === "openrouter" ? undefined : "high",
         ),
       } as Record<string, unknown>,
     };
@@ -563,6 +565,7 @@ async function executeStep(
           system,
           buildScoringResearchPrompt(),
           scoringFirstOf(task).model,
+          "high",
         ),
       } as Record<string, unknown>,
     };
@@ -628,7 +631,13 @@ async function executeStep(
       prompt,
       state:
         ps.loop ??
-        initialLoopState(turnModel.provider, system, prompt, turnModel.model),
+        initialLoopState(
+          turnModel.provider,
+          system,
+          prompt,
+          turnModel.model,
+          turnModel.provider === "openrouter" ? undefined : "high",
+        ),
       session: ctx.session!,
       // Two turns of headroom left → tell the agent to finish instead of
       // letting the budget kill it mid-research.
@@ -983,6 +992,7 @@ function afterIdeaSynthesis(
           buildScoringResearchSystem(idea, ps.priorResearch),
           buildScoringResearchPrompt(),
           scoringFirstOf(task).model,
+          "high",
         ),
       } as Record<string, unknown>,
     };
@@ -1349,6 +1359,26 @@ async function advanceTask(
         // A DELISTED provider model (e.g. OpenRouter removing a slug) would
         // 404 on every retry forever — strip the loop so the next claim
         // restarts it on the current panel (turn budget still bounds it).
+        if (/cannot be modified/i.test(msg)) {
+          // Legacy loop whose generation config we can no longer reproduce
+          // (pre-pinning system/effort deploys) — reset the loop; the phase
+          // restarts fresh under pinned config, bounded by its turn budget.
+          const p = task.phase_state as PhaseState;
+          const healed = await casUpdateTask(ctx.admin, task.id, task.rev, {
+            error: msg.slice(0, 500),
+            claim: null,
+            phase_state: { ...p, loop: undefined } as Record<string, unknown>,
+          });
+          if (healed) task = healed;
+          await logEvent(
+            ctx.admin,
+            ctx.run.id,
+            task.idx,
+            "state_reset",
+            "loop config predates pinning (thinking signature mismatch) — restarting loop under pinned config",
+          );
+          return;
+        }
         if (/doesn't recognize the model/i.test(msg)) {
           const p = task.phase_state as PhaseState;
           const healed = await casUpdateTask(ctx.admin, task.id, task.rev, {

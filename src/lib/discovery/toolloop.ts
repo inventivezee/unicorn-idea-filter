@@ -87,6 +87,12 @@ export type LoopState =
       /** Model id that started this loop — a loop must FINISH on the model
        *  that started it (mid-loop switches have shipped three 404s). */
       model?: string;
+      /** System + effort PINNED at init: Anthropic thinking signatures bind
+       *  to the generation config, so a mid-loop prompt/effort change (any
+       *  deploy that touches them) 400s every replay ("thinking ... cannot
+       *  be modified"). A loop finishes exactly as it started. */
+      system?: string;
+      effort?: string;
     }
   | {
       kind: "openai";
@@ -95,8 +101,16 @@ export type LoopState =
       lastText?: string;
       wrapUpPending?: boolean;
       model?: string;
+      system?: string;
+      effort?: string;
     }
-  | { kind: "openrouter"; messages: ORMessage[]; lastText?: string; model?: string };
+  | {
+      kind: "openrouter";
+      messages: ORMessage[];
+      lastText?: string;
+      model?: string;
+      effort?: string;
+    };
 
 interface PendingCall {
   callId: string;
@@ -109,12 +123,15 @@ export function initialLoopState(
   system: string,
   prompt: string,
   model?: string,
+  effort?: string,
 ): LoopState {
   if (provider === "anthropic") {
     return {
       kind: "anthropic",
       messages: [{ role: "user", content: prompt }],
       model,
+      system,
+      effort,
     };
   }
   if (provider === "openrouter") {
@@ -125,9 +142,10 @@ export function initialLoopState(
         { role: "user", content: prompt },
       ],
       model,
+      effort,
     };
   }
-  return { kind: "openai", responseId: null, pending: [], model };
+  return { kind: "openai", responseId: null, pending: [], model, system, effort };
 }
 
 /** Drop oldest exchanges (never the first user prompt) until the state
@@ -381,12 +399,17 @@ async function anthropicTurn(
     description: t.description,
     input_schema: t.parameters as unknown as Anthropic.Tool.InputSchema,
   }));
+  // Pinned-at-init config wins; loops from before pinning all ran at "max"
+  // with the then-current system — "max" is the correct legacy fallback for
+  // effort, and opts.system the best available for system.
+  const system = state.system ?? opts.system;
+  const effort = state.effort ?? (state.system === undefined ? "max" : opts.effort);
   const params = {
     model: opts.model,
     max_tokens: 32000,
     thinking: { type: "adaptive" as const },
-    system: cachedSystem(opts.system),
-    ...(opts.effort ? { output_config: { effort: opts.effort } } : {}),
+    system: cachedSystem(system),
+    ...(effort ? { output_config: { effort } } : {}),
     tools,
     ...(noTools ? { tool_choice: { type: "none" as const } } : {}),
     messages: cachedMessages(state.messages),
@@ -552,7 +575,7 @@ async function openaiTurn(
     model: opts.model,
     // instructions are NOT carried over by previous_response_id — resend on
     // every request or later turns run without a system prompt.
-    instructions: opts.system,
+    instructions: state.system ?? opts.system,
     ...(state.responseId ? { previous_response_id: state.responseId } : {}),
     input,
     tools,
