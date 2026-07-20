@@ -13,10 +13,10 @@ export function openrouterConfigured(): boolean {
   return Boolean(process.env.OPENROUTER_API_KEY);
 }
 
-function client(): OpenAI {
+function client(apiKey?: string): OpenAI {
   return new OpenAI({
     baseURL: "https://openrouter.ai/api/v1",
-    apiKey: process.env.OPENROUTER_API_KEY,
+    apiKey: apiKey ?? process.env.OPENROUTER_API_KEY,
     defaultHeaders: {
       // Optional attribution headers per OpenRouter docs.
       "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "",
@@ -55,9 +55,11 @@ export async function openrouterTurn(opts: {
   reasoningEffort?: "low" | "medium" | "high";
   /** "none" forbids tool calls while keeping defs valid for history. */
   toolChoice?: "none";
+  /** BYOK: the caller's own OpenRouter key. */
+  apiKey?: string;
 }): Promise<ORTurnResult> {
   try {
-    const response = await client().chat.completions.create({
+    const response = await client(opts.apiKey).chat.completions.create({
       model: opts.model,
       messages: opts.messages,
       max_tokens: opts.maxTokens ?? 32_000,

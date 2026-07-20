@@ -26,6 +26,8 @@ import {
 import { DEFAULT_WEIGHTS } from "@/lib/criteria";
 import { decision } from "@/lib/engine";
 import { insertIdea } from "@/lib/db/ideas";
+import { resolveUserKeys } from "@/lib/db/apiKeys";
+import { browserbaseCreds, type ProviderKeys } from "@/lib/ai/provider-keys";
 import { sendEmail } from "@/lib/email";
 import {
   bumpRunBudget,
@@ -442,6 +444,8 @@ interface StepContext {
   siblings: string;
   /** Per-idx occurrence number of each task's generator within the run. */
   rounds: Record<number, number>;
+  /** BYOK: the run OWNER's provider keys (env fallback in the accessors). */
+  keys: ProviderKeys;
   session: BrowserHandle | null;
 }
 
@@ -639,6 +643,7 @@ async function executeStep(
           turnModel.provider === "openrouter" ? undefined : "high",
         ),
       session: ctx.session!,
+      keys: ctx.keys,
       // Two turns of headroom left → tell the agent to finish instead of
       // letting the budget kill it mid-research.
       wrapUp: forced || used >= TURN_CAPS[phase] - 2,
@@ -679,6 +684,7 @@ async function executeStep(
   if (step.kind === "critique") {
     const model = phaseModel(task);
     const critique = await plainTextCall({
+      keys: ctx.keys,
       provider: model.provider,
       model: model.model,
       effort: model.provider === "openrouter" ? "high" : "max",
@@ -700,6 +706,7 @@ async function executeStep(
       Boolean(ps.verdictDraft) &&
       !ps.feedback;
     const jobId = await openaiSynthesisSubmit({
+      keys: ctx.keys,
       model: phaseModel(task).model,
       system: isReframe
         ? buildReframeSynthesisSystem()
@@ -718,7 +725,7 @@ async function executeStep(
   }
 
   if (step.kind === "synth_poll") {
-    const poll = await openaiSynthesisPoll(ps.synthJobId!);
+    const poll = await openaiSynthesisPoll(ps.synthJobId!, ctx.keys);
     if (poll.status === "pending") return { yieldChunk: true };
     if (poll.status === "expired") {
       // Result aged out — clear the job id; the next claim resubmits
@@ -761,6 +768,7 @@ async function executeStep(
       Boolean(ps.verdictDraft) &&
       !ps.feedback;
     const raw = await runSynthesisSync({
+      keys: ctx.keys,
       provider: model.provider as "anthropic" | "openrouter",
       model: model.model,
       effort: model.provider === "anthropic" ? "max" : undefined,
@@ -806,6 +814,7 @@ async function executeStep(
     const raw =
       scorer.provider === "anthropic"
         ? await runSynthesisSync({
+            keys: ctx.keys,
             provider: "anthropic",
             model: scorer.model,
             effort: "max",
@@ -815,6 +824,7 @@ async function executeStep(
             schema: ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
           })
         : await openaiSynthesisSync({
+            keys: ctx.keys,
             model: scorer.model,
             effort: "max",
             system,
@@ -1202,7 +1212,7 @@ async function advanceTask(
         }
         if (!holder.session) {
           try {
-            holder.session = await createBrowserSession();
+            holder.session = await createBrowserSession(browserbaseCreds(ctx.keys));
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             // A concurrency-limit 429 is TRANSIENT (someone else has the
@@ -1518,6 +1528,9 @@ export async function advanceDiscoveryRun(
     }
   }
 
+  // BYOK: the run OWNER's provider keys (env fallback in the accessors).
+  const keys = await resolveUserKeys(admin, run.owner_id);
+
   const tasks = await fetchTasks(admin, run.id);
 
   // A crash between createRun and createTasks leaves a task-less running
@@ -1574,7 +1587,14 @@ export async function advanceDiscoveryRun(
   // sharedHolder) — a session per run per invocation multiplied into
   // 8 runs x ~25 overlapping invocations ≈ 200 concurrent sessions against
   // the account's 80 cap, and the whole fleet thrashed on 429s.
-  const holder = sharedHolder ?? newSessionHolder();
+  //
+  // BYOK EXCEPTION: a run whose owner brought their own Browserbase creds
+  // MUST NOT touch the pooled session — that session lives on a different
+  // account, and reusing it would bill this owner's browsing to the pool
+  // (or vice-versa). Such a run gets its own holder, created and released
+  // within the run on the owner's account.
+  const ownBrowser = Boolean(keys.browserbase);
+  const holder = ownBrowser ? newSessionHolder() : (sharedHolder ?? newSessionHolder());
   // Advance several tasks CONCURRENTLY (each with its own page on the
   // shared browser) — sequential advancement dedicated a whole invocation
   // to one task and left the tail queued for tens of minutes.
@@ -1590,7 +1610,7 @@ export async function advanceDiscoveryRun(
           if (!claimAvailable(task)) continue;
           advanced++;
           await advanceTask(
-            { admin, run, founderBackground, coFounders, siblings, rounds },
+            { admin, run, founderBackground, coFounders, siblings, rounds, keys },
             task,
             invocationDeadline,
             holder,
@@ -1599,8 +1619,11 @@ export async function advanceDiscoveryRun(
       }),
     );
   } finally {
-    // Shared sessions are released by the invocation that owns them.
-    if (!sharedHolder) await releaseBrowserSession(holder.session);
+    // Release when we own the holder: an own-browser (BYOK) run always owns
+    // its holder; a pooled run's session is released by the invocation.
+    if (ownBrowser || !sharedHolder) {
+      await releaseBrowserSession(holder.session);
+    }
   }
 
   // Terminal check.

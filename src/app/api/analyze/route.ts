@@ -42,6 +42,8 @@ import {
   isPremiumModel,
   STANDARD_WEB_SEARCH_CAP,
 } from "@/lib/entitlements";
+import { resolveUserKeys } from "@/lib/db/apiKeys";
+import { anthropicKey, openaiKey } from "@/lib/ai/provider-keys";
 import {
   adminClient,
   anonKeyFromBody,
@@ -220,11 +222,24 @@ export async function POST(request: Request) {
   let persistTo: string | null = null;
   // Local-only deployments run on the owner's keys — premium tier applies.
   let tier: "premium" | "standard" = "premium";
+  // BYOK: the caller's own key for the chosen provider (undefined → env).
+  let byokKey: string | undefined;
 
   if (cloudConfigured()) {
     const caller = await resolveCaller();
     const subscribed = caller.subscribed || caller.isAdmin;
     tier = subscribed ? "premium" : "standard";
+
+    // BYOK: resolve the caller's own key for this provider. If they brought
+    // one, it funds the call and lifts their free-analysis cap.
+    const ownKeys = await resolveUserKeys(adminClient(), caller.user?.id);
+    byokKey =
+      provider === "anthropic"
+        ? ownKeys.anthropic
+        : provider === "openai"
+          ? ownKeys.openai
+          : undefined;
+    const byokForProvider = Boolean(byokKey);
 
     if (isPremiumModel(model) && !subscribed) {
       return Response.json(
@@ -237,7 +252,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (mode === "full" && !subscribed) {
+    if (mode === "full" && !subscribed && !byokForProvider) {
       const admin = adminClient();
       if (caller.user) {
         const { data: allowed } = await admin.rpc("consume_free_analysis", {
@@ -356,6 +371,7 @@ export async function POST(request: Request) {
         webSearch: false,
         speed: "fast",
         tier,
+        apiKey: byokKey,
       });
       const raw = parseLastJSON<RawMetadata>(result.texts);
       const response: AnalyzeMetadataResponse = {
@@ -396,6 +412,7 @@ export async function POST(request: Request) {
         webSearch,
         speed: "quality",
         tier,
+        apiKey: byokKey,
       });
       const raw = parseLastJSON<RawAnalysis>(result.texts);
       const gates: Record<string, { value: "Y" | "N" | "UNSURE"; rationale: string }> = {};
@@ -462,6 +479,7 @@ export async function POST(request: Request) {
         webSearch,
         speed: "quality",
         tier,
+        apiKey: byokKey,
       });
       const raw = parseLastJSON<RawAnalysis>(result.texts);
       const response = normalizeCc(raw, result.webSearches, provider, model);
@@ -483,6 +501,7 @@ export async function POST(request: Request) {
       webSearch,
       speed: "quality",
       tier,
+      apiKey: byokKey,
     });
     const raw = parseLastJSON<RawAnalysis>(result.texts);
     const response = normalizeAnalysis(

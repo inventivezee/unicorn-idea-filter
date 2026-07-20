@@ -28,6 +28,12 @@ import {
   type ToolOutcome,
 } from "./browserbase";
 import { TASK_STATE_CHAR_BUDGET } from "./config";
+import {
+  anthropicKey,
+  openaiKey,
+  openrouterKey,
+  type ProviderKeys,
+} from "@/lib/ai/provider-keys";
 
 const FABLE_MODELS = /^claude-(fable-5|mythos-5)/;
 
@@ -241,6 +247,7 @@ export async function runResearchTurn(opts: {
   prompt: string;
   state: LoopState;
   session: BrowserHandle;
+  keys?: ProviderKeys;
   /** Two turns before the phase cap the engine sets this — the agent gets
    *  told to finish instead of dying mid-research on the budget. */
   wrapUp?: boolean;
@@ -383,10 +390,11 @@ async function anthropicTurn(
     effort?: string;
     system: string;
     session: BrowserHandle;
+    keys?: ProviderKeys;
   },
   state: Extract<LoopState, { kind: "anthropic" }>,
 ): Promise<ResearchTurnResult> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({ apiKey: anthropicKey(opts.keys) });
   state.messages = repairToolPairing(sanitizeAssistantBlocks(state.messages));
   stripOldImages(state);
   // noTools must NOT drop the defs — history containing tool_use/tool_result
@@ -515,10 +523,11 @@ async function openaiTurn(
     system: string;
     prompt: string;
     session: BrowserHandle;
+    keys?: ProviderKeys;
   },
   state: Extract<LoopState, { kind: "openai" }>,
 ): Promise<ResearchTurnResult> {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 900_000 });
+  const client = new OpenAI({ apiKey: openaiKey(opts.keys), timeout: 900_000 });
   const noTools = Boolean((opts as { noTools?: boolean }).noTools);
   const tools = browserToolDefs(opts.session.vision ?? false).map((t) => ({
     type: "function" as const,
@@ -613,6 +622,7 @@ async function openrouterResearch(
     model: string;
     session: BrowserHandle;
     effort?: "low" | "medium" | "high" | "xhigh" | "max";
+    keys?: ProviderKeys;
   },
   state: Extract<LoopState, { kind: "openrouter" }>,
 ): Promise<ResearchTurnResult> {
@@ -632,6 +642,7 @@ async function openrouterResearch(
     model: opts.model,
     messages: state.messages,
     tools,
+    apiKey: openrouterKey(opts.keys),
     ...(noTools ? { toolChoice: "none" as const } : {}),
     ...(opts.effort
       ? { reasoningEffort: (opts.effort === "max" || opts.effort === "xhigh"
@@ -700,6 +711,7 @@ export async function runSynthesisSync(opts: {
   prompt: string;
   schemaName: string;
   schema: Record<string, unknown>;
+  keys?: ProviderKeys;
 }): Promise<unknown> {
   if (opts.provider === "anthropic") {
     // Anthropic compiles the output schema into a constrained-decoding
@@ -725,6 +737,7 @@ export async function runSynthesisSync(opts: {
       ],
       schemaName: opts.schemaName,
       schema: opts.schema,
+      apiKey: openrouterKey(opts.keys),
     });
     return parseLastJSON([turn.text]);
   } catch (err) {
@@ -739,6 +752,7 @@ export async function runSynthesisSync(opts: {
         },
         { role: "user", content: opts.prompt },
       ],
+      apiKey: openrouterKey(opts.keys),
     });
     return parseLastJSON([turn.text]);
   }
@@ -751,11 +765,12 @@ async function anthropicSynthesisAttempt(
     system: string;
     prompt: string;
     schema: Record<string, unknown>;
+    keys?: ProviderKeys;
   },
   enforceFormat: boolean,
 ): Promise<unknown> {
   {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = new Anthropic({ apiKey: anthropicKey(opts.keys) });
     const system = enforceFormat
       ? opts.system
       : `${opts.system}\n\nRespond with ONLY a single valid JSON object exactly matching this JSON Schema — no prose, no markdown fences:\n${JSON.stringify(opts.schema)}`;
@@ -804,9 +819,10 @@ export async function plainTextCall(opts: {
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
   system: string;
   prompt: string;
+  keys?: ProviderKeys;
 }): Promise<string> {
   if (opts.provider === "anthropic") {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = new Anthropic({ apiKey: anthropicKey(opts.keys) });
     const params = {
       model: opts.model,
       max_tokens: 32000,
@@ -835,7 +851,7 @@ export async function plainTextCall(opts: {
       .join("\n");
   }
   if (opts.provider === "openai") {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 900_000 });
+    const client = new OpenAI({ apiKey: openaiKey(opts.keys), timeout: 900_000 });
     const response = await client.responses.create({
       model: opts.model,
       instructions: opts.system,
@@ -855,6 +871,7 @@ export async function plainTextCall(opts: {
       { role: "system", content: opts.system },
       { role: "user", content: opts.prompt },
     ],
+    apiKey: openrouterKey(opts.keys),
     ...(opts.effort
       ? { reasoningEffort: (opts.effort === "max" || opts.effort === "xhigh"
           ? "high"
@@ -872,8 +889,9 @@ export async function openaiSynthesisSubmit(opts: {
   prompt: string;
   schemaName: string;
   schema: Record<string, unknown>;
+  keys?: ProviderKeys;
 }): Promise<string> {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 900_000 });
+  const client = new OpenAI({ apiKey: openaiKey(opts.keys), timeout: 900_000 });
   const base = {
     model: opts.model,
     instructions: opts.system,
@@ -919,8 +937,11 @@ export type BackgroundPoll =
   | { status: "failed"; error: string }
   | { status: "expired" };
 
-export async function openaiSynthesisPoll(id: string): Promise<BackgroundPoll> {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 900_000 });
+export async function openaiSynthesisPoll(
+  id: string,
+  keys?: ProviderKeys,
+): Promise<BackgroundPoll> {
+  const client = new OpenAI({ apiKey: openaiKey(keys), timeout: 900_000 });
   let response: OpenAI.Responses.Response;
   try {
     response = await client.responses.retrieve(id);
@@ -962,8 +983,9 @@ export async function openaiSynthesisSync(opts: {
   prompt: string;
   schemaName: string;
   schema: Record<string, unknown>;
+  keys?: ProviderKeys;
 }): Promise<unknown> {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 900_000 });
+  const client = new OpenAI({ apiKey: openaiKey(opts.keys), timeout: 900_000 });
   const response = await client.responses.create({
     model: opts.model,
     instructions: opts.system,

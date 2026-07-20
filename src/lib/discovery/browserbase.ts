@@ -33,15 +33,25 @@ export interface BrowserSession extends BrowserHandle {
   browser: Browser;
 }
 
-async function bbClient(): Promise<Browserbase> {
-  const { default: BrowserbaseCtor } = await import("@browserbasehq/sdk");
-  return new BrowserbaseCtor({ apiKey: process.env.BROWSERBASE_API_KEY });
+/** BYOK: the run owner's Browserbase creds, or the deployment's. */
+export interface BrowserbaseCreds {
+  key: string | undefined;
+  project: string | undefined;
 }
 
-export async function createBrowserSession(): Promise<BrowserSession> {
-  const bb = await bbClient();
+async function bbClient(creds?: BrowserbaseCreds): Promise<Browserbase> {
+  const { default: BrowserbaseCtor } = await import("@browserbasehq/sdk");
+  return new BrowserbaseCtor({
+    apiKey: creds?.key ?? process.env.BROWSERBASE_API_KEY,
+  });
+}
+
+export async function createBrowserSession(
+  creds?: BrowserbaseCreds,
+): Promise<BrowserSession> {
+  const bb = await bbClient(creds);
   const session = await bb.sessions.create({
-    projectId: process.env.BROWSERBASE_PROJECT_ID!,
+    projectId: creds?.project ?? process.env.BROWSERBASE_PROJECT_ID!,
     proxies: true, // managed residential proxies
     timeout: BB_SESSION_TIMEOUT_SECONDS,
   });

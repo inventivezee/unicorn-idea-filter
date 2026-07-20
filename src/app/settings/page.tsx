@@ -87,6 +87,202 @@ function ProfileUrlRow({
   );
 }
 
+interface KeyStatus {
+  set: boolean;
+  hint?: string;
+}
+
+const BYOK_PROVIDERS: Array<{
+  id: "anthropic" | "openai" | "openrouter" | "browserbase";
+  label: string;
+  placeholder: string;
+  note: string;
+}> = [
+  {
+    id: "anthropic",
+    label: "Anthropic (Claude)",
+    placeholder: "sk-ant-…",
+    note: "Powers analysis + discovery scoring/generation.",
+  },
+  {
+    id: "openai",
+    label: "OpenAI (GPT-5.6 Sol)",
+    placeholder: "sk-…",
+    note: "Powers analysis + discovery scoring/generation.",
+  },
+  {
+    id: "openrouter",
+    label: "OpenRouter",
+    placeholder: "sk-or-…",
+    note: "Discovery's DeepSeek / Qwen / Gemini research panel.",
+  },
+  {
+    id: "browserbase",
+    label: "Browserbase",
+    placeholder: "bb-… (API key)",
+    note: "Discovery's live research browser. Needs the project id too.",
+  },
+];
+
+function ApiKeysSection() {
+  const [status, setStatus] = useState<Record<string, KeyStatus> | null>(null);
+  const [available, setAvailable] = useState(true);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [bbProject, setBbProject] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/keys");
+        if (res.ok) {
+          const d = (await res.json()) as {
+            keys: Record<string, KeyStatus> | null;
+            available: boolean;
+          };
+          setStatus(d.keys);
+          setAvailable(d.available);
+        }
+      } catch {
+        // Non-blocking.
+      }
+    })();
+  }, []);
+
+  async function save(id: string) {
+    setBusy(id);
+    setError(null);
+    try {
+      const body: Record<string, unknown> = {
+        provider: id,
+        value: drafts[id] ?? "",
+      };
+      if (id === "browserbase") body.project = bbProject;
+      const res = await fetch("/api/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const d = (await res.json().catch(() => null)) as {
+        keys?: Record<string, KeyStatus>;
+        error?: string;
+      } | null;
+      if (!res.ok) {
+        setError(d?.error ?? `Couldn't save (HTTP ${res.status}).`);
+        return;
+      }
+      if (d?.keys) setStatus(d.keys);
+      setDrafts((prev) => ({ ...prev, [id]: "" }));
+      if (id === "browserbase") setBbProject("");
+    } catch {
+      setError("Network error — try again.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function clear(id: string) {
+    setBusy(id);
+    try {
+      const res = await fetch(`/api/keys?provider=${id}`, { method: "DELETE" });
+      const d = (await res.json().catch(() => null)) as {
+        keys?: Record<string, KeyStatus>;
+      } | null;
+      if (d?.keys) setStatus(d.keys);
+    } catch {
+      // Next load shows the truth.
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Section
+      title="Your API keys (bring your own)"
+      description="Add your own provider keys to run analysis and discovery on your own accounts — your keys are used instead of ours, and your daily caps are lifted. Bring all four to fully self-fund discovery. Keys are encrypted, never shown again, and never shared."
+    >
+      {!available ? (
+        <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Key storage isn&apos;t enabled on this deployment yet. Until it is,
+          everything runs on the app&apos;s shared keys.
+        </div>
+      ) : null}
+      {error ? (
+        <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      ) : null}
+      <div className="space-y-4">
+        {BYOK_PROVIDERS.map((p) => {
+          const st = status?.[p.id];
+          return (
+            <div
+              key={p.id}
+              className="rounded-lg border border-zinc-200 bg-white p-3"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-zinc-800">
+                  {p.label}
+                </span>
+                {st?.set ? (
+                  <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+                    set · {st.hint}
+                  </span>
+                ) : (
+                  <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">
+                    using app key
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 text-xs text-zinc-500">{p.note}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input
+                  type="password"
+                  autoComplete="off"
+                  disabled={!available || busy === p.id}
+                  value={drafts[p.id] ?? ""}
+                  onChange={(e) =>
+                    setDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))
+                  }
+                  placeholder={p.placeholder}
+                  className="min-w-[200px] flex-1 rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-cyan-500 focus:outline-none"
+                />
+                {p.id === "browserbase" ? (
+                  <input
+                    type="text"
+                    autoComplete="off"
+                    disabled={!available || busy === p.id}
+                    value={bbProject}
+                    onChange={(e) => setBbProject(e.target.value)}
+                    placeholder="project id"
+                    className="w-[140px] rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-cyan-500 focus:outline-none"
+                  />
+                ) : null}
+                <Button
+                  disabled={!available || busy === p.id || !(drafts[p.id] ?? "").trim()}
+                  onClick={() => void save(p.id)}
+                >
+                  {busy === p.id ? "Saving…" : "Save"}
+                </Button>
+                {st?.set ? (
+                  <Button
+                    variant="secondary"
+                    disabled={busy === p.id}
+                    onClick={() => void clear(p.id)}
+                  >
+                    Clear
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
 export default function SettingsPage() {
   const {
     state,
@@ -810,6 +1006,10 @@ export default function SettingsPage() {
             </div>
           </div>
         </Section>
+
+        {cloud && (entitlements.subscribed || entitlements.isAdmin) ? (
+          <ApiKeysSection />
+        ) : null}
 
         {/* 2b. Subscription — sits under the AI model picker */}
         {cloud ? (

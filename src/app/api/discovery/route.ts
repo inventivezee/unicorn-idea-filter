@@ -7,6 +7,7 @@ import {
   fetchTasks,
   listOwnedRuns,
 } from "@/lib/db/discovery";
+import { resolveUserKeys } from "@/lib/db/apiKeys";
 import {
   DiscoveryCapError,
   startDiscoveryRun,
@@ -83,12 +84,23 @@ export async function POST(request: Request) {
   );
 
   const admin = adminClient();
+  // BYOK cap-lifting for discovery: a run touches ALL FOUR providers, so
+  // only a fully self-funding owner (own keys for every one) is exempt from
+  // the daily caps — a partial BYOK still spends the deployment's keys for
+  // the providers they didn't bring.
+  const ownKeys = await resolveUserKeys(admin, caller.user.id);
+  const fullyBYOK = Boolean(
+    ownKeys.anthropic &&
+      ownKeys.openai &&
+      ownKeys.openrouter &&
+      ownKeys.browserbase,
+  );
   try {
     const { runId } = await startDiscoveryRun(admin, caller.user.id, {
       guidelines,
       useFounderBackground,
       candidates,
-      bypassCaps: caller.isAdmin,
+      bypassCaps: caller.isAdmin || fullyBYOK,
     });
     return Response.json({ runId, status: "running" });
   } catch (err) {

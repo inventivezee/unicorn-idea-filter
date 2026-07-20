@@ -237,6 +237,8 @@ export interface JSONCallOptions {
    * shouldn't inherit the analysis flow's uncapped premium search.
    */
   maxWebSearches?: number;
+  /** BYOK: the caller's own provider key. Undefined → deployment env key. */
+  apiKey?: string;
 }
 
 export interface JSONCallResult {
@@ -304,7 +306,7 @@ async function anthropicJSONAttempt(
   opts: JSONCallOptions,
   attempt: { format: boolean },
 ): Promise<JSONCallResult> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({ apiKey: opts.apiKey ?? process.env.ANTHROPIC_API_KEY });
   const isFable = FABLE_MODELS.test(opts.model);
 
   const effort =
@@ -428,7 +430,7 @@ async function anthropicJSONAttempt(
 }
 
 async function openaiJSON(opts: JSONCallOptions): Promise<JSONCallResult> {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const client = new OpenAI({ apiKey: opts.apiKey ?? process.env.OPENAI_API_KEY });
 
   const effort = OPENAI_REASONING_MODELS.test(opts.model)
     ? OPENAI_HIGH_ONLY_MODELS.test(opts.model)
