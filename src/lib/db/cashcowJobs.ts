@@ -60,6 +60,26 @@ export async function claimCashCowJob(
   }
 }
 
+/** Transient provider failure (429/quota/rate-limit): put the job back to
+ *  pending and refund the claim's attempt bump, so a temporary outage never
+ *  exhausts the cap and permanently kills the idea. */
+export async function releaseCashCowJobTransient(
+  admin: SupabaseClient,
+  ideaId: string,
+): Promise<void> {
+  try {
+    await admin.rpc("release_cashcow_job_transient", { p_idea: ideaId });
+  } catch {
+    // Best-effort — lease expiry is the backstop.
+  }
+}
+
+export function isTransientProviderError(msg: string): boolean {
+  return /\b429\b|quota|rate.?limit|overloaded|billing|timeout|ETIMEDOUT|ECONNRESET|terminated/i.test(
+    msg,
+  );
+}
+
 export async function finishCashCowJob(
   admin: SupabaseClient,
   ideaId: string,

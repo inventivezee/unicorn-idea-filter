@@ -8,7 +8,9 @@ import { randomUUID } from "node:crypto";
 import {
   claimCashCowJob,
   finishCashCowJob,
+  isTransientProviderError,
   listCashCowCandidates,
+  releaseCashCowJobTransient,
 } from "@/lib/db/cashcowJobs";
 import { scoreCashCow } from "@/lib/cashcow/score";
 import { adminClient, cloudConfigured } from "@/lib/supabase/server";
@@ -61,11 +63,15 @@ export async function GET(request: Request) {
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error(`[cashcow] scoring ${idea.id} failed:`, msg);
-          // Release the claim as failed; attempts++ is already recorded, so
-          // the attempt cap bounds retries. Transient provider errors
-          // (429/quota) simply retry on a later tick.
-          await finishCashCowJob(admin, idea.id, "failed", msg);
-          failed++;
+          if (isTransientProviderError(msg)) {
+            // Provider outage (e.g. OpenAI 429 quota) — refund the attempt
+            // and retry on a later tick; never let it burn the cap.
+            await releaseCashCowJobTransient(admin, idea.id);
+          } else {
+            // A real, repeatable failure — count it toward the attempt cap.
+            await finishCashCowJob(admin, idea.id, "failed", msg);
+            failed++;
+          }
         }
       }
     }),
