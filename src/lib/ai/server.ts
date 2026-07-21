@@ -2,6 +2,7 @@
 // request guards, provider dispatch with structured JSON output, and error
 // mapping. Never import this from client components.
 import Anthropic from "@anthropic-ai/sdk";
+import { recordModelPing } from "@/lib/db/modelPings";
 import OpenAI from "openai";
 import { STANDARD_WEB_SEARCH_CAP } from "@/lib/entitlements";
 import type { Provider } from "@/lib/types";
@@ -242,6 +243,8 @@ export interface JSONCallOptions {
   /** Explicit effort override — wins over the per-model/tier policy. Used
    *  by the autonomous Cash Cow scorer to force Opus 4.8 / Sol at max. */
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  /** Ledger label for model_pings — defaults to the schemaName. */
+  purpose?: string;
   /** Output-token ceiling override (Anthropic max_tokens). Max-effort
    *  scoring over a long idea can exceed the 16k default and trip
    *  stop_reason=max_tokens. */
@@ -435,8 +438,24 @@ async function anthropicJSONAttempt(
   }
 
   const usage = response.usage as unknown as {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
     server_tool_use?: { web_search_requests?: number };
   };
+  await recordModelPing({
+    provider: "anthropic",
+    model: opts.model,
+    purpose: opts.purpose ?? `api:${opts.schemaName}`,
+    usage: {
+      inTokens: usage?.input_tokens ?? 0,
+      cachedInTokens: usage?.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
+      outTokens: usage?.output_tokens ?? 0,
+      webSearches: usage?.server_tool_use?.web_search_requests ?? 0,
+    },
+  });
   return {
     texts: response.content
       .filter((b) => b.type === "text")
@@ -501,6 +520,19 @@ async function openaiJSON(opts: JSONCallOptions): Promise<JSONCallResult> {
     );
   }
 
+  await recordModelPing({
+    provider: "openai",
+    model: opts.model,
+    purpose: opts.purpose ?? `api:${opts.schemaName}`,
+    usage: {
+      inTokens: response.usage?.input_tokens ?? 0,
+      cachedInTokens: response.usage?.input_tokens_details?.cached_tokens ?? 0,
+      outTokens: response.usage?.output_tokens ?? 0,
+      webSearches:
+        response.output?.filter((item) => item.type === "web_search_call")
+          .length ?? 0,
+    },
+  });
   return {
     texts: response.output_text ? [response.output_text] : [],
     webSearches:

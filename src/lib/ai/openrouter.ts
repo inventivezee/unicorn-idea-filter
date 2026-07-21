@@ -8,6 +8,7 @@
 // made by the discovery engine under its own claim/budget protocol.
 import OpenAI from "openai";
 import { UserFacingError } from "./server";
+import { recordModelPing } from "@/lib/db/modelPings";
 
 export function openrouterConfigured(): boolean {
   return Boolean(process.env.OPENROUTER_API_KEY);
@@ -55,6 +56,8 @@ export async function openrouterTurn(opts: {
   reasoningEffort?: "low" | "medium" | "high";
   /** "none" forbids tool calls while keeping defs valid for history. */
   toolChoice?: "none";
+  /** Ledger label for model_pings. */
+  purpose?: string;
   /** BYOK: the caller's own OpenRouter key. */
   apiKey?: string;
 }): Promise<ORTurnResult> {
@@ -112,6 +115,17 @@ export async function openrouterTurn(opts: {
         // error rather than crashing the turn.
       }
       return [{ id: tc.id, name: tc.function.name, args }];
+    });
+    await recordModelPing({
+      provider: "openrouter",
+      model: opts.model,
+      purpose: opts.purpose ?? "openrouter_turn",
+      usage: {
+        inTokens: response.usage?.prompt_tokens ?? 0,
+        cachedInTokens:
+          response.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+        outTokens: response.usage?.completion_tokens ?? 0,
+      },
     });
     return {
       assistantMessage: msg,

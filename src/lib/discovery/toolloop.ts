@@ -34,6 +34,7 @@ import {
   openrouterKey,
   type ProviderKeys,
 } from "@/lib/ai/provider-keys";
+import { recordModelPing } from "@/lib/db/modelPings";
 
 const FABLE_MODELS = /^claude-(fable-5|mythos-5)/;
 
@@ -248,6 +249,8 @@ export async function runResearchTurn(opts: {
   state: LoopState;
   session: BrowserHandle;
   keys?: ProviderKeys;
+  /** Ledger label for model_pings. */
+  purpose?: string;
   /** Two turns before the phase cap the engine sets this — the agent gets
    *  told to finish instead of dying mid-research on the budget. */
   wrapUp?: boolean;
@@ -445,6 +448,19 @@ async function anthropicTurn(
         ?.cache_read_input_tokens ?? 0,
     out: response.usage?.output_tokens ?? 0,
   };
+  await recordModelPing({
+    provider: "anthropic",
+    model: opts.model,
+    purpose: (opts as { purpose?: string }).purpose ?? "discovery_research",
+    usage: {
+      inTokens: usage.in,
+      cachedInTokens: usage.cachedIn,
+      cacheWriteTokens:
+        (response.usage as { cache_creation_input_tokens?: number } | undefined)
+          ?.cache_creation_input_tokens ?? 0,
+      outTokens: usage.out,
+    },
+  });
   if (response.stop_reason === "refusal") {
     throw new UserFacingError("The model declined this research task.");
   }
@@ -599,6 +615,12 @@ async function openaiTurn(
     cachedIn: response.usage?.input_tokens_details?.cached_tokens ?? 0,
     out: response.usage?.output_tokens ?? 0,
   };
+  await recordModelPing({
+    provider: "openai",
+    model: opts.model,
+    purpose: (opts as { purpose?: string }).purpose ?? "discovery_research",
+    usage: { inTokens: usage.in, cachedInTokens: usage.cachedIn, outTokens: usage.out },
+  });
 
   state.responseId = response.id;
   state.lastText = response.output_text ?? state.lastText;
@@ -643,6 +665,7 @@ async function openrouterResearch(
     messages: state.messages,
     tools,
     apiKey: openrouterKey(opts.keys),
+    purpose: (opts as { purpose?: string }).purpose ?? "discovery_research",
     ...(noTools ? { toolChoice: "none" as const } : {}),
     ...(opts.effort
       ? { reasoningEffort: (opts.effort === "max" || opts.effort === "xhigh"
@@ -806,6 +829,21 @@ async function anthropicSynthesisAttempt(
         "Synthesis ran over the output limit — retried automatically.",
       );
     }
+    await recordModelPing({
+      provider: "anthropic",
+      model: opts.model,
+      purpose: (opts as { purpose?: string }).purpose ?? "discovery_synthesis",
+      usage: {
+        inTokens: response.usage?.input_tokens ?? 0,
+        cachedInTokens:
+          (response.usage as { cache_read_input_tokens?: number } | undefined)
+            ?.cache_read_input_tokens ?? 0,
+        cacheWriteTokens:
+          (response.usage as { cache_creation_input_tokens?: number } | undefined)
+            ?.cache_creation_input_tokens ?? 0,
+        outTokens: response.usage?.output_tokens ?? 0,
+      },
+    });
     return parseLastJSON(
       response.content.filter((b) => b.type === "text").map((b) => b.text),
     );
@@ -845,6 +883,18 @@ export async function plainTextCall(opts: {
     if (response.stop_reason === "refusal") {
       throw new UserFacingError("The model declined the critique step.");
     }
+    await recordModelPing({
+      provider: "anthropic",
+      model: opts.model,
+      purpose: "discovery_critique",
+      usage: {
+        inTokens: response.usage?.input_tokens ?? 0,
+        cachedInTokens:
+          (response.usage as { cache_read_input_tokens?: number } | undefined)
+            ?.cache_read_input_tokens ?? 0,
+        outTokens: response.usage?.output_tokens ?? 0,
+      },
+    });
     return response.content
       .filter((b) => b.type === "text")
       .map((b) => b.text)
@@ -863,6 +913,15 @@ export async function plainTextCall(opts: {
     if (response.status === "incomplete") {
       throw new UserFacingError("The critique step stopped early.");
     }
+    await recordModelPing({
+      provider: "openai",
+      model: opts.model,
+      purpose: "discovery_critique",
+      usage: {
+        inTokens: response.usage?.input_tokens ?? 0,
+        outTokens: response.usage?.output_tokens ?? 0,
+      },
+    });
     return response.output_text ?? "";
   }
   const turn = await openrouterTurn({
@@ -1005,5 +1064,15 @@ export async function openaiSynthesisSync(opts: {
       `Scoring stopped early (${response.incomplete_details?.reason ?? "unknown"}).`,
     );
   }
+  await recordModelPing({
+    provider: "openai",
+    model: opts.model,
+    purpose: "discovery_synthesis",
+    usage: {
+      inTokens: response.usage?.input_tokens ?? 0,
+      cachedInTokens: response.usage?.input_tokens_details?.cached_tokens ?? 0,
+      outTokens: response.usage?.output_tokens ?? 0,
+    },
+  });
   return parseLastJSON(response.output_text ? [response.output_text] : []);
 }

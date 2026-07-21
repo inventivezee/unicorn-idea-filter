@@ -627,6 +627,7 @@ async function executeStep(
     const result = await runResearchTurn({
       provider: turnModel.provider,
       model: turnModel.model,
+      purpose: `discovery_${task.status}`,
       // Browsing/evidence turns run at "high": max-effort thinking on ~1k
       // calls/hour of routine tool use was the top Anthropic burn. The
       // judgment calls (score_sync, critique, synthesis) keep "max".
