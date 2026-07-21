@@ -316,7 +316,12 @@ async function anthropicJSONAttempt(
   opts: JSONCallOptions,
   attempt: { format: boolean },
 ): Promise<JSONCallResult> {
-  const client = new Anthropic({ apiKey: opts.apiKey ?? process.env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({
+    apiKey: opts.apiKey ?? process.env.ANTHROPIC_API_KEY,
+    // Max-effort + web-search calls can exceed the SDK's 10-min default —
+    // it was aborting them at 600s inside the 30-min function window.
+    timeout: 1_500_000,
+  });
   const isFable = FABLE_MODELS.test(opts.model);
 
   const effort =
@@ -465,7 +470,10 @@ async function anthropicJSONAttempt(
 }
 
 async function openaiJSON(opts: JSONCallOptions): Promise<JSONCallResult> {
-  const client = new OpenAI({ apiKey: opts.apiKey ?? process.env.OPENAI_API_KEY });
+  const client = new OpenAI({
+    apiKey: opts.apiKey ?? process.env.OPENAI_API_KEY,
+    timeout: 1_500_000,
+  });
 
   const overrideEffort =
     opts.effort && OPENAI_REASONING_MODELS.test(opts.model)

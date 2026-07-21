@@ -5,7 +5,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const CASHCOW_MAX_ATTEMPTS = 3;
-export const CASHCOW_LEASE_SECONDS = 900; // a max-effort web-search call can run ~10 min; lease must outlast it
+export const CASHCOW_LEASE_SECONDS = 1900; // must outlast the longest call (30-min window)
 
 export interface CashCowCandidate {
   id: string;
@@ -66,9 +66,18 @@ export async function claimCashCowJob(
 export async function releaseCashCowJobTransient(
   admin: SupabaseClient,
   ideaId: string,
+  error?: string,
 ): Promise<void> {
   try {
     await admin.rpc("release_cashcow_job_transient", { p_idea: ideaId });
+    if (error) {
+      // Record WHY even for transient failures — a repeating transient
+      // error cycled invisibly for 9 hours before this existed.
+      await admin
+        .from("cashcow_jobs")
+        .update({ error: error.slice(0, 500) })
+        .eq("idea_id", ideaId);
+    }
   } catch {
     // Best-effort — lease expiry is the backstop.
   }

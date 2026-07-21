@@ -18,11 +18,11 @@ import { adminClient, cloudConfigured } from "@/lib/supabase/server";
 // Full Pro window: a single Opus/Sol max-effort + web-search scoring
 // call can exceed 5 min — at 300s the function was killed mid-call and the
 // verdict never landed (job stuck in_flight, retried forever).
-export const maxDuration = 800;
+export const maxDuration = 1800; // 30-min beta window — search-heavy max-effort calls need it
 
 const BATCH = 12; // candidates fetched per invocation
 const CONCURRENCY = 4; // parallel scoring calls
-const TIME_BUDGET_MS = 700_000; // leave headroom under maxDuration
+const TIME_BUDGET_MS = 1_500_000; // leave headroom under maxDuration
 
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
@@ -69,7 +69,7 @@ export async function GET(request: Request) {
           if (isTransientProviderError(msg)) {
             // Provider outage (e.g. OpenAI 429 quota) — refund the attempt
             // and retry on a later tick; never let it burn the cap.
-            await releaseCashCowJobTransient(admin, idea.id);
+            await releaseCashCowJobTransient(admin, idea.id, msg);
           } else {
             // A real, repeatable failure — count it toward the attempt cap.
             await finishCashCowJob(admin, idea.id, "failed", msg);
