@@ -137,7 +137,7 @@ function SkeletonRows() {
 export default function ExplorePage() {
   const { hydrated, cloud, state } = useStore();
   const cashcowMode = state.settings.filterMode === "cashcow";
-  const [sort, setSort] = useState<FeedSort>("new");
+  const [sort, setSort] = useState<FeedSort>("top");
   const [sector, setSector] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [ideas, setIdeas] = useState<PublicIdeaRow[]>([]);
@@ -251,8 +251,8 @@ export default function ExplorePage() {
         >
           {(
             [
-              { key: "new", label: "Newest" },
               { key: "top", label: "Top score" },
+              { key: "new", label: "Newest" },
             ] as const
           ).map((tab) => (
             <button
