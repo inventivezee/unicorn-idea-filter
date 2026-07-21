@@ -385,15 +385,22 @@ async function anthropicJSONAttempt(
   async function createMessage(
     messages: Anthropic.MessageParam[],
   ): Promise<Anthropic.Message> {
+    // Stream under the hood: the SDK REQUIRES streaming for requests whose
+    // max_tokens imply >10 min of generation (max-effort scoring at 32k
+    // tokens does). finalMessage() returns the same complete Message.
     if (isFable) {
-      return (await client.beta.messages.create({
-        ...(baseParams as unknown as Record<string, unknown>),
-        messages,
-        betas: ["server-side-fallback-2026-06-01"],
-        fallbacks: [{ model: "claude-opus-4-8" }],
-      } as unknown as Parameters<typeof client.beta.messages.create>[0])) as unknown as Anthropic.Message;
+      return (await client.beta.messages
+        .stream({
+          ...(baseParams as unknown as Record<string, unknown>),
+          messages,
+          betas: ["server-side-fallback-2026-06-01"],
+          fallbacks: [{ model: "claude-opus-4-8" }],
+        } as unknown as Parameters<typeof client.beta.messages.stream>[0])
+        .finalMessage()) as unknown as Anthropic.Message;
     }
-    return client.messages.create({ ...baseParams, messages });
+    return client.messages
+      .stream({ ...baseParams, messages })
+      .finalMessage();
   }
 
   let messages: Anthropic.MessageParam[] = [
