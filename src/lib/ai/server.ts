@@ -239,6 +239,9 @@ export interface JSONCallOptions {
   maxWebSearches?: number;
   /** BYOK: the caller's own provider key. Undefined → deployment env key. */
   apiKey?: string;
+  /** Explicit effort override — wins over the per-model/tier policy. Used
+   *  by the autonomous Cash Cow scorer to force Opus 4.8 / Sol at max. */
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
 }
 
 export interface JSONCallResult {
@@ -310,15 +313,17 @@ async function anthropicJSONAttempt(
   const isFable = FABLE_MODELS.test(opts.model);
 
   const effort =
-    opts.speed === "fast"
-      ? ANTHROPIC_EFFORT_MODELS.test(opts.model)
-        ? ("low" as const)
-        : undefined
-      : isFable
-        ? ("xhigh" as const)
-        : /^claude-sonnet-5/.test(opts.model)
-          ? ("medium" as const)
-          : undefined;
+    opts.effort && ANTHROPIC_EFFORT_MODELS.test(opts.model)
+      ? opts.effort
+      : opts.speed === "fast"
+        ? ANTHROPIC_EFFORT_MODELS.test(opts.model)
+          ? ("low" as const)
+          : undefined
+        : isFable
+          ? ("xhigh" as const)
+          : /^claude-sonnet-5/.test(opts.model)
+            ? ("medium" as const)
+            : undefined;
 
   // An explicit maxWebSearches (bounded helper routes) always wins. Otherwise:
   // premium tier gets uncapped search (omit max_uses), the free tier is
@@ -432,17 +437,27 @@ async function anthropicJSONAttempt(
 async function openaiJSON(opts: JSONCallOptions): Promise<JSONCallResult> {
   const client = new OpenAI({ apiKey: opts.apiKey ?? process.env.OPENAI_API_KEY });
 
-  const effort = OPENAI_REASONING_MODELS.test(opts.model)
-    ? OPENAI_HIGH_ONLY_MODELS.test(opts.model)
-      ? ("high" as const)
-      : opts.speed === "fast"
-        ? ("low" as const)
-        : OPENAI_XHIGH_MODELS.test(opts.model)
-          ? opts.tier === "premium"
-            ? ("xhigh" as const)
-            : ("medium" as const)
+  const overrideEffort =
+    opts.effort && OPENAI_REASONING_MODELS.test(opts.model)
+      ? opts.effort === "max"
+        ? OPENAI_XHIGH_MODELS.test(opts.model)
+          ? ("xhigh" as const)
           : ("high" as const)
-    : null;
+        : (opts.effort as "low" | "medium" | "high" | "xhigh")
+      : null;
+  const effort = overrideEffort
+    ? overrideEffort
+    : OPENAI_REASONING_MODELS.test(opts.model)
+      ? OPENAI_HIGH_ONLY_MODELS.test(opts.model)
+        ? ("high" as const)
+        : opts.speed === "fast"
+          ? ("low" as const)
+          : OPENAI_XHIGH_MODELS.test(opts.model)
+            ? opts.tier === "premium"
+              ? ("xhigh" as const)
+              : ("medium" as const)
+            : ("high" as const)
+      : null;
 
   const response = await client.responses.create({
     model: opts.model,
