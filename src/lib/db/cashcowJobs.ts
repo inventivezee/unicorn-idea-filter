@@ -5,7 +5,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const CASHCOW_MAX_ATTEMPTS = 3;
-export const CASHCOW_LEASE_SECONDS = 300; // a single web-search call is minutes, not hours
+export const CASHCOW_LEASE_SECONDS = 900; // a max-effort web-search call can run ~10 min; lease must outlast it
 
 export interface CashCowCandidate {
   id: string;

@@ -15,11 +15,14 @@ import {
 import { scoreCashCow } from "@/lib/cashcow/score";
 import { adminClient, cloudConfigured } from "@/lib/supabase/server";
 
-export const maxDuration = 300;
+// Full Pro window: a single Opus/Sol max-effort + web-search scoring
+// call can exceed 5 min — at 300s the function was killed mid-call and the
+// verdict never landed (job stuck in_flight, retried forever).
+export const maxDuration = 800;
 
 const BATCH = 12; // candidates fetched per invocation
 const CONCURRENCY = 4; // parallel scoring calls
-const TIME_BUDGET_MS = 240_000; // leave headroom under maxDuration
+const TIME_BUDGET_MS = 700_000; // leave headroom under maxDuration
 
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
