@@ -242,6 +242,10 @@ export interface JSONCallOptions {
   /** Explicit effort override — wins over the per-model/tier policy. Used
    *  by the autonomous Cash Cow scorer to force Opus 4.8 / Sol at max. */
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  /** Output-token ceiling override (Anthropic max_tokens). Max-effort
+   *  scoring over a long idea can exceed the 16k default and trip
+   *  stop_reason=max_tokens. */
+  maxTokens?: number;
 }
 
 export interface JSONCallResult {
@@ -358,7 +362,7 @@ async function anthropicJSONAttempt(
 
   const baseParams = {
     model: opts.model,
-    max_tokens: opts.speed === "fast" ? 8000 : 16000,
+    max_tokens: opts.maxTokens ?? (opts.speed === "fast" ? 8000 : 16000),
     ...(ADAPTIVE_THINKING_MODELS.test(opts.model)
       ? { thinking: { type: "adaptive" as const } }
       : {}),
