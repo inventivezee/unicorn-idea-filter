@@ -59,6 +59,7 @@ export async function scoreCashCow(
     maxTokens: 32000, // max-effort verdict over a long idea needs headroom
     maxWebSearches: 15, // research if needed, but keep one call inside the window + cost sane
     purpose: "cashcow_auto",
+    ref: idea.id,
   });
   const raw = parseLastJSON<RawAnalysis>(result.texts);
   const verdict = normalizeCashCowAnalysis(

@@ -7,8 +7,8 @@
 import { randomUUID } from "node:crypto";
 import {
   claimCashCowJob,
+  classifyProviderError,
   finishCashCowJob,
-  isTransientProviderError,
   listCashCowCandidates,
   releaseCashCowJobTransient,
 } from "@/lib/db/cashcowJobs";
@@ -19,6 +19,10 @@ import { adminClient, cloudConfigured } from "@/lib/supabase/server";
 // call can exceed 5 min — at 300s the function was killed mid-call and the
 // verdict never landed (job stuck in_flight, retried forever).
 export const maxDuration = 1800; // 30-min beta window — search-heavy max-effort calls need it
+
+// Kill switch. Autonomous scoring bills ~$0.60-0.95 per idea and drains a
+// backlog unattended, so it stays OFF unless the deployment opts in.
+const enabled = () => /^(1|true|on)$/i.test(process.env.CASHCOW_AUTOSCORE ?? "");
 
 const BATCH = 12; // candidates fetched per invocation
 const CONCURRENCY = 4; // parallel scoring calls
@@ -37,6 +41,10 @@ export async function GET(request: Request) {
   }
   if (!cloudConfigured()) {
     return Response.json({ error: "Cloud not configured." }, { status: 503 });
+  }
+  if (!enabled()) {
+    // Frozen on purpose — nothing is claimed, so nothing can be billed.
+    return Response.json({ paused: true, scored: 0 });
   }
 
   const admin = adminClient();
@@ -65,11 +73,21 @@ export async function GET(request: Request) {
           scored++;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error(`[cashcow] scoring ${idea.id} failed:`, msg);
-          if (isTransientProviderError(msg)) {
-            // Provider outage (e.g. OpenAI 429 quota) — refund the attempt
-            // and retry on a later tick; never let it burn the cap.
-            await releaseCashCowJobTransient(admin, idea.id, msg);
+          const failure = classifyProviderError(msg);
+          console.error(
+            `[cashcow] scoring ${idea.id} failed (${failure.kind}):`,
+            msg,
+          );
+          if (failure.transient) {
+            // Provider-side problem (quota, outage, disabled key) — refund
+            // the attempt and hold the idea out for the class's backoff.
+            // Never let someone else's outage burn this idea's cap.
+            await releaseCashCowJobTransient(
+              admin,
+              idea.id,
+              msg,
+              failure.backoffSeconds,
+            );
           } else {
             // A real, repeatable failure — count it toward the attempt cap.
             await finishCashCowJob(admin, idea.id, "failed", msg);

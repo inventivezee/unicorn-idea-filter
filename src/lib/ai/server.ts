@@ -245,6 +245,8 @@ export interface JSONCallOptions {
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Ledger label for model_pings — defaults to the schemaName. */
   purpose?: string;
+  /** Correlation id for the ledger (e.g. the idea being scored). */
+  ref?: string;
   /** Output-token ceiling override (Anthropic max_tokens). Max-effort
    *  scoring over a long idea can exceed the 16k default and trip
    *  stop_reason=max_tokens. */
@@ -453,6 +455,7 @@ async function anthropicJSONAttempt(
     provider: "anthropic",
     model: opts.model,
     purpose: opts.purpose ?? `api:${opts.schemaName}`,
+    ref: opts.ref,
     usage: {
       inTokens: usage?.input_tokens ?? 0,
       cachedInTokens: usage?.cache_read_input_tokens ?? 0,
@@ -532,6 +535,7 @@ async function openaiJSON(opts: JSONCallOptions): Promise<JSONCallResult> {
     provider: "openai",
     model: opts.model,
     purpose: opts.purpose ?? `api:${opts.schemaName}`,
+    ref: opts.ref,
     usage: {
       inTokens: response.usage?.input_tokens ?? 0,
       cachedInTokens: response.usage?.input_tokens_details?.cached_tokens ?? 0,
