@@ -27,7 +27,7 @@ const PRICES: Record<string, ModelPrice> = {
   "gpt-5.6-sol": { inPerMTok: 5, outPerMTok: 30 },
   "deepseek/deepseek-v4-pro-0813": { inPerMTok: 0.14, outPerMTok: 0.4 },
   "deepseek/deepseek-v4-pro": { inPerMTok: 0.6, outPerMTok: 2.5 },
-  "qwen/qwen3.8-max": { inPerMTok: 2, outPerMTok: 6 },
+  "qwen/qwen3.8-max-0902": { inPerMTok: 2, outPerMTok: 6 },
   "qwen/qwen3.7-max": { inPerMTok: 1.2, outPerMTok: 5 },
   "google/gemini-3.1-pro-preview": { inPerMTok: 2, outPerMTok: 10 },
 };

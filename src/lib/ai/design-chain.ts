@@ -40,7 +40,10 @@ export const CHAIN_ANTHROPIC_MODEL = "claude-fable-5-1";
 // Refusal fallback for stage 2 — batches reject the server-side `fallbacks`
 // param, so a Fable refusal is retried on Opus manually.
 const CHAIN_ANTHROPIC_FALLBACK = "claude-opus-5-5";
-const OPENAI_MAX_OUTPUT_TOKENS = 64_000;
+// Pro mode spends far more reasoning tokens than standard mode, and
+// reasoning counts toward this ceiling; an "incomplete" stage throws away
+// 10-15 min of work. 128k is the model maximum (~$1.28 at Sol's price).
+const OPENAI_MAX_OUTPUT_TOKENS = 128_000;
 const ANTHROPIC_MAX_TOKENS = 64_000;
 // Per-stage submission budget (first submit + retries for expiry/errors).
 const MAX_SUBMITS_PER_STAGE = 3;

@@ -37,7 +37,7 @@ export const GEN_ANTHROPIC: DiscoveryModel = {
 };
 export const OPENROUTER_GENERATORS: DiscoveryModel[] = [
   { provider: "openrouter", model: "deepseek/deepseek-v4-pro-0813", vendor: "deepseek" },
-  { provider: "openrouter", model: "qwen/qwen3.8-max", vendor: "alibaba" },
+  { provider: "openrouter", model: "qwen/qwen3.8-max-0902", vendor: "alibaba" },
   { provider: "openrouter", model: "google/gemini-3.1-pro-preview", vendor: "google", vision: true },
   // meta-llama/llama-4-maverick was DELISTED by OpenRouter (2026-07-11):
   // every call 404'd and critique retries burned tasks to synth-budget
