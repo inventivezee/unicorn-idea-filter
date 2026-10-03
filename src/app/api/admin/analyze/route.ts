@@ -40,7 +40,7 @@ import type {
 
 export const maxDuration = 800; // Vercel Pro (GA limit; build fails on Hobby)
 
-const DEFAULT_ADMIN_MODEL = "claude-opus-4-8";
+const DEFAULT_ADMIN_MODEL = "claude-opus-5-5";
 
 interface RawAnalysis {
   summary: string;

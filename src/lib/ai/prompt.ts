@@ -430,10 +430,10 @@ function formatFilterInputs(inputs: CustomFilterInputsPrompt): string {
 }
 
 // ---------------------------------------------------------------------------
-// The three-model filter-design chain. Stage 1: GPT-5.5 Pro (xhigh) designs
-// the instrument from a detailed brief. Stage 2: Claude Fable 5 (max effort)
+// The three-model filter-design chain. Stage 1: GPT-6.1 Sol (pro mode) designs
+// the instrument from a detailed brief. Stage 2: Claude Fable 5.1 (max effort)
 // adversarially reviews it and outputs an improved full spec. Stage 3:
-// GPT-5.5 Pro (xhigh) reconciles both versions into the final instrument.
+// GPT-6.1 Sol (pro mode) reconciles both versions into the final instrument.
 // All three stages emit the same FILTER_DESIGN_SCHEMA shape.
 // ---------------------------------------------------------------------------
 
@@ -507,7 +507,7 @@ ${hasTeam ? `\n## Founder background (tailor founder-fit criteria to this)\n\n${
 Design the filter now.`;
 }
 
-/** Stage 2 (Fable 5 review) user prompt: goals + the stage-1 design. */
+/** Stage 2 (Fable 5.1 review) user prompt: goals + the stage-1 design. */
 export function buildFilterReviewPrompt(
   inputs: CustomFilterInputsPrompt,
   founderBackground: string,
@@ -527,7 +527,7 @@ ${stage1Design}
 Review it against the founder's goals and output the full improved instrument.`;
 }
 
-/** Stage 3 (final GPT-5.5 Pro pass) user prompt: goals + both versions. */
+/** Stage 3 (final GPT-6.1 Sol pro pass) user prompt: goals + both versions. */
 export function buildFilterFinalPrompt(
   inputs: CustomFilterInputsPrompt,
   founderBackground: string,

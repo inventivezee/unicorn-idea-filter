@@ -2,9 +2,9 @@
 
 // Custom filter studio: design a personal scoring instrument around the
 // founder's actual goals. Designing is a subscriber feature (account
-// required) and runs a three-model chain in the background — GPT-5.5 Pro at
-// highest effort, reviewed by Claude Fable 5 at max effort, finalized by
-// GPT-5.5 Pro — which takes 10-15+ minutes per GPT stage. Progress lives in
+// required) and runs a three-model chain in the background — GPT-6.1 Sol Pro at
+// highest effort, reviewed by Claude Fable 5.1 at max effort, finalized by
+// GPT-6.1 Sol Pro — which takes 10-15+ minutes per GPT stage. Progress lives in
 // a server-side draft, so the founder can leave and resume any time.
 // Unfinished goal forms autosave as drafts too. Custom filters are private —
 // never published; admins can see them (and all drafts).
@@ -56,15 +56,15 @@ interface JobStatus {
 
 const STAGE_COPY: Record<number, { title: string; note: string }> = {
   1: {
-    title: "Stage 1 of 3 — ChatGPT 5.5 Pro designs your instrument",
+    title: "Stage 1 of 3 — ChatGPT 6.1 Sol Pro designs your instrument",
     note: "Running at its highest effort — this stage typically takes 10–15 minutes.",
   },
   2: {
-    title: "Stage 2 of 3 — Claude Fable 5 reviews the design",
+    title: "Stage 2 of 3 — Claude Fable 5.1 reviews the design",
     note: "An adversarial review at max effort: checking your numbers are encoded, the math adds up, and nothing overlaps.",
   },
   3: {
-    title: "Stage 3 of 3 — ChatGPT 5.5 Pro finalizes",
+    title: "Stage 3 of 3 — ChatGPT 6.1 Sol Pro finalizes",
     note: "Reconciling both versions into the final instrument — typically another 10–15 minutes.",
   },
 };
@@ -549,7 +549,7 @@ export default function FiltersPage() {
       {!eligible ? (
         <Section
           title="Design your own filter"
-          description="A subscriber feature: your goals are turned into a personal scoring instrument by a three-model design chain — ChatGPT 5.5 Pro at highest effort, adversarially reviewed by Claude Fable 5 at max effort, then finalized by ChatGPT 5.5 Pro."
+          description="A subscriber feature: your goals are turned into a personal scoring instrument by a three-model design chain — ChatGPT 6.1 Sol Pro at highest effort, adversarially reviewed by Claude Fable 5.1 at max effort, then finalized by ChatGPT 6.1 Sol Pro."
         >
           {!cloud ? (
             <p className="text-sm text-zinc-600">
@@ -656,7 +656,7 @@ export default function FiltersPage() {
       {eligible && !designing && !preview ? (
         <Section
           title={regenId ? "Redesign this filter" : "Design a new filter"}
-          description="State your goals; a three-model chain (ChatGPT 5.5 Pro → Claude Fable 5 review → ChatGPT 5.5 Pro final pass) turns them into gates, weighted criteria, and scoring anchors. The full run takes roughly 20–40 minutes — your form autosaves as a draft."
+          description="State your goals; a three-model chain (ChatGPT 6.1 Sol Pro → Claude Fable 5.1 review → ChatGPT 6.1 Sol Pro final pass) turns them into gates, weighted criteria, and scoring anchors. The full run takes roughly 20–40 minutes — your form autosaves as a draft."
         >
           <div className="grid gap-4 sm:grid-cols-3">
             <NumField
@@ -835,8 +835,8 @@ export default function FiltersPage() {
           >
             <div className="space-y-4">
               <p className="rounded border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-800">
-                Designed by ChatGPT 5.5 Pro, adversarially reviewed by Claude
-                Fable 5, finalized by ChatGPT 5.5 Pro.
+                Designed by ChatGPT 6.1 Sol Pro, adversarially reviewed by Claude
+                Fable 5.1, finalized by ChatGPT 6.1 Sol Pro.
               </p>
               <div>
                 <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-400">

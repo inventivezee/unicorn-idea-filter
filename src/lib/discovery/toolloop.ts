@@ -13,6 +13,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import {
   UserFacingError,
+  clampOpenAIEffort,
   isGrammarTooLarge,
   parseLastJSON,
 } from "@/lib/ai/server";
@@ -73,14 +74,6 @@ function cachedMessages(
     out[out.length - 1] = { ...last, content: blocks };
   }
   return out;
-}
-
-/** OpenAI's Responses effort enum tops out at "xhigh" — "max" is an
- *  Anthropic-only level; clamp at the boundary (matches server.ts's ceiling). */
-function clampOpenAIEffort(
-  effort: "low" | "medium" | "high" | "xhigh" | "max",
-): "low" | "medium" | "high" | "xhigh" {
-  return effort === "max" ? "xhigh" : effort;
 }
 
 // ---------------------------------------------------------------------------
@@ -429,17 +422,52 @@ async function anthropicTurn(
   // max_tokens imply >10 min of generation ("Streaming is required for
   // operations that may take longer than 10 minutes"), which max-effort
   // 32k-token research turns do. finalMessage() gives the same Message.
-  const response = FABLE_MODELS.test(opts.model)
-    ? ((await client.beta.messages
-        .stream({
-          ...(params as unknown as Record<string, unknown>),
-          betas: ["server-side-fallback-2026-06-01"],
-          fallbacks: [{ model: "claude-opus-4-8" }],
-        } as unknown as Parameters<typeof client.beta.messages.stream>[0])
-        .finalMessage()) as unknown as Anthropic.Message)
-    : await client.messages
-        .stream(params as Anthropic.MessageCreateParamsNonStreaming)
-        .finalMessage();
+  const streamFable = async (dropMismatchedThinking: boolean) =>
+    (await client.beta.messages
+      .stream({
+        ...(params as unknown as Record<string, unknown>),
+        ...(dropMismatchedThinking
+          ? {
+              thinking: {
+                type: "adaptive",
+                block_binding: { prefix_mismatch_behavior: "drop_block" },
+              },
+            }
+          : {}),
+        betas: [
+          "server-side-fallback-2026-07-01",
+          ...(dropMismatchedThinking
+            ? ["thinking-binding-controls-2026-08-01"]
+            : []),
+        ],
+        fallbacks: "default",
+      } as unknown as Parameters<typeof client.beta.messages.stream>[0])
+      .finalMessage()) as unknown as Anthropic.Message;
+  let response: Anthropic.Message;
+  if (FABLE_MODELS.test(opts.model)) {
+    try {
+      response = await streamFable(false);
+    } catch (err) {
+      // Fable 5.1 binds thinking blocks to the exact conversation prefix, and
+      // stripOldImages/sanitizeAssistantBlocks edit earlier turns. Accounts
+      // created on/after 2026-08-31 reject that with a 400 decided before any
+      // output (unbilled); retry once asking the API to drop the stale
+      // blocks instead. Older accounts never hit this and keep the blocks.
+      if (
+        err instanceof Anthropic.APIError &&
+        err.status === 400 &&
+        /bound to a different conversation/i.test(err.message)
+      ) {
+        response = await streamFable(true);
+      } else {
+        throw err;
+      }
+    }
+  } else {
+    response = await client.messages
+      .stream(params as Anthropic.MessageCreateParamsNonStreaming)
+      .finalMessage();
+  }
 
   const usage = {
     in: response.usage?.input_tokens ?? 0,
@@ -607,7 +635,7 @@ async function openaiTurn(
     ...(noTools ? { tool_choice: "none" as const } : {}),
     store: true,
     ...(opts.effort
-      ? { reasoning: { effort: clampOpenAIEffort(opts.effort) } }
+      ? { reasoning: { effort: clampOpenAIEffort(opts.model, opts.effort) } }
       : {}),
   });
   const usage = {
@@ -814,8 +842,8 @@ async function anthropicSynthesisAttempt(
       ? ((await client.beta.messages
           .stream({
             ...(params as unknown as Record<string, unknown>),
-            betas: ["server-side-fallback-2026-06-01"],
-            fallbacks: [{ model: "claude-opus-4-8" }],
+            betas: ["server-side-fallback-2026-07-01"],
+            fallbacks: "default",
           } as unknown as Parameters<typeof client.beta.messages.stream>[0])
           .finalMessage()) as unknown as Anthropic.Message)
       : await client.messages
@@ -873,8 +901,8 @@ export async function plainTextCall(opts: {
       ? ((await client.beta.messages
           .stream({
             ...(params as unknown as Record<string, unknown>),
-            betas: ["server-side-fallback-2026-06-01"],
-            fallbacks: [{ model: "claude-opus-4-8" }],
+            betas: ["server-side-fallback-2026-07-01"],
+            fallbacks: "default",
           } as unknown as Parameters<typeof client.beta.messages.stream>[0])
           .finalMessage()) as unknown as Anthropic.Message)
       : await client.messages
@@ -907,7 +935,7 @@ export async function plainTextCall(opts: {
       instructions: opts.system,
       input: opts.prompt,
       ...(opts.effort
-        ? { reasoning: { effort: clampOpenAIEffort(opts.effort) } }
+        ? { reasoning: { effort: clampOpenAIEffort(opts.model, opts.effort) } }
         : {}),
     });
     if (response.status === "incomplete") {
@@ -1049,7 +1077,7 @@ export async function openaiSynthesisSync(opts: {
     model: opts.model,
     instructions: opts.system,
     input: opts.prompt,
-    reasoning: { effort: clampOpenAIEffort(opts.effort) },
+    reasoning: { effort: clampOpenAIEffort(opts.model, opts.effort) },
     text: {
       format: {
         type: "json_schema",

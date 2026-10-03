@@ -1,5 +1,5 @@
 // Discovery engine — model panel, budgets, and cross-vendor policy.
-// Every model id below was verified against provider docs on 2026-07-10;
+// Every model id below was verified against provider docs on 2026-10-03;
 // they live HERE (and only here) so a provider rename is a one-line fix.
 
 /** Providers the discovery engine can call. Superset of the app-wide
@@ -23,21 +23,21 @@ export interface DiscoveryModel {
 
 // ---------------------------------------------------------------------------
 // Generation panel (~10 candidates/run: 2 per generator, see TASKS_PER_RUN).
-// OpenAI: there is NO "-pro" model slug in the 5.6 generation — Pro is
-// reasoning:{mode:'pro'} on gpt-5.6-sol, and background mode does NOT
+// OpenAI: there is NO "-pro" model slug for GPT-6.1 Sol — Pro is
+// reasoning:{mode:'pro'} on gpt-6.1-sol, and background mode does NOT
 // verifiably support tool loops. So the OpenAI generator researches with a
 // sync tool loop (standard mode, effort high) and synthesizes the final idea
 // with ONE background pro-mode call (no tools) — the design-chain pattern.
 // ---------------------------------------------------------------------------
 export const GEN_OPENAI: DiscoveryModel = {
-  provider: "openai", model: "gpt-5.6-sol", vendor: "openai", vision: true,
+  provider: "openai", model: "gpt-6.1-sol", vendor: "openai", vision: true,
 };
 export const GEN_ANTHROPIC: DiscoveryModel = {
-  provider: "anthropic", model: "claude-fable-5", vendor: "anthropic", vision: true,
+  provider: "anthropic", model: "claude-fable-5-1", vendor: "anthropic", vision: true,
 };
 export const OPENROUTER_GENERATORS: DiscoveryModel[] = [
-  { provider: "openrouter", model: "deepseek/deepseek-v4-pro", vendor: "deepseek" },
-  { provider: "openrouter", model: "qwen/qwen3.7-max", vendor: "alibaba" },
+  { provider: "openrouter", model: "deepseek/deepseek-v4-pro-0813", vendor: "deepseek" },
+  { provider: "openrouter", model: "qwen/qwen3.8-max-0902", vendor: "alibaba" },
   { provider: "openrouter", model: "google/gemini-3.1-pro-preview", vendor: "google", vision: true },
   // meta-llama/llama-4-maverick was DELISTED by OpenRouter (2026-07-11):
   // every call 404'd and critique retries burned tasks to synth-budget
@@ -51,10 +51,10 @@ export const GENERATORS: DiscoveryModel[] = [
   ...OPENROUTER_GENERATORS,
 ];
 
-/** Run composition (owner-specified): 20 candidates — 30% Fable 5, 30%
- *  GPT-5.6 Sol, the rest evenly split across the OpenRouter panel. */
+/** Run composition (owner-specified): 20 candidates — 30% Fable 5.1, 30%
+ *  GPT-6.1 Sol, the rest evenly split across the OpenRouter panel. */
 /** Batch size is the owner's dial: 1 (deepest, default) up to 20. House
- *  models (Fable 5 and GPT-5.6 Sol) take >=30% of slots each; the rest
+ *  models (Fable 5.1 and GPT-6.1 Sol) take >=30% of slots each; the rest
  *  splits evenly across the OpenRouter panel for diversity. Multiple runs
  *  may be in flight concurrently (migration 014). */
 export const DEFAULT_TASKS_PER_RUN = 1;
@@ -85,24 +85,24 @@ export function buildRunPanel(count: number): DiscoveryModel[] {
 }
 
 
-// Scorers (user-fixed): GPT-5.6 Sol thinking (max effort) or Opus 4.8 (max).
+// Scorers (user-fixed): GPT-6.1 Sol thinking (max effort) or Fable 5.1 (max).
 export const SCORER_OPENAI: DiscoveryModel = {
-  provider: "openai", model: "gpt-5.6-sol", vendor: "openai", vision: true,
+  provider: "openai", model: "gpt-6.1-sol", vendor: "openai", vision: true,
 };
-/** Scoring runs on the house flagships only (owner decision): Fable 5 at
- *  max effort or GPT-5.6 Sol — Opus 4.8 remains solely Fable's built-in
+/** Scoring runs on the house flagships only (owner decision): Fable 5.1 at
+ *  max effort or GPT-6.1 Sol — Opus serves solely as Fable's built-in
  *  refusal fallback. Cross-vendor rule unchanged: Fable never scores a
  *  Fable-generated idea. */
 export const SCORER_ANTHROPIC: DiscoveryModel = {
-  provider: "anthropic", model: "claude-fable-5", vendor: "anthropic", vision: true,
+  provider: "anthropic", model: "claude-fable-5-1", vendor: "anthropic", vision: true,
 };
 
-// Reframers (user-fixed): Fable 5 max or GPT-5.6 Sol pro-mode.
+// Reframers (user-fixed): Fable 5.1 max or GPT-6.1 Sol pro-mode.
 export const REFRAMER_ANTHROPIC: DiscoveryModel = {
-  provider: "anthropic", model: "claude-fable-5", vendor: "anthropic", vision: true,
+  provider: "anthropic", model: "claude-fable-5-1", vendor: "anthropic", vision: true,
 };
 export const REFRAMER_OPENAI: DiscoveryModel = {
-  provider: "openai", model: "gpt-5.6-sol", vendor: "openai", vision: true,
+  provider: "openai", model: "gpt-6.1-sol", vendor: "openai", vision: true,
 };
 
 /** Cross-vendor rule: the scorer's company must differ from the company
@@ -112,7 +112,7 @@ export const REFRAMER_OPENAI: DiscoveryModel = {
  *  model researches and scores; the FINAL model then scores the idea
  *  itself — reviewing the first verdict, verifying with its own browser,
  *  keeping what is good, and owning the final updated score.
- *  A: Sol scores first -> Fable 5 max finalizes.
+ *  A: Sol scores first -> Fable 5.1 max finalizes.
  *  B: Fable scores first -> Sol finalizes.
  *  Deterministic per (runId, idx) — mid-phase reassignment would corrupt
  *  loop state; recorded in scoring_variant events for later analysis. */

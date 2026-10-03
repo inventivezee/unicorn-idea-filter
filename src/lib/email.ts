@@ -80,7 +80,7 @@ export function designReadyEmail(filterName: string): {
     subject: `Your custom filter “${filterName}” is ready`,
     html: layout(
       `“${filterName}” is ready to review`,
-      `<p style="font-size:14px;line-height:1.6;margin:0 0 8px">The three-model design chain has finished: ChatGPT&nbsp;5.5&nbsp;Pro designed your instrument, Claude&nbsp;Fable&nbsp;5 reviewed it at max effort, and ChatGPT&nbsp;5.5&nbsp;Pro produced the final version.</p>
+      `<p style="font-size:14px;line-height:1.6;margin:0 0 8px">The three-model design chain has finished: ChatGPT&nbsp;6.1&nbsp;Sol&nbsp;Pro designed your instrument, Claude&nbsp;Fable&nbsp;5.1 reviewed it at max effort, and ChatGPT&nbsp;6.1&nbsp;Sol&nbsp;Pro produced the final version.</p>
        <p style="font-size:14px;line-height:1.6;margin:0">Open it to review the gates and criteria, then accept it or regenerate.</p>`,
       appUrl("/filters"),
       "Review your filter",

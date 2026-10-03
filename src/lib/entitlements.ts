@@ -7,14 +7,14 @@ export const SUBSCRIPTION_PRICE_LABEL = "$19 / month";
 /**
  * Premium gating is by model FAMILY (same patterns the provider dispatcher
  * uses for capability selection), so "claude-mythos-5" or dated snapshots
- * can't slip past the paywall via the custom-model input. GPT-5.5 is NOT
+ * can't slip past the paywall via the custom-model input. GPT-6.1 Sol is NOT
  * hard-gated: free tier runs it at medium reasoning effort, subscribers get
  * xhigh (see the effort policy in src/lib/ai/server.ts).
  */
 export const PREMIUM_MODEL_PATTERNS: RegExp[] = [/^claude-(fable-5|mythos-5)/];
 
 /** Canonical premium model ids, for UI labels. */
-export const PREMIUM_MODELS = new Set(["claude-fable-5"]);
+export const PREMIUM_MODELS = new Set(["claude-fable-5-1"]);
 
 export function isPremiumModel(model: string): boolean {
   return PREMIUM_MODEL_PATTERNS.some((p) => p.test(model));
@@ -66,6 +66,6 @@ export interface Entitlements {
 }
 
 export const DEFAULT_MODEL_FALLBACKS: Record<Provider, string> = {
-  anthropic: "claude-sonnet-5",
-  openai: "gpt-5.5",
+  anthropic: "claude-sonnet-5-5",
+  openai: "gpt-6.1-sol",
 };

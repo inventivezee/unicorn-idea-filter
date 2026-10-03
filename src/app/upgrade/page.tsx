@@ -28,7 +28,7 @@ const BENEFITS = [
   },
   {
     title: "Premium reasoning",
-    body: "Claude Fable 5, plus GPT-5.5 at xhigh reasoning effort. The free tier runs Sonnet 5 and GPT-5.5 at medium effort.",
+    body: "Claude Fable 5.1, plus GPT-6.1 Sol at xhigh reasoning effort. The free tier runs Sonnet 5.5 and GPT-6.1 Sol at medium effort.",
   },
   {
     title: "Private ideas",
@@ -181,7 +181,7 @@ function UpgradeInner() {
 
       <p className="mt-4 text-center text-xs text-zinc-400">
         You can keep using the free tier — {FREE_ANALYSES_PER_DAY} analyses a
-        day with Sonnet 5 and GPT-5.5 at medium effort.
+        day with Sonnet 5.5 and GPT-6.1 Sol at medium effort.
       </p>
     </div>
   );

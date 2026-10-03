@@ -1,5 +1,5 @@
 // Starts a founder's custom-filter design as a background job — the
-// three-model chain (GPT-5.5 Pro xhigh → Fable 5 max → GPT-5.5 Pro xhigh)
+// three-model chain (GPT-6.1 Sol pro → Fable 5.1 max → GPT-6.1 Sol pro)
 // takes 10-15+ minutes per GPT stage, so the POST claims a job row and lets
 // the advance protocol submit stage 1; /api/filter-design/status advances it
 // on every poll. Premium feature: requires a signed-in subscriber (or
@@ -143,7 +143,7 @@ export async function POST(request: Request) {
   };
 
   try {
-    // Daily cap — each run is two GPT-5.5 Pro xhigh calls plus a Fable 5 max
+    // Daily cap — each run is two GPT-6.1 Sol pro-mode calls plus a Fable 5.1 max
     // call, the most expensive thing the app does. (The one-design-at-a-time
     // rule is enforced by the database's partial unique index, not a check.)
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
