@@ -202,16 +202,16 @@ describe("scoring A/B variants", () => {
 
   it("panel roles: A = Sol first / Fable final; B = the reverse", () => {
     const a = scoringPanel("A");
-    expect(a.first.model).toBe("gpt-5.6-sol");
-    expect(a.final.model).toBe("claude-fable-5");
+    expect(a.first.model).toBe("gpt-6.1-sol");
+    expect(a.final.model).toBe("claude-fable-5-1");
     const b = scoringPanel("B");
-    expect(b.first.model).toBe("claude-fable-5");
-    expect(b.final.model).toBe("gpt-5.6-sol");
+    expect(b.first.model).toBe("claude-fable-5-1");
+    expect(b.final.model).toBe("gpt-6.1-sol");
   });
 });
 
 describe("run panel composition (quality mode: 1-3 deep candidates)", () => {
-  const HOUSE = ["claude-fable-5", "gpt-5.6-sol"];
+  const HOUSE = ["claude-fable-5-1", "gpt-6.1-sol"];
 
   it("defaults are sane: 1 candidate, 20 max", () => {
     expect(DEFAULT_TASKS_PER_RUN).toBe(1);
@@ -223,8 +223,8 @@ describe("run panel composition (quality mode: 1-3 deep candidates)", () => {
       const panel = buildRunPanel(20);
       expect(panel.length).toBe(20);
       const count = (m: string) => panel.filter((x) => x.model === m).length;
-      expect(count("claude-fable-5")).toBeGreaterThanOrEqual(6);
-      expect(count("gpt-5.6-sol")).toBeGreaterThanOrEqual(6);
+      expect(count("claude-fable-5-1")).toBeGreaterThanOrEqual(6);
+      expect(count("gpt-6.1-sol")).toBeGreaterThanOrEqual(6);
       const others = OPENROUTER_GENERATORS.map((m) => count(m.model));
       // Evenly split: remainder slots make counts differ by at most 1.
       expect(Math.max(...others) - Math.min(...others)).toBeLessThanOrEqual(1);
@@ -252,8 +252,8 @@ describe("run panel composition (quality mode: 1-3 deep candidates)", () => {
       const panel = buildRunPanel(3);
       expect(panel.length).toBe(3);
       const models = panel.map((m) => m.model);
-      expect(models).toContain("claude-fable-5");
-      expect(models).toContain("gpt-5.6-sol");
+      expect(models).toContain("claude-fable-5-1");
+      expect(models).toContain("gpt-6.1-sol");
       expect(OPENROUTER_GENERATORS.map((m) => m.model)).toContain(models[2]);
     }
   });

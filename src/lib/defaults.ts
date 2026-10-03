@@ -11,16 +11,16 @@ import type {
 } from "./types";
 
 export const ANTHROPIC_MODELS = [
-  { id: "claude-sonnet-5", label: "Claude Sonnet 5 (default, medium effort)" },
-  { id: "claude-fable-5", label: "Claude Fable 5 (most capable, xhigh effort)" },
-  { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
+  { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5 (default, medium effort)" },
+  { id: "claude-fable-5-1", label: "Claude Fable 5.1 (most capable, xhigh effort)" },
+  { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
   { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
 ];
 
 export const OPENAI_MODELS = [
   {
-    id: "gpt-5.5",
-    label: "GPT-5.5 (default — medium effort; xhigh for subscribers)",
+    id: "gpt-6.1-sol",
+    label: "GPT-6.1 Sol (default — medium effort; xhigh for subscribers)",
   },
   { id: "gpt-5.1", label: "GPT-5.1" },
   { id: "gpt-5", label: "GPT-5" },
@@ -29,9 +29,25 @@ export const OPENAI_MODELS = [
 ];
 
 export const DEFAULT_MODELS: Record<Provider, string> = {
-  anthropic: "claude-sonnet-5",
-  openai: "gpt-5.5",
+  anthropic: "claude-sonnet-5-5",
+  openai: "gpt-6.1-sol",
 };
+
+/** Superseded model ids -> their successors. Saved settings are upgraded on
+ *  load (normalizeState) so existing users move to the current generation. */
+export const SUPERSEDED_MODELS: Record<string, string> = {
+  "claude-sonnet-5": "claude-sonnet-5-5",
+  "claude-fable-5": "claude-fable-5-1",
+  "claude-opus-4-8": "claude-opus-5-5",
+  "gpt-5.5": "gpt-6.1-sol",
+  "gpt-5.6-sol": "gpt-6.1-sol",
+};
+
+export function upgradeModelId(id: string): string {
+  return Object.prototype.hasOwnProperty.call(SUPERSEDED_MODELS, id)
+    ? SUPERSEDED_MODELS[id]
+    : id;
+}
 
 export const DEFAULT_TRIALS = 300;
 

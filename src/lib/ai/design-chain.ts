@@ -1,12 +1,12 @@
 // The three-model filter-design chain, run as a background job because a
 // single pass can take 10-15+ minutes — far past any serverless window:
 //
-//   stage 1  GPT-5.5 Pro (reasoning effort xhigh) designs the instrument
-//            — OpenAI Responses API background mode, polled by id
-//   stage 2  Claude Fable 5 (output_config.effort "max") adversarially
+//   stage 1  GPT-6.1 Sol in pro mode (reasoning.mode "pro") designs the
+//            instrument — OpenAI Responses API background mode, polled by id
+//   stage 2  Claude Fable 5.1 (output_config.effort "max") adversarially
 //            reviews and improves it — Anthropic Message Batches API
 //            (the only Anthropic async surface; no held connection)
-//   stage 3  GPT-5.5 Pro (xhigh) reconciles both versions into the final
+//   stage 3  GPT-6.1 Sol pro mode reconciles both versions into the final
 //            instrument — OpenAI background mode again
 //
 // SPEND-SAFETY PROTOCOL: state lives in a `drafts` row and every paid
@@ -33,11 +33,13 @@ import { casUpdateDraft, type DraftRow } from "@/lib/db/drafts";
 import { designFailedEmail, designReadyEmail, sendEmail } from "@/lib/email";
 import { normalizeCustomFilterSpec } from "@/lib/types";
 
-export const CHAIN_OPENAI_MODEL = "gpt-5.5-pro";
-export const CHAIN_ANTHROPIC_MODEL = "claude-fable-5";
+// GPT-6.1 Sol has no "-pro" slug: Pro is reasoning.mode "pro" on the same
+// model (see submitOpenAI).
+export const CHAIN_OPENAI_MODEL = "gpt-6.1-sol";
+export const CHAIN_ANTHROPIC_MODEL = "claude-fable-5-1";
 // Refusal fallback for stage 2 — batches reject the server-side `fallbacks`
 // param, so a Fable refusal is retried on Opus manually.
-const CHAIN_ANTHROPIC_FALLBACK = "claude-opus-4-8";
+const CHAIN_ANTHROPIC_FALLBACK = "claude-opus-5-5";
 const OPENAI_MAX_OUTPUT_TOKENS = 64_000;
 const ANTHROPIC_MAX_TOKENS = 64_000;
 // Per-stage submission budget (first submit + retries for expiry/errors).
@@ -126,26 +128,47 @@ async function submitOpenAI(
           state.stage1Design ?? "",
           state.stage2Design ?? "",
         );
-  const response = await openaiClient().responses.create({
+  const base = {
     model: CHAIN_OPENAI_MODEL,
     instructions:
       stage === 1
         ? FILTER_DESIGN_SYSTEM_PROMPT
         : FILTER_FINAL_REVIEW_SYSTEM_PROMPT,
     input: prompt,
-    reasoning: { effort: "xhigh" },
     background: true,
     max_output_tokens: OPENAI_MAX_OUTPUT_TOKENS,
     text: {
       format: {
-        type: "json_schema",
+        type: "json_schema" as const,
         name: "filter_design",
         strict: true,
         schema: FILTER_DESIGN_SCHEMA as unknown as Record<string, unknown>,
       },
     },
-  });
-  return response.id;
+  };
+  try {
+    const response = await openaiClient().responses.create({
+      ...base,
+      ...({ reasoning: { mode: "pro" } } as Record<string, unknown>),
+    } as OpenAI.Responses.ResponseCreateParamsNonStreaming);
+    return response.id;
+  } catch (err) {
+    // Same degrade as discovery synthesis: if the API rejects the pro-mode
+    // shape, run the strongest standard effort instead of failing the stage.
+    // A 400 is rejected before any work, so this stays one billed submit.
+    if (
+      err instanceof OpenAI.APIError &&
+      err.status === 400 &&
+      /mode|reasoning/i.test(err.message)
+    ) {
+      const response = await openaiClient().responses.create({
+        ...base,
+        reasoning: { effort: "max" },
+      } as unknown as OpenAI.Responses.ResponseCreateParamsNonStreaming);
+      return response.id;
+    }
+    throw err;
+  }
 }
 
 async function submitAnthropic(
@@ -172,7 +195,7 @@ async function submitAnthropic(
               ),
             },
           ],
-          // Fable 5: thinking is always on; effort "max" per the user's spec.
+          // Fable 5.1: thinking is always on; effort "max" per the user's spec.
           output_config: {
             effort: "max",
             format: {

@@ -1,5 +1,12 @@
 import { DEFAULT_WEIGHTS, CRITERIA_BY_ID } from "./criteria";
-import { defaultSettings, emptyGates, emptyScores, generateId, newIdea } from "./defaults";
+import {
+  defaultSettings,
+  emptyGates,
+  emptyScores,
+  generateId,
+  newIdea,
+  upgradeModelId,
+} from "./defaults";
 import { adjustedScore, decision, gateStatus, killerFlags, rawScore } from "./engine";
 import {
   CRITERION_IDS,
@@ -83,11 +90,11 @@ export function normalizeState(data: unknown): AppState {
     models: {
       anthropic:
         typeof s.models?.anthropic === "string" && s.models.anthropic
-          ? s.models.anthropic
+          ? upgradeModelId(s.models.anthropic)
           : base.models.anthropic,
       openai:
         typeof s.models?.openai === "string" && s.models.openai
-          ? s.models.openai
+          ? upgradeModelId(s.models.openai)
           : base.models.openai,
     },
     founderBackground:

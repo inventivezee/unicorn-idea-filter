@@ -187,23 +187,46 @@ export function mapProviderError(err: unknown, model: string): Response {
 // Provider dispatch with structured JSON output.
 // ---------------------------------------------------------------------------
 
-// Claude 4.6+ models take adaptive thinking; on Fable 5 thinking is always on
-// and {type: "adaptive"} is the only accepted explicit value.
+// Claude 4.6+ models take adaptive thinking; on Fable 5.x / Opus 5.5 thinking
+// is always on and {type: "adaptive"} is the only accepted explicit value.
 const ADAPTIVE_THINKING_MODELS =
-  /^claude-(opus-4-[678]|sonnet-5|sonnet-4-6|fable-5|mythos-5)/;
+  /^claude-(opus-4-[678]|opus-5|sonnet-5|sonnet-4-6|fable-5|mythos-5)/;
 // Models supporting web search with dynamic filtering (web_search_20260209+).
 const DYNAMIC_SEARCH_MODELS =
-  /^claude-(fable-5|mythos-5|opus-4-[678]|sonnet-5|sonnet-4-6)/;
+  /^claude-(fable-5|mythos-5|opus-4-[678]|opus-5|sonnet-5|sonnet-4-6)/;
 const FABLE_MODELS = /^claude-(fable-5|mythos-5)/;
+// Opus 5.x defaults to "medium" effort when omitted (Opus 4.8 defaulted to
+// "high"), so the policy below sets it explicitly.
+const OPUS_5_MODELS = /^claude-opus-5/;
+// Models that run safety classifiers and get the server-side refusal fallback.
+const REFUSAL_FALLBACK_MODELS = /^claude-(fable-5|mythos-5|opus-5)/;
 // Models accepting output_config.effort (Haiku 4.5 and older reject it).
 const ANTHROPIC_EFFORT_MODELS =
-  /^claude-(fable-5|mythos-5|opus-4-[5678]|sonnet-5|sonnet-4-6)/;
-// Reasoning-capable OpenAI families (gpt-5*, o-series); gpt-4.x is not.
-const OPENAI_REASONING_MODELS = /^(gpt-5|o\d)/;
+  /^claude-(fable-5|mythos-5|opus-4-[5678]|opus-5|sonnet-5|sonnet-4-6)/;
+// Reasoning-capable OpenAI families (gpt-5+, o-series); gpt-4.x is not.
+const OPENAI_REASONING_MODELS = /^(gpt-[5-9]|o\d)/;
 // xhigh reasoning effort exists on models after gpt-5.1-codex-max (e.g. gpt-5.5).
-const OPENAI_XHIGH_MODELS = /^gpt-5\.[5-9]/;
+const OPENAI_XHIGH_MODELS = /^gpt-(5\.[5-9]|[6-9])/;
+// "max" reasoning effort exists from the GPT-6 family (gpt-6.1-sol) on.
+const OPENAI_MAX_MODELS = /^gpt-[6-9]/;
+// The SDK's effort union may predate "max"; the API accepts it on gpt-6.x.
+const OPENAI_MAX_EFFORT = "max" as unknown as "xhigh";
 // -pro reasoning models accept only "high" effort — no low/xhigh.
 const OPENAI_HIGH_ONLY_MODELS = /^(gpt-5-pro|o\d-pro)/;
+
+/** Clamp a requested effort to what an OpenAI model accepts: "max" passes
+ *  through on gpt-6.x, else drops to xhigh (or high on pre-5.5 models). */
+export function clampOpenAIEffort(
+  model: string,
+  effort: "low" | "medium" | "high" | "xhigh" | "max",
+): "low" | "medium" | "high" | "xhigh" {
+  if (effort !== "max") return effort;
+  return OPENAI_MAX_MODELS.test(model)
+    ? OPENAI_MAX_EFFORT
+    : OPENAI_XHIGH_MODELS.test(model)
+      ? "xhigh"
+      : "high";
+}
 
 // Premium (subscriber/admin/local) analyses run uncapped web search; the free
 // tier is hard-capped at STANDARD_WEB_SEARCH_CAP via the tool's max_uses.
@@ -227,9 +250,9 @@ export interface JSONCallOptions {
   speed: "quality" | "fast";
   /**
    * Effort tier: subscribers/admins (and local-only deployments) run
-   * "premium" — GPT-5.5 at xhigh; free/anon callers run "standard" —
-   * GPT-5.5 capped at medium. Anthropic policy: Fable 5 xhigh (the model
-   * itself is subscriber-gated), Sonnet 5 medium for everyone.
+   * "premium" — GPT-6.1 Sol at xhigh; free/anon callers run "standard" —
+   * GPT-6.1 Sol capped at medium. Anthropic policy: Fable 5.1 xhigh (the model
+   * itself is subscriber-gated), Opus 5.5 high, Sonnet 5.5 medium for everyone.
    */
   tier: "premium" | "standard";
   /**
@@ -241,7 +264,7 @@ export interface JSONCallOptions {
   /** BYOK: the caller's own provider key. Undefined → deployment env key. */
   apiKey?: string;
   /** Explicit effort override — wins over the per-model/tier policy. Used
-   *  by the autonomous Cash Cow scorer to force Opus 4.8 / Sol at max. */
+   *  by the autonomous Cash Cow scorer to force Opus 5.5 / Sol at max. */
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Ledger label for model_pings — defaults to the schemaName. */
   purpose?: string;
@@ -325,6 +348,7 @@ async function anthropicJSONAttempt(
     timeout: 1_500_000,
   });
   const isFable = FABLE_MODELS.test(opts.model);
+  const withFallback = REFUSAL_FALLBACK_MODELS.test(opts.model);
 
   const effort =
     opts.effort && ANTHROPIC_EFFORT_MODELS.test(opts.model)
@@ -335,7 +359,9 @@ async function anthropicJSONAttempt(
           : undefined
         : isFable
           ? ("xhigh" as const)
-          : /^claude-sonnet-5/.test(opts.model)
+          : OPUS_5_MODELS.test(opts.model)
+            ? ("high" as const)
+            : /^claude-sonnet-5/.test(opts.model)
             ? ("medium" as const)
             : undefined;
 
@@ -390,21 +416,23 @@ async function anthropicJSONAttempt(
     ...(tools ? { tools } : {}),
   };
 
-  // Fable 5's safety classifiers can decline benign-adjacent requests; opt into
-  // the server-side fallback so a decline is transparently re-served by Opus.
+  // Fable 5.x / Opus 5.5 safety classifiers can decline benign-adjacent
+  // requests; opt into the server-side fallback so a decline is transparently
+  // re-served. "default" lets Anthropic route by refusal category (Fable 5.1
+  // only accepts Opus 4.8 / Opus 5 as explicit targets — not Opus 5.5).
   async function createMessage(
     messages: Anthropic.MessageParam[],
   ): Promise<Anthropic.Message> {
     // Stream under the hood: the SDK REQUIRES streaming for requests whose
     // max_tokens imply >10 min of generation (max-effort scoring at 32k
     // tokens does). finalMessage() returns the same complete Message.
-    if (isFable) {
+    if (withFallback) {
       return (await client.beta.messages
         .stream({
           ...(baseParams as unknown as Record<string, unknown>),
           messages,
-          betas: ["server-side-fallback-2026-06-01"],
-          fallbacks: [{ model: "claude-opus-4-8" }],
+          betas: ["server-side-fallback-2026-07-01"],
+          fallbacks: "default",
         } as unknown as Parameters<typeof client.beta.messages.stream>[0])
         .finalMessage()) as unknown as Anthropic.Message;
     }
@@ -480,11 +508,7 @@ async function openaiJSON(opts: JSONCallOptions): Promise<JSONCallResult> {
 
   const overrideEffort =
     opts.effort && OPENAI_REASONING_MODELS.test(opts.model)
-      ? opts.effort === "max"
-        ? OPENAI_XHIGH_MODELS.test(opts.model)
-          ? ("xhigh" as const)
-          : ("high" as const)
-        : (opts.effort as "low" | "medium" | "high" | "xhigh")
+      ? clampOpenAIEffort(opts.model, opts.effort)
       : null;
   const effort = overrideEffort
     ? overrideEffort

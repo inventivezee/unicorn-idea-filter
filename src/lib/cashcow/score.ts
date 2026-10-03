@@ -1,6 +1,6 @@
 // Autonomous Cash Cow scorer — scores ONE discovery idea through the
-// $20M-EBITDA instrument in a single web-search-enabled call (Opus 4.8 or
-// GPT-5.6 Sol, alternating per idea, both at max effort), then writes the
+// $20M-EBITDA instrument in a single web-search-enabled call (Opus 5.5 or
+// GPT-6.1 Sol, alternating per idea, both at max effort), then writes the
 // verdict onto ideas.cashcow. No reframe: we score, we don't filter.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeCashCowAnalysis, type RawAnalysis } from "@/lib/ai/analysis";
@@ -23,8 +23,8 @@ function scorerFor(ideaId: string): {
     h = Math.imul(h, 16777619);
   }
   return (h >>> 0) % 2 === 0
-    ? { provider: "anthropic", model: "claude-opus-4-8" }
-    : { provider: "openai", model: "gpt-5.6-sol" };
+    ? { provider: "anthropic", model: "claude-opus-5-5" }
+    : { provider: "openai", model: "gpt-6.1-sol" };
 }
 
 export async function scoreCashCow(
@@ -56,7 +56,9 @@ export async function scoreCashCow(
     speed: "quality",
     tier: "premium",
     effort: "max",
-    maxTokens: 32000, // max-effort verdict over a long idea needs headroom
+    // Opus 5.5 thinks more per turn at max than Opus 4.8 did, and thinking
+    // counts toward max_tokens — hitting the ceiling is a fatal job failure.
+    maxTokens: 64000,
     maxWebSearches: 15, // research if needed, but keep one call inside the window + cost sane
     purpose: "cashcow_auto",
     ref: idea.id,

@@ -1,6 +1,6 @@
 // Vercel cron: autonomous Cash Cow scoring, every minute. Sweeps discovery
 // ideas that don't yet carry a Cash Cow verdict and scores each ONCE
-// (Opus 4.8 / Sol at max, web search available), writing ideas.cashcow.
+// (Opus 5.5 / GPT-6.1 Sol at max, web search available), writing ideas.cashcow.
 // Every scoring sits behind an atomic claim (claim_cashcow_job) so
 // overlapping invocations never double-bill. No reframe — score, not filter.
 // Same fail-closed auth contract as the other crons.

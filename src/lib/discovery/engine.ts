@@ -255,8 +255,8 @@ function phaseModel(task: DiscoveryTaskRow): DiscoveryModel {
   if (status === "researching" || status === "pending") return generatorOf(task);
   if (status === "reframing") return pickReframer(task.run_id, task.idx);
   // Scoring/rescoring is ALWAYS the dual-model house panel (owner decision,
-  // supersedes the cross-vendor scorer rule): Fable 5 max researches and
-  // drafts, GPT-5.6 Sol reviews with its own browser access, Fable
+  // supersedes the cross-vendor scorer rule): Fable 5.1 max researches and
+  // drafts, GPT-6.1 Sol reviews with its own browser access, Fable
   // finalizes weighing the feedback.
   const ps = task.phase_state as PhaseState;
   const panel = scoringPanel(scoringVariant(task.run_id, task.idx));

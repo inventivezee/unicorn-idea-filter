@@ -32,7 +32,7 @@ function signedOutEntitlements(): Entitlements {
     subscribed: false,
     subscriptionStatus: "none",
     analysesRemaining: null,
-    premiumModels: ["claude-fable-5"],
+    premiumModels: ["claude-fable-5-1"],
   };
 }
 

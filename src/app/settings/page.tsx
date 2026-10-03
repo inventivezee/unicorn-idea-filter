@@ -106,7 +106,7 @@ const BYOK_PROVIDERS: Array<{
   },
   {
     id: "openai",
-    label: "OpenAI (GPT-5.6 Sol)",
+    label: "OpenAI (GPT-6.1 Sol)",
     placeholder: "sk-…",
     note: "Powers analysis + discovery scoring/generation.",
   },
@@ -1061,7 +1061,7 @@ export default function SettingsPage() {
                     </li>
                     <li>
                       <span className="font-medium">Premium power</span> —
-                      Claude Fable 5, plus GPT-5.5 at xhigh reasoning (free
+                      Claude Fable 5.1, plus GPT-6.1 Sol at xhigh reasoning (free
                       tier runs it at medium)
                     </li>
                     <li>
