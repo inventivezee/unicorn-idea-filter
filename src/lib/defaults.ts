@@ -11,16 +11,16 @@ import type {
 } from "./types";
 
 export const ANTHROPIC_MODELS = [
-  { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5 (default, medium effort)" },
-  { id: "claude-fable-5-1", label: "Claude Fable 5.1 (most capable, xhigh effort)" },
-  { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
+  { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5 (default, high effort)" },
+  { id: "claude-fable-5-1", label: "Claude Fable 5.1 (most capable, high effort)" },
+  { id: "claude-opus-5-5", label: "Claude Opus 5.5 (high effort)" },
   { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
 ];
 
 export const OPENAI_MODELS = [
   {
     id: "gpt-6.1-sol",
-    label: "GPT-6.1 Sol (default — medium effort; xhigh for subscribers)",
+    label: "GPT-6.1 Sol (default, high effort)",
   },
   { id: "gpt-5.1", label: "GPT-5.1" },
   { id: "gpt-5", label: "GPT-5" },

@@ -1061,8 +1061,8 @@ export default function SettingsPage() {
                     </li>
                     <li>
                       <span className="font-medium">Premium power</span> —
-                      Claude Fable 5.1, plus GPT-6.1 Sol at xhigh reasoning (free
-                      tier runs it at medium)
+                      Claude Fable 5.1, the most capable model, at high
+                      reasoning effort
                     </li>
                     <li>
                       <span className="font-medium">

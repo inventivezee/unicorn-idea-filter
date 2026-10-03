@@ -8,8 +8,8 @@ export const SUBSCRIPTION_PRICE_LABEL = "$19 / month";
  * Premium gating is by model FAMILY (same patterns the provider dispatcher
  * uses for capability selection), so "claude-mythos-5" or dated snapshots
  * can't slip past the paywall via the custom-model input. GPT-6.1 Sol is NOT
- * hard-gated: free tier runs it at medium reasoning effort, subscribers get
- * xhigh (see the effort policy in src/lib/ai/server.ts).
+ * hard-gated: every tier runs it at high reasoning effort (see the effort
+ * policy in src/lib/ai/server.ts).
  */
 export const PREMIUM_MODEL_PATTERNS: RegExp[] = [/^claude-(fable-5|mythos-5)/];
 

@@ -194,10 +194,6 @@ const ADAPTIVE_THINKING_MODELS =
 // Models supporting web search with dynamic filtering (web_search_20260209+).
 const DYNAMIC_SEARCH_MODELS =
   /^claude-(fable-5|mythos-5|opus-4-[678]|opus-5|sonnet-5|sonnet-4-6)/;
-const FABLE_MODELS = /^claude-(fable-5|mythos-5)/;
-// Opus 5.x defaults to "medium" effort when omitted (Opus 4.8 defaulted to
-// "high"), so the policy below sets it explicitly.
-const OPUS_5_MODELS = /^claude-opus-5/;
 // Models that run safety classifiers and get the server-side refusal fallback.
 const REFUSAL_FALLBACK_MODELS = /^claude-(fable-5|mythos-5|opus-5)/;
 // Models accepting output_config.effort (Haiku 4.5 and older reject it).
@@ -250,9 +246,9 @@ export interface JSONCallOptions {
   speed: "quality" | "fast";
   /**
    * Effort tier: subscribers/admins (and local-only deployments) run
-   * "premium" — GPT-6.1 Sol at xhigh; free/anon callers run "standard" —
-   * GPT-6.1 Sol capped at medium. Anthropic policy: Fable 5.1 xhigh (the model
-   * itself is subscriber-gated), Opus 5.5 high, Sonnet 5.5 medium for everyone.
+   * "premium", free/anon callers "standard". Quality calls run at high
+   * effort on every model for BOTH tiers (owner policy); the tier still sets
+   * the web-search budget. Fable 5.1 itself is subscriber-gated.
    */
   tier: "premium" | "standard";
   /**
@@ -347,23 +343,19 @@ async function anthropicJSONAttempt(
     // it was aborting them at 600s inside the 30-min function window.
     timeout: 1_500_000,
   });
-  const isFable = FABLE_MODELS.test(opts.model);
   const withFallback = REFUSAL_FALLBACK_MODELS.test(opts.model);
 
+  // Owner policy: every quality call runs at high effort, on every tier (set
+  // explicitly — Opus 5.5 would otherwise default to medium); fast helper
+  // calls (clarifying questions, metadata, CV parsing) stay low.
   const effort =
     opts.effort && ANTHROPIC_EFFORT_MODELS.test(opts.model)
       ? opts.effort
-      : opts.speed === "fast"
-        ? ANTHROPIC_EFFORT_MODELS.test(opts.model)
+      : !ANTHROPIC_EFFORT_MODELS.test(opts.model)
+        ? undefined
+        : opts.speed === "fast"
           ? ("low" as const)
-          : undefined
-        : isFable
-          ? ("xhigh" as const)
-          : OPUS_5_MODELS.test(opts.model)
-            ? ("high" as const)
-            : /^claude-sonnet-5/.test(opts.model)
-            ? ("medium" as const)
-            : undefined;
+          : ("high" as const);
 
   // An explicit maxWebSearches (bounded helper routes) always wins. Otherwise:
   // premium tier gets uncapped search (omit max_uses), the free tier is
@@ -398,7 +390,12 @@ async function anthropicJSONAttempt(
 
   const baseParams = {
     model: opts.model,
-    max_tokens: opts.maxTokens ?? (opts.speed === "fast" ? 8000 : 16000),
+    // Thinking counts toward max_tokens; Sonnet 5.5 and Opus 5.5 at high
+    // think more than the medium/default runs 16k was sized for, and hitting
+    // the cap fails the analysis ("ran over the output limit").
+    max_tokens:
+      opts.maxTokens ??
+      (opts.speed === "fast" ? 8000 : effort === "max" ? 64000 : 32000),
     ...(ADAPTIVE_THINKING_MODELS.test(opts.model)
       ? { thinking: { type: "adaptive" as const } }
       : {}),
@@ -517,11 +514,7 @@ async function openaiJSON(opts: JSONCallOptions): Promise<JSONCallResult> {
         ? ("high" as const)
         : opts.speed === "fast"
           ? ("low" as const)
-          : OPENAI_XHIGH_MODELS.test(opts.model)
-            ? opts.tier === "premium"
-              ? ("xhigh" as const)
-              : ("medium" as const)
-            : ("high" as const)
+          : ("high" as const) // owner policy: high for every tier
       : null;
 
   const response = await client.responses.create({
